@@ -226,6 +226,30 @@ func TestController_ApproveCreatesManualCheckins(t *testing.T) {
 	assert.NotZero(t, rows[0].ChildID)
 }
 
+func TestController_PatchSubmissionStatusNamesOnly(t *testing.T) {
+	app, _, testDB := setupAuthedApp(t, "")
+	wipeSubmissionTables(t, testDB)
+
+	repo := guestsubmission.NewRepo(testDB)
+	sub, err := repo.CreateSubmission(t.Context(), guestsubmission.Parent{
+		FirstName: "John", LastName: "Smith", Phone: "555-1234", Email: "john@example.com",
+	}, []guestsubmission.Child{{FirstName: "Timmy", LastName: "Smith", DOB: "2020-01-01", Grade: "1st Grade"}})
+	require.NoError(t, err)
+
+	body, _ := json.Marshal(map[string]interface{}{"status": "approved"})
+	req := httptest.NewRequest("PATCH", fmt.Sprintf("/v1/checkins/guest-submissions/%s/status", sub.PublicID), bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := app.Test(req)
+	require.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	raw, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	assert.NotContains(t, string(raw), "phone")
+	assert.NotContains(t, string(raw), "email")
+	assert.NotContains(t, string(raw), "dob")
+	assert.NotContains(t, string(raw), "grade")
+}
+
 func TestController_PatchSubmissionNotFound(t *testing.T) {
 	app, _, testDB := setupAuthedApp(t, "")
 	wipeSubmissionTables(t, testDB)

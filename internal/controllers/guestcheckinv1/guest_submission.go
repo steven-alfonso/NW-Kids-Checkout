@@ -252,7 +252,7 @@ func (controller *Controller) PatchSubmissionStatus(c *fiber.Ctx) error {
 	if len(updated) == 0 {
 		return fiber.NewError(fiber.StatusInternalServerError, "submission not found after update")
 	}
-	return c.JSON(submissionToResponse(updated[0]))
+	return c.JSON(submissionToSummary(updated[0]))
 }
 
 func buildFilter(c *fiber.Ctx) (guestsubmission.Filter, error) {
