@@ -28,6 +28,7 @@ type ManualCheckin struct {
 	ID                    int64
 	CreatedAt             time.Time
 	PublicID              string
+	ChildID               int64
 	FirstName             string
 	LastName              string
 	CheckedOutAt          time.Time
@@ -57,6 +58,7 @@ func (s *sqliteRepo) ListManualCheckins(ctx context.Context, filter Filter) ([]M
 		"manual_checkins.id",
 		"manual_checkins.created_at",
 		"manual_checkins.public_id",
+		"manual_checkins.child_id",
 		"manual_checkins.first_name",
 		"manual_checkins.last_name",
 		"manual_checkins.checked_out_at",
@@ -113,11 +115,13 @@ func (s *sqliteRepo) ListManualCheckins(ctx context.Context, filter Filter) ([]M
 		var manualCheckin ManualCheckin
 		var checkedOutAt sql.NullTime
 		var checkedOutConfirmedAt sql.NullTime
+		var childID sql.NullInt64
 
 		err := rows.Scan(
 			&manualCheckin.ID,
 			&manualCheckin.CreatedAt,
 			&manualCheckin.PublicID,
+			&childID,
 			&manualCheckin.FirstName,
 			&manualCheckin.LastName,
 			&checkedOutAt,
@@ -125,6 +129,10 @@ func (s *sqliteRepo) ListManualCheckins(ctx context.Context, filter Filter) ([]M
 		)
 		if err != nil {
 			return nil, fmt.Errorf("scanning manual checkin: %w", err)
+		}
+
+		if childID.Valid {
+			manualCheckin.ChildID = childID.Int64
 		}
 
 		if checkedOutAt.Valid {
@@ -158,10 +166,16 @@ func (s *sqliteRepo) CreateManualCheckin(ctx context.Context, manualCheckin Manu
 		checkedOutConfirmedAt = &tt
 	}
 
+	var childID *int64
+	if manualCheckin.ChildID > 0 {
+		id := manualCheckin.ChildID
+		childID = &id
+	}
+
 	builder := squirrel.Insert("manual_checkins").
 		RunWith(s.db).
-		Columns("public_id", "first_name", "last_name", "checked_out_at", "checked_out_confirmed_at").
-		Values(manualCheckin.PublicID, manualCheckin.FirstName, manualCheckin.LastName, checkedOutAt, checkedOutConfirmedAt)
+		Columns("public_id", "child_id", "first_name", "last_name", "checked_out_at", "checked_out_confirmed_at").
+		Values(manualCheckin.PublicID, childID, manualCheckin.FirstName, manualCheckin.LastName, checkedOutAt, checkedOutConfirmedAt)
 
 	res, err := builder.ExecContext(ctx)
 	if err != nil {

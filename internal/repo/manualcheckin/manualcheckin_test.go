@@ -359,3 +359,21 @@ func Test_sqliteRepo_SetManualCheckedOutConfirmedAt(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, updated.CheckedOutConfirmedAt.IsZero())
 }
+
+func Test_sqliteRepo_CreateManualCheckinWithChildID(t *testing.T) {
+	_, err := squirrel.Delete("manual_checkins").RunWith(testDB).ExecContext(t.Context())
+	require.NoError(t, err)
+
+	s := NewRepo(testDB)
+	created, err := s.CreateManualCheckin(t.Context(), ManualCheckin{
+		ChildID:   42,
+		FirstName: "timmy",
+		LastName:  "smith",
+	})
+	require.NoError(t, err)
+
+	rows, err := s.ListManualCheckins(t.Context(), Filter{ID: created.ID, Limit: 1})
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.Equal(t, int64(42), rows[0].ChildID)
+}
