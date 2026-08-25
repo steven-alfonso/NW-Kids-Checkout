@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"errors"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -46,9 +47,12 @@ func HTTPMetrics(meter metric.Meter) (fiber.Handler, error) {
 		err := c.Next()
 		status := c.Response().StatusCode()
 		// The fiber error handler runs after middleware unwinds, so the
-		// response status is not yet set for returned errors. Infer it:
-		// *fiber.Error carries its own code; any other error renders as 500.
-		if ferr, ok := err.(*fiber.Error); ok {
+		// response status is not yet set for returned errors. Infer it the
+		// same way the app error handler does: unwrap with errors.As so a
+		// wrapped *fiber.Error keeps its own code; any other error renders
+		// as 500.
+		var ferr *fiber.Error
+		if errors.As(err, &ferr) {
 			status = ferr.Code
 		} else if err != nil {
 			status = fiber.StatusInternalServerError

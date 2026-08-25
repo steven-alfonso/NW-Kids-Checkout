@@ -149,6 +149,49 @@ func Test_HTTPMetrics_treats_wrapped_errors_as_server_errors(t *testing.T) {
 	}
 }
 
+// A fiber.Error wrapped in fmt.Errorf renders with its own status via the
+// app error handler (which uses errors.As); metrics must attribute the same
+// status instead of assuming 500.
+func Test_HTTPMetrics_unwraps_wrapped_fiber_errors_for_status(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	t.Cleanup(func() { _ = mp.Shutdown(t.Context()) })
+
+	mw, err := HTTPMetrics(mp.Meter("test"))
+	require.NoError(t, err)
+
+	app := fiber.New()
+	app.Use(mw)
+	app.Get("/wrapped-4xx", func(c *fiber.Ctx) error {
+		return fmt.Errorf("lookup failed: %w", fiber.NewError(fiber.StatusBadRequest, "bad input"))
+	})
+
+	resp, err := app.Test(httptest.NewRequest(fiber.MethodGet, "/wrapped-4xx", nil))
+	require.NoError(t, err)
+	require.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
+
+	hist := collectMetric(t, reader, "http.server.request.duration")
+	data, ok := hist.Data.(metricdata.Histogram[float64])
+	require.True(t, ok, "expected histogram data point")
+	statuses := map[int64]int{}
+	for _, dp := range data.DataPoints {
+		if statusVal, has := dp.Attributes.Value(attribute.Key("http.response.status_code")); has {
+			statuses[statusVal.AsInt64()]++
+		}
+	}
+	assert.Equal(t, map[int64]int{int64(fiber.StatusBadRequest): 1}, statuses,
+		"wrapped fiber.Error must be recorded with its real status code")
+
+	errMetric := collectMetric(t, reader, "http.server.errors")
+	total := int64(0)
+	if errSum, ok := errMetric.Data.(metricdata.Sum[int64]); ok {
+		for _, dp := range errSum.DataPoints {
+			total += dp.Value
+		}
+	}
+	assert.Equal(t, int64(0), total, "a 4xx must not be counted as a server error")
+}
+
 func Test_HTTPMetrics_collapses_unmatched_routes(t *testing.T) {
 	reader := sdkmetric.NewManualReader()
 	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))

@@ -283,14 +283,13 @@ func FetchCheckouts(ctx context.Context, cmd *cli.Command) error {
 		}
 	}()
 
-	if tel.Enabled() {
-		if registerErr := db.RegisterOTelDriver(tel.TracerProvider, tel.MeterProvider); registerErr != nil {
-			return fmt.Errorf("registering otel db driver: %w", registerErr)
-		}
-	}
-
 	dbFile := cmd.String("db-file")
-	database, err := db.InitDB(dbFile)
+	var database *sql.DB
+	if tel.Enabled() {
+		database, err = db.InitDBInstrumented(dbFile, tel.TracerProvider, tel.MeterProvider)
+	} else {
+		database, err = db.InitDB(dbFile)
+	}
 	if err != nil {
 		return fmt.Errorf("init db %s: %w", dbFile, err)
 	}

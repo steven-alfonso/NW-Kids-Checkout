@@ -42,6 +42,16 @@ func RegisterOTelDriver(tp trace.TracerProvider, mp metric.MeterProvider) error 
 	return registerErr
 }
 
+// InitDBInstrumented registers the OTel driver and opens an instrumented
+// database in one step, so callers cannot open the DB before registering and
+// silently run without instrumentation.
+func InitDBInstrumented(dataSourceName string, tp trace.TracerProvider, mp metric.MeterProvider) (*sql.DB, error) {
+	if err := RegisterOTelDriver(tp, mp); err != nil {
+		return nil, err
+	}
+	return InitDB(dataSourceName)
+}
+
 // InitDB initializes the database connection. It uses the OTel-instrumented
 // driver when RegisterOTelDriver has been called; the raw driver otherwise.
 func InitDB(dataSourceName string) (*sql.DB, error) {

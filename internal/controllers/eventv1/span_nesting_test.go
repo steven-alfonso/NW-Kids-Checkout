@@ -27,20 +27,21 @@ import (
 // disconnected root trace instead of nesting under its request.
 func Test_routes_propagate_otel_span_context_to_repos(t *testing.T) {
 	exp := tracetest.NewInMemoryExporter()
-	prevProvider := otel.GetTracerProvider()
+	prevTracerProvider := otel.GetTracerProvider()
+	prevMeterProvider := otel.GetMeterProvider()
 	otel.SetTracerProvider(sdktrace.NewTracerProvider(
 		sdktrace.WithSyncer(exp),
 		sdktrace.WithSampler(sdktrace.AlwaysSample()),
 	))
-	t.Cleanup(func() { otel.SetTracerProvider(prevProvider) })
+	t.Cleanup(func() {
+		otel.SetTracerProvider(prevTracerProvider)
+		otel.SetMeterProvider(prevMeterProvider)
+	})
 
-	require.NoError(t, db.RegisterOTelDriver(
+	database, err := db.InitDBInstrumented(filepath.Join(t.TempDir(), "nest.db"),
 		otel.GetTracerProvider(),
 		// Reader-less provider: meters are usable but export nothing.
-		sdkmetric.NewMeterProvider(),
-	))
-
-	database, err := db.InitDB(filepath.Join(t.TempDir(), "nest.db"))
+		sdkmetric.NewMeterProvider())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = database.Close() })
 

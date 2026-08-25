@@ -34,6 +34,7 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/session"
 	"github.com/gofiber/storage/sqlite3"
 	"go.opentelemetry.io/contrib/instrumentation/runtime"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 )
 
 const apiServiceName = "kids-checkin-api"
@@ -51,17 +52,15 @@ func StartServer(port int, dbFilepath string) error {
 		}
 	}()
 
-	if runtimeErr := runtime.Start(); runtimeErr != nil {
-		slog.Warn("runtime metrics unavailable", slog.String("error", runtimeErr.Error()))
-	}
-
+	var database *sql.DB
 	if tel.Enabled() {
-		if registerErr := db.RegisterOTelDriver(tel.TracerProvider, tel.MeterProvider); registerErr != nil {
-			return fmt.Errorf("registering otel db driver: %w", registerErr)
+		if runtimeErr := runtime.Start(); runtimeErr != nil {
+			slog.Warn("runtime metrics unavailable", slog.String("error", runtimeErr.Error()))
 		}
+		database, err = db.InitDBInstrumented(dbFilepath, tel.TracerProvider, tel.MeterProvider)
+	} else {
+		database, err = db.InitDB(dbFilepath)
 	}
-
-	database, err := db.InitDB(dbFilepath)
 	if err != nil {
 		panic(err)
 	}
@@ -119,24 +118,9 @@ func StartServer(port int, dbFilepath string) error {
 			return nil
 		},
 	})
-	app.Use(middleware.RequestLogger())
-	// Recover must run before the tracing/metrics middleware so panics are
-	// converted into 500 errors that those middleware can observe.
-	app.Use(recover.New())
-	if tel.Enabled() {
-		app.Use(otelfiber.Middleware(
-			otelfiber.WithTracerProvider(tel.TracerProvider),
-			otelfiber.WithSpanNameFormatter(func(c *fiber.Ctx) string {
-				return c.Route().Path
-			}),
-		))
-		httpMetrics, metricsErr := middleware.HTTPMetrics(tel.Meter(apiServiceName))
-		if metricsErr != nil {
-			return fmt.Errorf("creating http metrics middleware: %w", metricsErr)
-		}
-		app.Use(httpMetrics)
+	if err := registerCoreMiddleware(app, tel); err != nil {
+		return fmt.Errorf("registering core middleware: %w", err)
 	}
-	app.Use(middleware.HTTPAccessLogger())
 
 	registerRoutes(app, database, store, storage)
 
@@ -221,6 +205,34 @@ func StartServer(port int, dbFilepath string) error {
 	}
 
 	slog.Info("server stopped")
+	return nil
+}
+
+// registerCoreMiddleware wires the request-scoped middleware. Recover runs
+// innermost so panics are converted into 500 responses before the tracing,
+// metrics, and access-log middleware read the result; any other order makes
+// panics skip those middleware entirely.
+func registerCoreMiddleware(app *fiber.App, tel *telemetry.Telemetry) error {
+	app.Use(middleware.RequestLogger())
+	if tel.Enabled() {
+		// otelfiber exports its own http.server.* metrics by default; point
+		// it at a reader-less meter provider so HTTPMetrics below is the
+		// single source of HTTP metrics.
+		app.Use(otelfiber.Middleware(
+			otelfiber.WithTracerProvider(tel.TracerProvider),
+			otelfiber.WithMeterProvider(sdkmetric.NewMeterProvider()),
+			otelfiber.WithSpanNameFormatter(func(c *fiber.Ctx) string {
+				return c.Route().Path
+			}),
+		))
+		httpMetrics, err := middleware.HTTPMetrics(tel.Meter(apiServiceName))
+		if err != nil {
+			return fmt.Errorf("creating http metrics middleware: %w", err)
+		}
+		app.Use(httpMetrics)
+	}
+	app.Use(middleware.HTTPAccessLogger())
+	app.Use(recover.New())
 	return nil
 }
 

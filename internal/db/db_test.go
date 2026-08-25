@@ -14,19 +14,21 @@ import (
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
 
-func Test_InitDB_creates_otel_spans_for_queries(t *testing.T) {
+// InitDBInstrumented is the production path: it registers the OTel driver and
+// opens the DB in one step. Driver registration is process-global (sync.Once),
+// so this package has a single span-producing test to avoid order-dependent
+// registration between tests.
+func Test_InitDBInstrumented_creates_otel_spans_for_queries(t *testing.T) {
 	exp := tracetest.NewInMemoryExporter()
 	tp := sdktrace.NewTracerProvider(
 		sdktrace.WithSyncer(exp),
 		sdktrace.WithSampler(sdktrace.AlwaysSample()),
 	)
 
-	require.NoError(t, db.RegisterOTelDriver(tp,
-		// Reader-less provider: meters are usable but export nothing.
-		sdkmetric.NewMeterProvider()))
-
 	dsn := filepath.Join(t.TempDir(), "otel.db")
-	database, err := db.InitDB(dsn)
+	database, err := db.InitDBInstrumented(dsn, tp,
+		// Reader-less provider: meters are usable but export nothing.
+		sdkmetric.NewMeterProvider())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = database.Close() })
 
@@ -50,5 +52,12 @@ func Test_InitDB_creates_otel_spans_for_queries(t *testing.T) {
 
 func Test_InitDB_rejects_empty_dsn(t *testing.T) {
 	_, err := db.InitDB("")
+	assert.Error(t, err)
+}
+
+// InitDBInstrumented must both register the OTel driver and open the DB, so
+// callers cannot get the ordering wrong and silently run uninstrumented.
+func Test_InitDBInstrumented_rejects_empty_dsn(t *testing.T) {
+	_, err := db.InitDBInstrumented("", sdktrace.NewTracerProvider(), sdkmetric.NewMeterProvider())
 	assert.Error(t, err)
 }
