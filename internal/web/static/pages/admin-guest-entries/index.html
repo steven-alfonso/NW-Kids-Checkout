@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NW Kids - Guest Entries</title>
+    <link rel="icon" type="image/x-icon" href="/favicon.ico"/>
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"/>
+    <link rel="stylesheet" href="/static/css/tailwind.css?v=dev">
+</head>
+<body class="min-h-screen bg-slate-50 text-slate-900">
+<div class="max-w-4xl mx-auto px-6 py-10">
+    <header class="flex flex-col gap-3 mb-8">
+        <div class="flex items-center justify-between">
+            <div class="flex items-center gap-3">
+                <a href="/"><img src="/static/img/NWKids-logo.svg" alt="NWKids Logo" class="h-14 w-auto"></a>
+                <h1 class="text-3xl font-semibold">Guest Entries</h1>
+            </div>
+        </div>
+        <p class="text-sm text-slate-600">Click any value to copy it, then paste it into Planning Center.</p>
+    </header>
+
+    <div id="page-status" class="hidden mb-4 rounded-md border border-slate-200 bg-white px-4 py-3 text-sm"></div>
+    <div id="entries-container" class="space-y-4"></div>
+</div>
+<script src="/static/pages/admin-guest-entries/admin-guest-entries.js?v=dev"></script>
+</body>
+</html>
