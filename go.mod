@@ -15,6 +15,7 @@ require (
 
 require (
 	dario.cat/mergo v1.0.2 // indirect
+	github.com/XSAM/otelsql v0.43.0 // indirect
 	github.com/air-verse/air v1.64.0 // indirect
 	github.com/andybalholm/brotli v1.1.0 // indirect
 	github.com/bep/godartsass/v2 v2.5.0 // indirect
