@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
@@ -32,6 +33,12 @@ func Test_routes_propagate_otel_span_context_to_repos(t *testing.T) {
 		sdktrace.WithSampler(sdktrace.AlwaysSample()),
 	))
 	t.Cleanup(func() { otel.SetTracerProvider(prevProvider) })
+
+	require.NoError(t, db.RegisterOTelDriver(
+		otel.GetTracerProvider(),
+		// Reader-less provider: meters are usable but export nothing.
+		sdkmetric.NewMeterProvider(),
+	))
 
 	database, err := db.InitDB(filepath.Join(t.TempDir(), "nest.db"))
 	require.NoError(t, err)

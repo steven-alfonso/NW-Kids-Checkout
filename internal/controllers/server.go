@@ -55,6 +55,12 @@ func StartServer(port int, dbFilepath string) error {
 		slog.Warn("runtime metrics unavailable", slog.String("error", runtimeErr.Error()))
 	}
 
+	if tel.Enabled() {
+		if registerErr := db.RegisterOTelDriver(tel.TracerProvider, tel.MeterProvider); registerErr != nil {
+			return fmt.Errorf("registering otel db driver: %w", registerErr)
+		}
+	}
+
 	database, err := db.InitDB(dbFilepath)
 	if err != nil {
 		panic(err)
@@ -114,6 +120,9 @@ func StartServer(port int, dbFilepath string) error {
 		},
 	})
 	app.Use(middleware.RequestLogger())
+	// Recover must run before the tracing/metrics middleware so panics are
+	// converted into 500 errors that those middleware can observe.
+	app.Use(recover.New())
 	if tel.Enabled() {
 		app.Use(otelfiber.Middleware(
 			otelfiber.WithTracerProvider(tel.TracerProvider),
@@ -128,7 +137,6 @@ func StartServer(port int, dbFilepath string) error {
 		app.Use(httpMetrics)
 	}
 	app.Use(middleware.HTTPAccessLogger())
-	app.Use(recover.New())
 
 	registerRoutes(app, database, store, storage)
 

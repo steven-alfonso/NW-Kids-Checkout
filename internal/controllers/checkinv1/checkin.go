@@ -2,7 +2,6 @@ package checkinv1
 
 import (
 	"bytes"
-	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -187,7 +186,7 @@ func (controller *Controller) checkoutsWebsocket(c *fiber.Ctx) error {
 
 			log.InfoContext(c.UserContext(), "recv filter", slog.String("filter", fmt.Sprintf("%+v", filter)))
 
-			checkins, err := controller.checkinRepo.ListCheckins(context.Background(), checkin.Filter{
+			checkins, err := controller.checkinRepo.ListCheckins(c.UserContext(), checkin.Filter{
 				LocationName:      controller.wsClients[webscocketConn].location,
 				CheckedOutAtAfter: time.Now().Add(controller.wsClients[webscocketConn].checkedOutAfterDelta),
 			})
@@ -196,7 +195,7 @@ func (controller *Controller) checkoutsWebsocket(c *fiber.Ctx) error {
 				continue
 			}
 
-			manualCheckins, err := controller.manualRepo.ListManualCheckins(context.Background(), manualcheckin.Filter{
+			manualCheckins, err := controller.manualRepo.ListManualCheckins(c.UserContext(), manualcheckin.Filter{
 				CheckedOutAtAfter: time.Now().Add(controller.wsClients[webscocketConn].checkedOutAfterDelta),
 				Recent:            true,
 			})

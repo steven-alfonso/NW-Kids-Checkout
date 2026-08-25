@@ -9,24 +9,28 @@ import (
 
 	"github.com/XSAM/otelsql"
 	_ "github.com/mattn/go-sqlite3"
-	semconv "go.opentelemetry.io/otel/semconv/v1.37.0"
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/semconv/v1.37.0"
+	"go.opentelemetry.io/otel/trace"
 )
 
-// instrumentedDriver registers the sqlite3 driver wrapped with OpenTelemetry
-// instrumentation exactly once per process. It resolves against the global
-// tracer/meter providers at registration time, so telemetry.Setup must run
-// before the first InitDB call. When telemetry is disabled the global
-// providers are no-ops and the wrapper adds no overhead.
+// RegisterOTelDriver registers the sqlite3 driver wrapped with OpenTelemetry
+// instrumentation exactly once per process, bound to the given providers.
+// Call it before the first InitDB when telemetry is enabled; InitDB falls back
+// to the raw driver otherwise. Registration is a no-op after the first call,
+// so the initial providers win regardless of later invocations.
 var (
 	driverOnce  sync.Once
 	driverName  string
 	registerErr error
 )
 
-func instrumentedDriver() (string, error) {
+func RegisterOTelDriver(tp trace.TracerProvider, mp metric.MeterProvider) error {
 	driverOnce.Do(func() {
 		driverName, registerErr = otelsql.Register(
 			"sqlite3",
+			otelsql.WithTracerProvider(tp),
+			otelsql.WithMeterProvider(mp),
 			otelsql.WithAttributes(semconv.DBSystemNameSQLite),
 		)
 		if registerErr != nil {
@@ -35,10 +39,11 @@ func instrumentedDriver() (string, error) {
 		}
 		slog.Debug("registered otel-instrumented sqlite driver", slog.String("driver_name", driverName))
 	})
-	return driverName, registerErr
+	return registerErr
 }
 
-// InitDB initializes the database connection.
+// InitDB initializes the database connection. It uses the OTel-instrumented
+// driver when RegisterOTelDriver has been called; the raw driver otherwise.
 func InitDB(dataSourceName string) (*sql.DB, error) {
 	if dataSourceName == "" {
 		return nil, errors.New("missing database DSN")
@@ -46,9 +51,9 @@ func InitDB(dataSourceName string) (*sql.DB, error) {
 
 	slog.Info("initializing database connection", slog.String("dsn", dataSourceName))
 
-	name, err := instrumentedDriver()
-	if err != nil {
-		return nil, err
+	name := "sqlite3"
+	if driverName != "" {
+		name = driverName
 	}
 
 	db, err := sql.Open(name, dataSourceName)

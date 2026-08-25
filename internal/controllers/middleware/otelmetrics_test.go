@@ -1,6 +1,8 @@
 package middleware
 
 import (
+	"errors"
+	"fmt"
 	"net/http/httptest"
 	"testing"
 
@@ -46,7 +48,7 @@ func Test_HTTPMetrics_records_duration_and_requests(t *testing.T) {
 	assert.Equal(t, fiber.StatusOK, req.StatusCode)
 
 	hist := collectMetric(t, reader, "http.server.request.duration")
-	require.Equal(t, "ms", hist.Unit)
+	require.Equal(t, "s", hist.Unit)
 	data, ok := hist.Data.(metricdata.Histogram[float64])
 	require.True(t, ok, "expected histogram data point")
 
@@ -104,4 +106,89 @@ func Test_HTTPMetrics_counts_server_errors(t *testing.T) {
 		total += dp.Value
 	}
 	assert.Equal(t, int64(1), total, "only the 5xx response should be counted as an error")
+}
+
+func Test_HTTPMetrics_treats_wrapped_errors_as_server_errors(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	t.Cleanup(func() { _ = mp.Shutdown(t.Context()) })
+
+	mw, err := HTTPMetrics(mp.Meter("test"))
+	require.NoError(t, err)
+
+	app := fiber.New()
+	app.Use(mw)
+	// Handlers that return plain (non-*fiber.Error) errors render as 500 via
+	// the error handler after middleware unwinds; metrics must infer that.
+	app.Get("/wrapped", func(c *fiber.Ctx) error {
+		return fmt.Errorf("db exploded: %w", errors.New("root cause"))
+	})
+
+	resp, err := app.Test(httptest.NewRequest(fiber.MethodGet, "/wrapped", nil))
+	require.NoError(t, err)
+	assert.Equal(t, fiber.StatusInternalServerError, resp.StatusCode)
+
+	errMetric := collectMetric(t, reader, "http.server.errors")
+	errSum, ok := errMetric.Data.(metricdata.Sum[int64])
+	require.True(t, ok, "expected sum data for error counter")
+	total := int64(0)
+	for _, dp := range errSum.DataPoints {
+		total += dp.Value
+	}
+	assert.Equal(t, int64(1), total, "wrapped non-fiber errors must be counted as server errors")
+
+	hist := collectMetric(t, reader, "http.server.request.duration")
+	data, ok := hist.Data.(metricdata.Histogram[float64])
+	require.True(t, ok, "expected histogram data point")
+	for _, dp := range data.DataPoints {
+		statusVal, has := dp.Attributes.Value(attribute.Key("http.response.status_code"))
+		if has {
+			assert.Equal(t, int64(fiber.StatusInternalServerError), statusVal.AsInt64(),
+				"wrapped non-fiber errors must be recorded with a 500 status attr")
+		}
+	}
+}
+
+func Test_HTTPMetrics_collapses_unmatched_routes(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	t.Cleanup(func() { _ = mp.Shutdown(t.Context()) })
+
+	mw, err := HTTPMetrics(mp.Meter("test"))
+	require.NoError(t, err)
+
+	app := fiber.New()
+	app.Use(mw)
+	app.Get("/known", func(c *fiber.Ctx) error {
+		return c.SendString("hi")
+	})
+
+	for _, path := range []string{"/missing-one", "/missing-two"} {
+		_, err := app.Test(httptest.NewRequest(fiber.MethodGet, path, nil))
+		require.NoError(t, err)
+	}
+
+	requests := collectMetric(t, reader, "http.server.requests")
+	reqData, ok := requests.Data.(metricdata.Sum[int64])
+	require.True(t, ok, "expected sum data for request counter")
+
+	unmatchedTotal := int64(0)
+	routeLabels := map[string]bool{}
+	for _, dp := range reqData.DataPoints {
+		routeVal, has := dp.Attributes.Value(attribute.Key("http.route"))
+		require.True(t, has, "expected http.route attr on every datapoint")
+		routeLabels[routeVal.AsString()] = true
+		if routeVal.AsString() == "UNMATCHED" {
+			unmatchedTotal += dp.Value
+			// Raw request paths must never leak into the route label.
+			for _, kv := range dp.Attributes.ToSlice() {
+				assert.NotEqual(t, "/missing-one", string(kv.Key))
+				assert.NotEqual(t, "/missing-two", string(kv.Key))
+			}
+		}
+	}
+	assert.Equal(t, int64(2), unmatchedTotal,
+		"both unmatched requests should be recorded")
+	assert.Equal(t, map[string]bool{"UNMATCHED": true}, routeLabels,
+		"both unmatched requests should share the single UNMATCHED route label")
 }

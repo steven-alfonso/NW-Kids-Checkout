@@ -8,20 +8,22 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
 
 func Test_InitDB_creates_otel_spans_for_queries(t *testing.T) {
 	exp := tracetest.NewInMemoryExporter()
-	prevProvider := otel.GetTracerProvider()
-	otel.SetTracerProvider(sdktrace.NewTracerProvider(
+	tp := sdktrace.NewTracerProvider(
 		sdktrace.WithSyncer(exp),
 		sdktrace.WithSampler(sdktrace.AlwaysSample()),
-	))
-	t.Cleanup(func() { otel.SetTracerProvider(prevProvider) })
+	)
+
+	require.NoError(t, db.RegisterOTelDriver(tp,
+		// Reader-less provider: meters are usable but export nothing.
+		sdkmetric.NewMeterProvider()))
 
 	dsn := filepath.Join(t.TempDir(), "otel.db")
 	database, err := db.InitDB(dsn)
