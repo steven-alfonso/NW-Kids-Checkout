@@ -64,7 +64,6 @@ CREATE TABLE parents (
     email TEXT NOT NULL,
     created_at DATETIME NOT NULL
 );
-CREATE TABLE sqlite_sequence(name,seq);
 CREATE TABLE children (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     parent_id INTEGER NOT NULL REFERENCES parents(id),

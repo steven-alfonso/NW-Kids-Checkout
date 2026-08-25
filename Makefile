@@ -26,7 +26,7 @@ db-migrate:
 	@tmpdb=$$(mktemp) && \
 	sqlite3 $$tmpdb < db/pragmas.sqlite && \
 	migrate -source file://db/migrations -database "sqlite3://$$tmpdb" up && \
-	sqlite3 $$tmpdb .schema | grep -v -e '^CREATE TABLE schema_migrations' -e '^CREATE UNIQUE INDEX version_unique ON schema_migrations' > db/structure.sql && \
+	sqlite3 $$tmpdb .schema | grep -v -e '^CREATE TABLE schema_migrations' -e '^CREATE UNIQUE INDEX version_unique ON schema_migrations' -e '^CREATE TABLE sqlite_sequence' > db/structure.sql && \
 	rm -f $$tmpdb && \
 	migrate -source file://db/migrations -database "sqlite3://$(KIDS_CHECKIN_DB_FILE)" up
 
