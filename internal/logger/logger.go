@@ -12,7 +12,7 @@ func Init(level slog.Leveler) {
 		AddSource:   false,
 		ReplaceAttr: replaceAttr,
 	})
-	slog.SetDefault(slog.New(handler))
+	slog.SetDefault(slog.New(NewTraceHandler(handler)))
 }
 
 func replaceAttr(groups []string, a slog.Attr) slog.Attr {

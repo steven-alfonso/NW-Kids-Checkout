@@ -24,10 +24,19 @@ import (
 	"kids-checkin/internal/repo/eventcheckwindow"
 	"kids-checkin/internal/repo/location"
 	"kids-checkin/internal/static"
+	"kids-checkin/internal/telemetry"
 
 	"github.com/google/uuid"
 	"github.com/urfave/cli/v3"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
+
+// fetcherTracer resolves against the global tracer provider at span creation
+// time, so it picks up the provider installed by telemetry.Setup.
+var fetcherTracer = otel.Tracer("kids-checkin/checkout-fetcher")
 
 // eventMutexStripeCount is the number of striped per-event locks. A fixed pool
 // bounds memory: a per-event map of mutexes would grow without bound as new
@@ -262,8 +271,25 @@ type retryState struct {
 // to keep an in-memory location map (PlanningCenterID -> local ID) refreshed
 // every 5 minutes.
 func FetchCheckouts(ctx context.Context, cmd *cli.Command) error {
+	tel, err := telemetry.Setup(ctx, "kids-checkin-fetcher")
+	if err != nil {
+		return fmt.Errorf("setting up telemetry: %w", err)
+	}
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if shutdownErr := tel.Shutdown(shutdownCtx); shutdownErr != nil {
+			slog.Warn("telemetry shutdown failed", slog.String("error", shutdownErr.Error()))
+		}
+	}()
+
 	dbFile := cmd.String("db-file")
-	database, err := db.InitDB(dbFile)
+	var database *sql.DB
+	if tel.Enabled() {
+		database, err = db.InitDBInstrumented(dbFile, tel.TracerProvider, tel.MeterProvider)
+	} else {
+		database, err = db.InitDB(dbFile)
+	}
 	if err != nil {
 		return fmt.Errorf("init db %s: %w", dbFile, err)
 	}
@@ -509,6 +535,9 @@ func shouldSwallowLoopError(ctx context.Context, stopCh <-chan struct{}) bool {
 }
 
 func (s *Service) eventCheckoutLoop(ctx context.Context, stopCh <-chan struct{}) error {
+	ctx, span := fetcherTracer.Start(ctx, "checkout_fetch_cycle")
+	defer span.End()
+
 	select {
 	case <-stopCh:
 		return nil
@@ -741,7 +770,20 @@ func (s *Service) inRetryBackoff(eventID int64, now time.Time) bool {
 	return ok && st.backoffUntil.After(now)
 }
 
-func (s *Service) processEventCheckouts(ctx context.Context, ev event.Event, now time.Time) error {
+func (s *Service) processEventCheckouts(ctx context.Context, ev event.Event, now time.Time) (err error) {
+	ctx, span := fetcherTracer.Start(
+		ctx,
+		"process_event_checkouts",
+		trace.WithAttributes(attribute.String("pc_event_id", ev.PlanningCenterID)),
+	)
+	defer func() {
+		if err != nil {
+			span.SetStatus(codes.Error, err.Error())
+			span.RecordError(err)
+		}
+		span.End()
+	}()
+
 	mu := s.getEventMutex(ev.ID)
 	mu.Lock()
 	defer mu.Unlock()

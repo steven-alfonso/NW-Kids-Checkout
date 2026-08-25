@@ -2,7 +2,6 @@ package checkinv1
 
 import (
 	"bytes"
-	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -123,12 +122,12 @@ func (controller *Controller) checkoutsWeb(c *fiber.Ctx) error {
 	}
 	manualFilter.Recent = true
 
-	checkins, err := controller.checkinRepo.ListCheckins(c.Context(), filter)
+	checkins, err := controller.checkinRepo.ListCheckins(c.UserContext(), filter)
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
 	}
 
-	manualCheckins, err := controller.manualRepo.ListManualCheckins(c.Context(), manualFilter)
+	manualCheckins, err := controller.manualRepo.ListManualCheckins(c.UserContext(), manualFilter)
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
 	}
@@ -136,7 +135,7 @@ func (controller *Controller) checkoutsWeb(c *fiber.Ctx) error {
 	checkins = sortCheckins(checkins)
 	manualCheckins = sortManualCheckins(manualCheckins)
 
-	_, err = controller.locationRepo.ListLocations(c.Context(), location.LocationFilter{})
+	_, err = controller.locationRepo.ListLocations(c.UserContext(), location.LocationFilter{})
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
 	}
@@ -157,7 +156,7 @@ func (controller *Controller) checkoutsWebsocket(c *fiber.Ctx) error {
 		}
 		// c.Locals is added to the *websocket.Conn
 		slog.InfoContext(
-			c.Context(),
+			c.UserContext(),
 			"client connected to websocket",
 			slog.String("allowed", fmt.Sprintf("%v", webscocketConn.Locals("allowed"))),
 			slog.String("id", webscocketConn.Params("id")),
@@ -174,34 +173,34 @@ func (controller *Controller) checkoutsWebsocket(c *fiber.Ctx) error {
 
 		for {
 			if mt, msg, err = webscocketConn.ReadMessage(); err != nil {
-				log.WarnContext(c.Context(), "error reading from websocket", slog.String("error", err.Error()), slog.Any("err", err))
+				log.WarnContext(c.UserContext(), "error reading from websocket", slog.String("error", err.Error()), slog.Any("err", err))
 				delete(controller.wsClients, webscocketConn)
 				break
 			}
 			filter := CheckinFilter{}
 			err = json.Unmarshal(msg, &filter)
 			if err != nil {
-				log.WarnContext(c.Context(), "cannot unmarshal filter", slog.String("error", err.Error()), slog.Any("err", err))
+				log.WarnContext(c.UserContext(), "cannot unmarshal filter", slog.String("error", err.Error()), slog.Any("err", err))
 				continue
 			}
 
-			log.InfoContext(c.Context(), "recv filter", slog.String("filter", fmt.Sprintf("%+v", filter)))
+			log.InfoContext(c.UserContext(), "recv filter", slog.String("filter", fmt.Sprintf("%+v", filter)))
 
-			checkins, err := controller.checkinRepo.ListCheckins(context.Background(), checkin.Filter{
+			checkins, err := controller.checkinRepo.ListCheckins(c.UserContext(), checkin.Filter{
 				LocationName:      controller.wsClients[webscocketConn].location,
 				CheckedOutAtAfter: time.Now().Add(controller.wsClients[webscocketConn].checkedOutAfterDelta),
 			})
 			if err != nil {
-				log.ErrorContext(c.Context(), "cannot list checkins", slog.String("error", err.Error()), slog.Any("err", err))
+				log.ErrorContext(c.UserContext(), "cannot list checkins", slog.String("error", err.Error()), slog.Any("err", err))
 				continue
 			}
 
-			manualCheckins, err := controller.manualRepo.ListManualCheckins(context.Background(), manualcheckin.Filter{
+			manualCheckins, err := controller.manualRepo.ListManualCheckins(c.UserContext(), manualcheckin.Filter{
 				CheckedOutAtAfter: time.Now().Add(controller.wsClients[webscocketConn].checkedOutAfterDelta),
 				Recent:            true,
 			})
 			if err != nil {
-				log.ErrorContext(c.Context(), "cannot list manual checkins", slog.String("error", err.Error()), slog.Any("err", err))
+				log.ErrorContext(c.UserContext(), "cannot list manual checkins", slog.String("error", err.Error()), slog.Any("err", err))
 				continue
 			}
 
@@ -212,12 +211,12 @@ func (controller *Controller) checkoutsWebsocket(c *fiber.Ctx) error {
 				ManualCheckins: repoManualCheckinSliceToOutput(manualCheckins),
 			})
 			if err != nil {
-				log.ErrorContext(c.Context(), "cannot marshal checkins", slog.String("error", err.Error()), slog.Any("err", err))
+				log.ErrorContext(c.UserContext(), "cannot marshal checkins", slog.String("error", err.Error()), slog.Any("err", err))
 				continue
 			}
 
 			if err = webscocketConn.WriteMessage(mt, msg); err != nil {
-				log.WarnContext(c.Context(), "cannot write to websocket", slog.String("error", err.Error()))
+				log.WarnContext(c.UserContext(), "cannot write to websocket", slog.String("error", err.Error()))
 				webscocketConn.Close()
 
 				delete(controller.wsClients, webscocketConn)
@@ -258,7 +257,7 @@ func (controller *Controller) PatchCheckedOutConfirmed(c *fiber.Ctx) error {
 	}
 	confirmed := *payload.Confirmed
 
-	updated, err := controller.checkinRepo.SetCheckedOutConfirmedAt(c.Context(), planningCenterID, confirmed)
+	updated, err := controller.checkinRepo.SetCheckedOutConfirmedAt(c.UserContext(), planningCenterID, confirmed)
 	if err != nil {
 		if errors.Is(err, repo.ErrNotFound) {
 			return fiber.NewError(fiber.StatusNotFound, "checkin not found")

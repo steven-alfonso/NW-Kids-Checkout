@@ -41,14 +41,19 @@ func HTTPAccessLogger() fiber.Handler {
 		dur := time.Since(start)
 
 		status := c.Response().StatusCode()
-		if err != nil {
-			var e *fiber.Error
-			if errors.As(err, &e) {
-				status = e.Code
-			}
+		// The fiber error handler runs after middleware unwinds, so the
+		// response status is not yet set for returned errors. Infer it the
+		// same way the app error handler does: unwrap with errors.As so a
+		// wrapped *fiber.Error keeps its own code; any other error (including
+		// one recovered from a panic) renders as 500.
+		var ferr *fiber.Error
+		if errors.As(err, &ferr) {
+			status = ferr.Code
+		} else if err != nil {
+			status = fiber.StatusInternalServerError
 		}
 
-		GetLogger(c).InfoContext(c.Context(), "request",
+		GetLogger(c).InfoContext(c.UserContext(), "request",
 			slog.String("method", c.Method()),
 			slog.String("path", c.Path()),
 			slog.Int("status", status),
