@@ -61,6 +61,10 @@ type Repo interface {
 	CreateSubmission(ctx context.Context, parent Parent, children []Child) (Submission, error)
 	ListSubmissions(ctx context.Context, filter Filter) ([]Submission, error)
 	UpdateSubmissionStatus(ctx context.Context, publicID string, status string, now time.Time) error
+	// ApproveSubmission creates one manual_checkins row per child of the
+	// (pending) submission and transitions it to approved in a single
+	// transaction. Returns repo.ErrNotFound if publicID is unknown.
+	ApproveSubmission(ctx context.Context, publicID string, now time.Time) error
 }
 
 type sqliteRepo struct {
@@ -273,6 +277,89 @@ func (s *sqliteRepo) UpdateSubmissionStatus(ctx context.Context, publicID string
 	}
 	if ra == 0 {
 		return repo.ErrNotFound
+	}
+	return nil
+}
+
+func (s *sqliteRepo) ApproveSubmission(ctx context.Context, publicID string, now time.Time) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	var parentID int64
+	var status string
+	err = squirrel.Select("status", "parent_id").
+		From("guest_submissions").
+		Where(squirrel.Eq{"public_id": publicID}).
+		RunWith(tx).
+		QueryRowContext(ctx).
+		Scan(&status, &parentID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return repo.ErrNotFound
+		}
+		return fmt.Errorf("querying guest submission: %w", err)
+	}
+	if status != StatusPending {
+		return fmt.Errorf("cannot approve submission in status %s", status)
+	}
+
+	rows, err := squirrel.Select("id", "first_name", "last_name").
+		From("children").
+		Where(squirrel.Eq{"parent_id": parentID}).
+		OrderBy("id").
+		RunWith(tx).
+		QueryContext(ctx)
+	if err != nil {
+		return fmt.Errorf("querying children: %w", err)
+	}
+	type checkinChild struct {
+		ID        int64
+		FirstName string
+		LastName  string
+	}
+	children := make([]checkinChild, 0)
+	for rows.Next() {
+		var child checkinChild
+		if err := rows.Scan(&child.ID, &child.FirstName, &child.LastName); err != nil {
+			rows.Close()
+			return fmt.Errorf("scanning child: %w", err)
+		}
+		children = append(children, child)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return fmt.Errorf("iterating children: %w", err)
+	}
+	rows.Close()
+
+	if len(children) == 0 {
+		return errors.New("submission has no children")
+	}
+
+	for _, child := range children {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO manual_checkins (public_id, child_id, first_name, last_name, checked_out_at, checked_out_confirmed_at) VALUES (?, ?, ?, ?, NULL, NULL)`,
+			uuid.New().String(), child.ID, child.FirstName, child.LastName); err != nil {
+			return fmt.Errorf("inserting manual checkin: %w", err)
+		}
+	}
+
+	if _, err := squirrel.Update("guest_submissions").
+		Set("status", StatusApproved).
+		Set("approved_at", now.UTC()).
+		Set("rejected_at", nil).
+		Set("entered_at", nil).
+		Where(squirrel.Eq{"public_id": publicID}).
+		RunWith(tx).
+		ExecContext(ctx); err != nil {
+		return fmt.Errorf("updating submission status: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit tx: %w", err)
 	}
 	return nil
 }

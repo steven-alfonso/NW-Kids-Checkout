@@ -14,7 +14,6 @@ import (
 	"kids-checkin/internal/controllers/session"
 	"kids-checkin/internal/repo"
 	"kids-checkin/internal/repo/guestsubmission"
-	"kids-checkin/internal/repo/manualcheckin"
 	"kids-checkin/internal/web/static"
 
 	"github.com/gofiber/fiber/v2"
@@ -22,14 +21,12 @@ import (
 
 type Controller struct {
 	submissionRepo guestsubmission.Repo
-	manualRepo     manualcheckin.Repo
 	sessionStore   session.Storer
 }
 
 func NewController(db *sql.DB, sessionStore session.Storer) *Controller {
 	return &Controller{
 		submissionRepo: guestsubmission.NewRepo(db),
-		manualRepo:     manualcheckin.NewRepo(db),
 		sessionStore:   sessionStore,
 	}
 }
@@ -237,19 +234,10 @@ func (controller *Controller) PatchSubmissionStatus(c *fiber.Ctx) error {
 	}
 
 	if payload.Status == guestsubmission.StatusApproved {
-		for _, child := range submission.Children {
-			_, err := controller.manualRepo.CreateManualCheckin(c.Context(), manualcheckin.ManualCheckin{
-				ChildID:   child.ID,
-				FirstName: child.FirstName,
-				LastName:  child.LastName,
-			})
-			if err != nil {
-				return fiber.NewError(fiber.StatusInternalServerError, err.Error())
-			}
-		}
+		err = controller.submissionRepo.ApproveSubmission(c.Context(), publicID, time.Now().UTC())
+	} else {
+		err = controller.submissionRepo.UpdateSubmissionStatus(c.Context(), publicID, payload.Status, time.Now().UTC())
 	}
-
-	err = controller.submissionRepo.UpdateSubmissionStatus(c.Context(), publicID, payload.Status, time.Now().UTC())
 	if err != nil {
 		if errors.Is(err, repo.ErrNotFound) {
 			return fiber.NewError(fiber.StatusNotFound, "submission not found")
@@ -260,6 +248,9 @@ func (controller *Controller) PatchSubmissionStatus(c *fiber.Ctx) error {
 	updated, err := controller.submissionRepo.ListSubmissions(c.Context(), guestsubmission.Filter{PublicID: publicID})
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
+	}
+	if len(updated) == 0 {
+		return fiber.NewError(fiber.StatusInternalServerError, "submission not found after update")
 	}
 	return c.JSON(submissionToResponse(updated[0]))
 }

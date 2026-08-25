@@ -225,3 +225,28 @@ func TestController_ApproveCreatesManualCheckins(t *testing.T) {
 	require.Len(t, rows, 2)
 	assert.NotZero(t, rows[0].ChildID)
 }
+
+func TestController_PatchSubmissionNotFound(t *testing.T) {
+	app, _, testDB := setupAuthedApp(t, "")
+	wipeSubmissionTables(t, testDB)
+
+	body, _ := json.Marshal(map[string]interface{}{"status": "approved"})
+	req := httptest.NewRequest("PATCH", "/v1/checkins/guest-submissions/does-not-exist/status", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := app.Test(req)
+	require.Equal(t, fiber.StatusNotFound, resp.StatusCode)
+}
+
+func TestController_RequiresAuth(t *testing.T) {
+	app := fiber.New()
+	store := session.New()
+	testDB, cleanup, err := db.PrepareTestDB()
+	require.NoError(t, err)
+	t.Cleanup(cleanup)
+	NewController(testDB, store).RegisterRoutes(app)
+
+	req := httptest.NewRequest("GET", "/v1/checkins/guest-submissions", nil)
+	resp, _ := app.Test(req)
+	require.Equal(t, fiber.StatusFound, resp.StatusCode)
+	require.Contains(t, resp.Header.Get("Location"), "/login")
+}

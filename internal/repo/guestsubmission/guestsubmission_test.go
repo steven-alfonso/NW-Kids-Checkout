@@ -34,6 +34,8 @@ func TestMain(m *testing.M) {
 func wipeAll(t *testing.T) {
 	_, err := squirrel.Delete("guest_submissions").RunWith(testDB).ExecContext(t.Context())
 	require.NoError(t, err)
+	_, err = squirrel.Delete("manual_checkins").RunWith(testDB).ExecContext(t.Context())
+	require.NoError(t, err)
 	_, err = squirrel.Delete("children").RunWith(testDB).ExecContext(t.Context())
 	require.NoError(t, err)
 	_, err = squirrel.Delete("parents").RunWith(testDB).ExecContext(t.Context())
@@ -145,5 +147,42 @@ func Test_sqliteRepo_UpdateSubmissionStatus(t *testing.T) {
 	t.Run("unknown status errors", func(t *testing.T) {
 		err := s.UpdateSubmissionStatus(t.Context(), sub.PublicID, "bogus", time.Now().UTC())
 		require.Error(t, err)
+	})
+}
+
+func Test_sqliteRepo_ApproveSubmission(t *testing.T) {
+	wipeAll(t)
+	s := NewRepo(testDB)
+
+	sub, err := s.CreateSubmission(t.Context(), Parent{
+		FirstName: "John", LastName: "Smith", Phone: "555-1234", Email: "john@example.com",
+	}, []Child{
+		{FirstName: "Timmy", LastName: "Smith", DOB: "2020-01-01", Grade: "k"},
+		{FirstName: "Sara", LastName: "Smith", DOB: "2018-06-15", Grade: "1"},
+	})
+	require.NoError(t, err)
+
+	now := time.Now().UTC()
+	require.NoError(t, s.ApproveSubmission(t.Context(), sub.PublicID, now))
+
+	res, err := s.ListSubmissions(t.Context(), Filter{PublicID: sub.PublicID})
+	require.NoError(t, err)
+	require.Len(t, res, 1)
+	assert.Equal(t, StatusApproved, res[0].Status)
+	assert.WithinDuration(t, now, res[0].ApprovedAt, time.Second)
+
+	for _, child := range sub.Children {
+		var firstName, lastName string
+		err := testDB.QueryRowContext(t.Context(),
+			"SELECT first_name, last_name FROM manual_checkins WHERE child_id = ?", child.ID).
+			Scan(&firstName, &lastName)
+		require.NoError(t, err)
+		assert.Equal(t, child.FirstName, firstName)
+		assert.Equal(t, child.LastName, lastName)
+	}
+
+	t.Run("unknown public id returns repo.ErrNotFound", func(t *testing.T) {
+		err := s.ApproveSubmission(t.Context(), "does-not-exist", time.Now().UTC())
+		require.ErrorIs(t, err, repo.ErrNotFound)
 	})
 }
