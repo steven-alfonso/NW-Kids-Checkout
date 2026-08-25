@@ -187,6 +187,9 @@ func (s *sqliteRepo) ListSubmissions(ctx context.Context, filter Filter) ([]Subm
 		submissions = append(submissions, sub)
 		parentIDs = append(parentIDs, sub.ParentID)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating guest submissions: %w", err)
+	}
 
 	parents := make(map[int64]Parent)
 	if len(parentIDs) > 0 {
@@ -205,6 +208,9 @@ func (s *sqliteRepo) ListSubmissions(ctx context.Context, filter Filter) ([]Subm
 				return nil, fmt.Errorf("scanning parent: %w", err)
 			}
 			parents[p.ID] = p
+		}
+		if err := pRows.Err(); err != nil {
+			return nil, fmt.Errorf("iterating parents: %w", err)
 		}
 	}
 
@@ -226,6 +232,9 @@ func (s *sqliteRepo) ListSubmissions(ctx context.Context, filter Filter) ([]Subm
 				return nil, fmt.Errorf("scanning child: %w", err)
 			}
 			childrenByParent[c.ParentID] = append(childrenByParent[c.ParentID], c)
+		}
+		if err := cRows.Err(); err != nil {
+			return nil, fmt.Errorf("iterating children: %w", err)
 		}
 	}
 
@@ -260,7 +269,7 @@ func (s *sqliteRepo) UpdateSubmissionStatus(ctx context.Context, publicID string
 	}
 	ra, err := res.RowsAffected()
 	if err != nil {
-		return err
+		return fmt.Errorf("rows affected: %w", err)
 	}
 	if ra == 0 {
 		return repo.ErrNotFound

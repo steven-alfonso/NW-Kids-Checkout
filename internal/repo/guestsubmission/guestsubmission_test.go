@@ -40,7 +40,7 @@ func wipeAll(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func Test_csqliteRepo_CreateSubmission(t *testing.T) {
+func Test_sqliteRepo_CreateSubmission(t *testing.T) {
 	wipeAll(t)
 	s := NewRepo(testDB)
 
@@ -69,7 +69,7 @@ func Test_csqliteRepo_CreateSubmission(t *testing.T) {
 	}
 }
 
-func Test_csqliteRepo_ListSubmissions(t *testing.T) {
+func Test_sqliteRepo_ListSubmissions(t *testing.T) {
 	wipeAll(t)
 	s := NewRepo(testDB)
 
@@ -106,7 +106,7 @@ func Test_csqliteRepo_ListSubmissions(t *testing.T) {
 	})
 }
 
-func Test_csqliteRepo_UpdateSubmissionStatus(t *testing.T) {
+func Test_sqliteRepo_UpdateSubmissionStatus(t *testing.T) {
 	wipeAll(t)
 	s := NewRepo(testDB)
 	sub, err := s.CreateSubmission(t.Context(), Parent{
