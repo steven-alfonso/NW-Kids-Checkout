@@ -10,27 +10,56 @@ function setKioskError(message) {
     kioskError.classList.toggle('hidden', !message);
 }
 
+const GRADE_OPTIONS = ['None', 'Pre-K', 'Kindergarten', '1st', '2nd', '3rd', '4th', '5th', '6th', '7th', '8th', '9th', '10th', '11th', '12th'];
+const MAX_CHILDREN = 10;
+
+const inputClass = 'mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-base text-gray-900 shadow-sm focus:border-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-500';
+
 function childRowTemplate() {
     const row = document.createElement('div');
-    row.className = 'child-row grid gap-2';
+    row.className = 'child-row rounded-lg border border-slate-200 bg-slate-50 p-5';
+    const gradeOptions = GRADE_OPTIONS.map(grade => `<option value="${grade}">${grade}</option>`).join('');
     row.innerHTML = `
-        <input class="child-first-name" name="child_first_name" type="text" autocomplete="off" placeholder="First name" required>
-        <input class="child-last-name" name="child_last_name" type="text" autocomplete="off" placeholder="Last name" required>
-        <input class="child-dob" name="child_dob" type="date" autocomplete="off" required>
-        <input class="child-grade" name="child_grade" type="text" autocomplete="off" placeholder="Grade" required>
-        <button type="button" class="remove-child" aria-label="Remove child">Remove</button>
+        <div class="kiosk-field grid gap-3 sm:grid-cols-2">
+            <label class="block text-sm font-semibold text-gray-700">First name
+                <input class="child-first-name ${inputClass}" name="child_first_name" type="text" autocomplete="off" required>
+            </label>
+            <label class="block text-sm font-semibold text-gray-700">Last name
+                <input class="child-last-name ${inputClass}" name="child_last_name" type="text" autocomplete="off" required>
+            </label>
+            <label class="block text-sm font-semibold text-gray-700">Birthdate
+                <input class="child-dob ${inputClass}" name="child_dob" type="date" autocomplete="off" max="${new Date().toISOString().split('T')[0]}" required>
+            </label>
+            <label class="block text-sm font-semibold text-gray-700">Grade
+                <select class="child-grade ${inputClass}" name="child_grade" autocomplete="off">
+                    ${gradeOptions}
+                </select>
+            </label>
+        </div>
+        <button type="button" class="remove-child mt-2 rounded-md border border-red-300 px-3 py-1.5 text-sm font-semibold text-red-600 hover:bg-red-50 cursor-pointer" aria-label="Remove child">Remove</button>
     `;
     row.querySelector('.remove-child').addEventListener('click', () => removeChildRow(row));
     return row;
 }
 
 function addChildRow() {
+    if (childrenContainer.querySelectorAll('.child-row').length >= MAX_CHILDREN) return;
     childrenContainer.appendChild(childRowTemplate());
+    updateChildCount();
 }
 
 function removeChildRow(row) {
     if (childrenContainer.querySelectorAll('.child-row').length === 1) return;
     row.remove();
+    updateChildCount();
+}
+
+function updateChildCount() {
+    const count = childrenContainer.querySelectorAll('.child-row').length;
+    const addChildButton = document.getElementById('add-child');
+    if (addChildButton) {
+        addChildButton.disabled = count >= MAX_CHILDREN;
+    }
 }
 
 function buildPayload() {
@@ -60,11 +89,44 @@ function resetForm() {
     for (let i = rows.length - 1; i >= 1; i--) {
         rows[i].remove();
     }
+    updateChildCount();
 }
 
 function showWelcome() {
     if (welcomePanel) welcomePanel.classList.remove('hidden');
     if (kioskForm) kioskForm.classList.add('hidden');
+    startCountdown();
+}
+
+const COUNTDOWN_SECONDS = 10;
+let countdownInterval = null;
+
+function updateCountdownText(remaining) {
+    const el = document.getElementById('countdown-text');
+    if (el) el.textContent = `Going back to a new guest form in ${remaining}s`;
+}
+
+function stopCountdown() {
+    if (countdownInterval) {
+        clearInterval(countdownInterval);
+        countdownInterval = null;
+    }
+}
+
+function startCountdown() {
+    stopCountdown();
+    let remaining = COUNTDOWN_SECONDS;
+    updateCountdownText(remaining);
+    countdownInterval = setInterval(() => {
+        remaining -= 1;
+        if (remaining <= 0) {
+            stopCountdown();
+            resetForm();
+            showForm();
+            return;
+        }
+        updateCountdownText(remaining);
+    }, 1000);
 }
 
 async function postSubmission(payload) {
@@ -80,8 +142,23 @@ async function postSubmission(payload) {
     return response.json();
 }
 
+function showForm() {
+    stopCountdown();
+    if (welcomePanel) welcomePanel.classList.add('hidden');
+    if (kioskForm) kioskForm.classList.remove('hidden');
+}
+
+function validateForm() {
+    if (!kioskForm) return true;
+    return kioskForm.checkValidity();
+}
+
 async function submitKioskForm() {
     setKioskError('');
+    if (!validateForm()) {
+        if (kioskForm.reportValidity) kioskForm.reportValidity();
+        return;
+    }
     if (submitButton) submitButton.disabled = true;
     try {
         await postSubmission(buildPayload());
@@ -92,6 +169,14 @@ async function submitKioskForm() {
     } finally {
         if (submitButton) submitButton.disabled = false;
     }
+}
+
+const newSubmissionButton = document.getElementById('new-submission-button');
+if (newSubmissionButton) {
+    newSubmissionButton.addEventListener('click', () => {
+        resetForm();
+        showForm();
+    });
 }
 
 if (kioskForm) {
@@ -107,10 +192,16 @@ if (addChildButton) addChildButton.addEventListener('click', addChildRow);
 if (childrenContainer && !childrenContainer.querySelector('.child-row')) {
     addChildRow();
 }
+updateChildCount();
 
 window.addChildRow = addChildRow;
 window.removeChildRow = removeChildRow;
+window.updateChildCount = updateChildCount;
 window.buildPayload = buildPayload;
 window.resetForm = resetForm;
 window.showWelcome = showWelcome;
+window.showForm = showForm;
+window.startCountdown = startCountdown;
+window.stopCountdown = stopCountdown;
+window.validateForm = validateForm;
 window.submitKioskForm = submitKioskForm;

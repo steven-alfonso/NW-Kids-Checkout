@@ -7,6 +7,34 @@
     <link rel="icon" type="image/x-icon" href="/favicon.ico"/>
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"/>
     <link rel="stylesheet" href="/static/css/tailwind.css?v=dev">
+    <style>
+        /* Make native form controls match the styled text inputs, especially
+           Safari's date input and select, which otherwise render with their
+           own box model and ignore Tailwind sizing/padding. */
+        .kiosk-field input,
+        .kiosk-field select {
+            -webkit-appearance: none;
+            appearance: none;
+            box-sizing: border-box;
+            font-family: inherit;
+            font-size: 1rem;
+            line-height: 1.5rem;
+            min-height: 2.75rem;
+        }
+
+        .kiosk-field input[type="date"] {
+            text-align: left;
+        }
+
+        .kiosk-field select {
+            padding-right: 2.25rem;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%2364748b' stroke-width='2'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' d='M19 9l-7 7-7-7'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 0.65rem center;
+            background-size: 1.1rem 1.1rem;
+            cursor: pointer;
+        }
+    </style>
 </head>
 <body class="min-h-screen bg-slate-50 text-slate-900">
 <div class="max-w-lg mx-auto px-6 py-10">
@@ -16,23 +44,23 @@
         <p class="text-sm text-slate-600 text-center">Share your family's info and we'll take care of the rest.</p>
     </header>
 
-    <form id="kiosk-form" class="space-y-6 rounded-xl border border-slate-200 bg-white p-6 shadow-sm" autocomplete="off" novalidate>
-        <section class="space-y-4">
-            <h2 class="text-lg font-semibold text-slate-800">Parent / Guardian</h2>
-            <div>
-                <label for="parent-first-name" class="block text-sm font-semibold text-gray-700">First name</label>
-                <input id="parent-first-name" name="parent_first_name" type="text" autocomplete="off" required
-                       class="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-base text-gray-900 shadow-sm focus:border-gray-500 focus:outline-none">
-            </div>
-            <div>
-                <label for="parent-last-name" class="block text-sm font-semibold text-gray-700">Last name</label>
-                <input id="parent-last-name" name="parent_last_name" type="text" autocomplete="off" required
-                       class="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-base text-gray-900 shadow-sm focus:border-gray-500 focus:outline-none">
-            </div>
-            <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+    <form id="kiosk-form" class="space-y-6 rounded-xl border border-slate-200 bg-white p-6 shadow-sm" autocomplete="off">
+        <section class="kiosk-field rounded-lg border border-slate-200 bg-slate-50 p-5">
+            <h2 class="mb-4 text-lg font-semibold text-slate-800">Parent / Guardian</h2>
+            <div class="grid gap-3 sm:grid-cols-2">
+                <div>
+                    <label for="parent-first-name" class="block text-sm font-semibold text-gray-700">First name</label>
+                    <input id="parent-first-name" name="parent_first_name" type="text" autocomplete="off" required
+                           class="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-base text-gray-900 shadow-sm focus:border-gray-500 focus:outline-none">
+                </div>
+                <div>
+                    <label for="parent-last-name" class="block text-sm font-semibold text-gray-700">Last name</label>
+                    <input id="parent-last-name" name="parent_last_name" type="text" autocomplete="off" required
+                           class="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-base text-gray-900 shadow-sm focus:border-gray-500 focus:outline-none">
+                </div>
                 <div>
                     <label for="parent-phone" class="block text-sm font-semibold text-gray-700">Phone</label>
-                    <input id="parent-phone" name="parent_phone" type="tel" autocomplete="off" required
+                    <input id="parent-phone" name="parent_phone" type="tel" autocomplete="off" pattern=".*\d.*\d.*\d.*\d.*\d.*\d.*\d.*" title="Phone must contain at least 7 digits" required
                            class="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-base text-gray-900 shadow-sm focus:border-gray-500 focus:outline-none">
                 </div>
                 <div>
@@ -62,7 +90,12 @@
 
     <div id="welcome-panel" class="hidden rounded-xl border border-slate-200 bg-white p-8 text-center shadow-sm">
         <h2 class="text-2xl font-semibold text-slate-900 mb-3">Welcome! We're so glad you're here.</h2>
-        <p class="text-slate-600">Our team will take it from here. A staff member will check in your family.</p>
+        <p class="text-slate-600 mb-6">Our team will take it from here. A staff member will check in your family.</p>
+        <button id="new-submission-button" type="button"
+                class="inline-flex items-center justify-center rounded-md border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer">
+            Create new submission
+        </button>
+        <p id="countdown-text" class="mt-4 text-sm text-slate-500"></p>
     </div>
 </div>
 <script src="/static/pages/checkin/checkin.js?v=dev"></script>

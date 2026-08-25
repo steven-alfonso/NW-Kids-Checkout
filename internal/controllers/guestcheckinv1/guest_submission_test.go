@@ -103,6 +103,16 @@ func TestController_CreateSubmissionValidation(t *testing.T) {
 			"parent":   map[string]interface{}{"first_name": "A", "last_name": "B", "phone": "12", "email": "a@b.com"},
 			"children": []map[string]interface{}{{"first_name": "C", "last_name": "D", "dob": "2020-01-01", "grade": "k"}},
 		}},
+		{"more than 10 children", map[string]interface{}{
+			"parent": map[string]interface{}{"first_name": "A", "last_name": "B", "phone": "1234567", "email": "a@b.com"},
+			"children": func() []map[string]interface{} {
+				children := make([]map[string]interface{}, 0, 11)
+				for i := 0; i < 11; i++ {
+					children = append(children, map[string]interface{}{"first_name": "C", "last_name": "D", "dob": "2020-01-01", "grade": "k"})
+				}
+				return children
+			}(),
+		}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

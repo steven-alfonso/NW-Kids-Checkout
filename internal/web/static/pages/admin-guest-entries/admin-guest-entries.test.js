@@ -35,7 +35,7 @@ describe('admin-guest-entries', () => {
         expect(groups[3][0]).toEqual('rejected');
     });
 
-    it('renders each field as a click-to-copy chip', () => {
+    it('renders each field as a labeled click-to-copy chip', () => {
         const window = loadWindow();
         const entry = {
             public_id: 'sub-1',
@@ -47,11 +47,97 @@ describe('admin-guest-entries', () => {
         const chips = window.renderEntry(container, entry);
         expect(container.querySelectorAll('[data-copy]').length).toBeGreaterThanOrEqual(8);
         expect(chips[0].dataset.copy).toBe('John');
+
+        const labels = Array.from(container.querySelectorAll('span.text-xs')).map(el => el.textContent);
+        expect(labels).toContain('first name');
+        expect(labels).toContain('email');
+        expect(labels).toContain('grade');
+    });
+
+    it('shows a Copied tooltip on the field after copying', () => {
+        const window = loadWindow();
+        const entry = {
+            public_id: 'sub-3',
+            status: 'approved',
+            parent: {first_name: 'A', last_name: 'B', phone: '555', email: 'a@b.com'},
+            children: []
+        };
+        const container = window.document.createElement('div');
+        window.renderEntry(container, entry);
+        const chipBtn = container.querySelector('[data-copy]');
+        const field = chipBtn.closest('.relative');
+        window.showCopiedTooltip(field);
+
+        const tip = field.querySelector('.copy-tooltip');
+        expect(tip).not.toBeNull();
+        expect(tip.textContent).toBe('Copied');
     });
 
     it('copies a single value', async () => {
         const window = loadWindow();
         await window.copyValue('Timmy');
         expect(window._copied).toBe('Timmy');
+    });
+
+    it('uses distinct badge colors per status', () => {
+        const window = loadWindow();
+        const entry = {
+            public_id: 'sub-2',
+            status: 'approved',
+            parent: {first_name: 'A', last_name: 'B', phone: '555', email: 'a@b.com'},
+            children: []
+        };
+        const container = window.document.createElement('div');
+        window.renderEntry(container, entry);
+        const badge = container.querySelector('.rounded-full');
+        expect(badge.className).toContain('bg-amber-100');
+        expect(badge.className).toContain('text-amber-800');
+    });
+
+    it('adds an amber accent to approved cards', () => {
+        const window = loadWindow();
+        const container = window.document.createElement('div');
+        window.renderEntry(container, {
+            public_id: 'appr-1',
+            status: 'approved',
+            parent: {first_name: 'A', last_name: 'B', phone: '1', email: 'a@b.com'},
+            children: []
+        });
+        window.renderEntry(container, {
+            public_id: 'pend-1',
+            status: 'pending',
+            parent: {first_name: 'C', last_name: 'D', phone: '2', email: 'c@d.com'},
+            children: []
+        });
+        const cards = container.querySelectorAll('.rounded-xl');
+        const approvedCard = cards[0];
+        const pendingCard = cards[1];
+        expect(approvedCard.className).toContain('border-l-amber-400');
+        expect(pendingCard.className).not.toContain('border-l-amber-400');
+    });
+
+    it('renders the entered section collapsed by default and toggles it open', async () => {
+        const window = loadWindow();
+        const entered = {public_id: 'e-1', status: 'entered', parent: {first_name: 'E', last_name: 'F', phone: '3', email: 'e@f.com'}, children: []};
+        window.fetch = async () => ({ok: true, status: 200, json: async () => [entered]});
+        await window.loadEntries();
+
+        const getBody = () => window.document.getElementById('collapsible-section-entered');
+        const getToggle = () => window.document.querySelector('[data-collapse-toggle="entered"]');
+
+        expect(getBody()).not.toBeNull();
+        expect(getBody().classList.contains('hidden')).toBe(true);
+        expect(getToggle().textContent).toContain('▸');
+        expect(getToggle().getAttribute('aria-expanded')).toBe('false');
+
+        getToggle().click();
+        expect(getBody().classList.contains('hidden')).toBe(false);
+        expect(getBody().classList.contains('space-y-4')).toBe(true);
+        expect(getToggle().getAttribute('aria-expanded')).toBe('true');
+        expect(getToggle().textContent).toContain('▾');
+
+        getToggle().click();
+        expect(getBody().classList.contains('hidden')).toBe(true);
+        expect(getBody().classList.contains('space-y-4')).toBe(false);
     });
 });

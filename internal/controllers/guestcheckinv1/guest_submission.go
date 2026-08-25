@@ -94,6 +94,9 @@ func validateCreateSubmissionPayload(p createSubmissionPayload) error {
 	if len(p.Children) == 0 {
 		return errors.New("at least one child is required")
 	}
+	if len(p.Children) > 10 {
+		return errors.New("at most 10 children are allowed per submission")
+	}
 
 	digits := 0
 	for _, r := range p.Parent.Phone {

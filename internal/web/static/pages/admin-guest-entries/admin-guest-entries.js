@@ -8,6 +8,20 @@ const STATUS_LABELS = {
     entered: 'Entered',
     rejected: 'Rejected'
 };
+const STATUS_BADGE_CLASS = {
+    approved: 'bg-amber-100 text-amber-800',
+    pending: 'bg-sky-100 text-sky-700',
+    entered: 'bg-emerald-100 text-emerald-700',
+    rejected: 'bg-red-100 text-red-700'
+};
+const STATUS_HEADING_CLASS = {
+    approved: 'text-amber-600',
+    pending: 'text-sky-600',
+    entered: 'text-emerald-600',
+    rejected: 'text-red-600'
+};
+const ENTERED_COLLAPSED = true;
+let enteredCollapsed = ENTERED_COLLAPSED;
 
 function setStatus(message, tone = 'info') {
     if (!pageStatus) return;
@@ -29,14 +43,33 @@ function groupByStatus(submissions) {
 }
 
 function chip(value, label) {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.dataset.copy = value ?? '';
-    button.dataset.label = label;
-    button.className = 'inline-flex items-center rounded-md border border-slate-300 bg-white px-2.5 py-1 text-sm text-slate-700 hover:bg-slate-100 cursor-pointer';
-    button.textContent = value ?? '';
-    button.title = `Copy ${label}`;
-    return button;
+    const labelText = label.replace(/_/g, ' ');
+
+    const wrap = document.createElement('div');
+    wrap.className = 'relative inline-flex flex-col';
+
+    const lbl = document.createElement('span');
+    lbl.className = 'mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500';
+    lbl.textContent = labelText;
+
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.dataset.copy = value ?? '';
+    btn.dataset.label = label;
+    btn.className = 'inline-flex items-center rounded-md border border-slate-300 bg-white px-2.5 py-1 text-sm text-slate-700 hover:bg-slate-100 cursor-pointer';
+    btn.textContent = value ?? '';
+    btn.title = `Copy ${labelText}`;
+
+    wrap.append(lbl, btn);
+    return wrap;
+}
+
+function showCopiedTooltip(field) {
+    const tip = document.createElement('span');
+    tip.className = 'copy-tooltip';
+    tip.textContent = 'Copied';
+    field.appendChild(tip);
+    setTimeout(() => tip.remove(), 1000);
 }
 
 function renderEntry(container, entry) {
@@ -49,13 +82,17 @@ function renderEntry(container, entry) {
     title.className = 'font-semibold text-slate-900';
     title.textContent = `${entry.parent.first_name} ${entry.parent.last_name}`;
     const badge = document.createElement('span');
-    badge.className = 'inline-flex items-center rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600';
+    badge.className = `inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold ${STATUS_BADGE_CLASS[entry.status] || 'bg-slate-100 text-slate-600'}`;
     badge.textContent = STATUS_LABELS[entry.status] || entry.status;
     header.append(title, badge);
     card.appendChild(header);
 
+    if (entry.status === 'approved') {
+        card.classList.add('border-l-4', 'border-l-amber-400');
+    }
+
     const parentBlock = document.createElement('div');
-    parentBlock.className = 'mb-4';
+    parentBlock.className = 'mb-4 flex flex-wrap gap-x-6 gap-y-4';
     parentBlock.innerHTML = '<p class="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Parent</p>';
     ['first_name', 'last_name', 'phone', 'email'].forEach(field => {
         parentBlock.appendChild(chip(entry.parent[field], field));
@@ -69,7 +106,7 @@ function renderEntry(container, entry) {
     childrenBlock.appendChild(childrenTitle);
     (entry.children || []).forEach(child => {
         const row = document.createElement('div');
-        row.className = 'mb-1 flex flex-wrap gap-1';
+        row.className = 'mb-4 flex flex-wrap gap-x-6 gap-y-4 items-end';
         ['first_name', 'last_name', 'dob', 'grade'].forEach(field => {
             row.appendChild(chip(child[field], field));
         });
@@ -117,9 +154,31 @@ async function loadEntries() {
         entriesContainer.innerHTML = '';
         const groups = groupByStatus(Array.isArray(data) ? data : []);
         groups.forEach(([status, entries]) => {
+            const isEntered = status === 'entered';
+            const sectionId = `section-${status}`;
             const heading = document.createElement('h2');
-            heading.className = 'mt-6 mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500';
-            heading.textContent = STATUS_LABELS[status];
+            const headingClass = STATUS_HEADING_CLASS[status] || 'text-slate-500';
+            heading.className = `mt-6 mb-3 text-sm font-semibold uppercase tracking-wide ${headingClass}`;
+            heading.textContent = `${STATUS_LABELS[status]} (${entries.length})`;
+
+            if (isEntered) {
+                const body = document.createElement('div');
+                body.id = `collapsible-${sectionId}`;
+                body.className = enteredCollapsed ? 'hidden' : 'space-y-4';
+                entries.forEach(entry => renderEntry(body, entry));
+
+                const toggle = document.createElement('button');
+                toggle.type = 'button';
+                toggle.dataset.collapseToggle = status;
+                toggle.setAttribute('aria-expanded', String(!enteredCollapsed));
+                toggle.className = 'mt-6 mb-3 flex w-full items-center justify-between text-left text-sm font-semibold uppercase tracking-wide cursor-pointer hover:opacity-80';
+                toggle.innerHTML = `<span class="${headingClass}">${STATUS_LABELS[status]} (${entries.length})</span><span aria-hidden="true" class="text-xl leading-none">${enteredCollapsed ? '▸' : '▾'}</span>`;
+                entriesContainer.appendChild(toggle);
+                entriesContainer.appendChild(body);
+                return;
+            }
+
+            heading.textContent = `${STATUS_LABELS[status]} (${entries.length})`;
             entriesContainer.appendChild(heading);
             entries.forEach(entry => renderEntry(entriesContainer, entry));
         });
@@ -136,8 +195,21 @@ if (entriesContainer) {
     entriesContainer.addEventListener('click', async (event) => {
         const target = event.target;
         if (!(target instanceof HTMLElement)) return;
+        if (target.dataset.collapseToggle) {
+            enteredCollapsed = !enteredCollapsed;
+            const body = document.getElementById(`collapsible-section-${target.dataset.collapseToggle}`);
+            if (body) {
+                body.classList.toggle('hidden', enteredCollapsed);
+                body.classList.toggle('space-y-4', !enteredCollapsed);
+            }
+            target.setAttribute('aria-expanded', String(!enteredCollapsed));
+            target.querySelector('span[aria-hidden="true"]').textContent = enteredCollapsed ? '▸' : '▾';
+            return;
+        }
         if (target.dataset.copy !== undefined) {
+            const field = target.closest('.relative') || target;
             await copyValue(target.dataset.copy);
+            showCopiedTooltip(field);
             target.classList.add('ring-2', 'ring-emerald-400');
             setTimeout(() => target.classList.remove('ring-2', 'ring-emerald-400'), 300);
             return;
@@ -159,6 +231,7 @@ if (entriesContainer) {
 window.groupByStatus = groupByStatus;
 window.renderEntry = renderEntry;
 window.copyValue = copyValue;
+window.showCopiedTooltip = showCopiedTooltip;
 window.loadEntries = loadEntries;
 
 loadEntries();
