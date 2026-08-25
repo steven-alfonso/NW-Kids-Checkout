@@ -37,7 +37,7 @@ func (controller *Controller) RegisterRoutes(app *fiber.App) {
 }
 
 func (controller *Controller) GetListLocations(c *fiber.Ctx) error {
-	locations, err := controller.repo.ListLocations(c.Context(), location.LocationFilter{
+	locations, err := controller.repo.ListLocations(c.UserContext(), location.LocationFilter{
 		Name:             c.Query("name"),
 		PlanningCenterID: c.Query("planning_center_id"),
 	})
@@ -59,7 +59,7 @@ func (controller *Controller) PostCreateLocation(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "name is required")
 	}
 
-	_, err = controller.repo.CreateLocation(c.Context(), location.Location{
+	_, err = controller.repo.CreateLocation(c.UserContext(), location.Location{
 		Name:             a.Name,
 		PlanningCenterID: a.PlanningCenterID,
 	})
@@ -85,7 +85,7 @@ func (controller *Controller) PatchUpdateLocation(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "invalid JSON")
 	}
 
-	locations, err := controller.repo.ListLocations(c.Context(), location.LocationFilter{IDs: []int64{locationID}})
+	locations, err := controller.repo.ListLocations(c.UserContext(), location.LocationFilter{IDs: []int64{locationID}})
 	if err != nil {
 		return err
 	}
@@ -107,7 +107,7 @@ func (controller *Controller) PatchUpdateLocation(c *fiber.Ctx) error {
 		}
 	}
 
-	if err := controller.repo.UpdateLocation(c.Context(), current); err != nil {
+	if err := controller.repo.UpdateLocation(c.UserContext(), current); err != nil {
 		if errors.Is(err, repo.ErrNotFound) {
 			return fiber.NewError(fiber.StatusNotFound, "location not found")
 		}

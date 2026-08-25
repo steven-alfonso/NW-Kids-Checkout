@@ -48,7 +48,7 @@ func HTTPAccessLogger() fiber.Handler {
 			}
 		}
 
-		GetLogger(c).InfoContext(c.Context(), "request",
+		GetLogger(c).InfoContext(c.UserContext(), "request",
 			slog.String("method", c.Method()),
 			slog.String("path", c.Path()),
 			slog.Int("status", status),

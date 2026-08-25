@@ -135,7 +135,7 @@ func StartServer(port int, dbFilepath string) error {
 	app.Get("manifest.webmanifest", func(c *fiber.Ctx) error {
 		f, err := static.EmbeddedFS.Open("manifest.webmanifest")
 		if err != nil {
-			middleware.GetLogger(c).WarnContext(c.Context(), "failed to open manifest.webmanifest", slog.String("error", err.Error()))
+			middleware.GetLogger(c).WarnContext(c.UserContext(), "failed to open manifest.webmanifest", slog.String("error", err.Error()))
 			return fiber.ErrInternalServerError
 		}
 		defer f.Close()
@@ -147,7 +147,7 @@ func StartServer(port int, dbFilepath string) error {
 	app.Get("apple-touch-icon.png", func(c *fiber.Ctx) error {
 		f, err := static.EmbeddedFS.Open("img/apple-touch-icon.png")
 		if err != nil {
-			middleware.GetLogger(c).WarnContext(c.Context(), "failed to open apple-touch-icon.png", slog.String("error", err.Error()))
+			middleware.GetLogger(c).WarnContext(c.UserContext(), "failed to open apple-touch-icon.png", slog.String("error", err.Error()))
 			return fiber.ErrInternalServerError
 		}
 		defer f.Close()
@@ -170,7 +170,7 @@ func StartServer(port int, dbFilepath string) error {
 	app.Get("favicon.ico", func(c *fiber.Ctx) error {
 		f, err := static.EmbeddedFS.Open("img/favicon.ico")
 		if err != nil {
-			middleware.GetLogger(c).WarnContext(c.Context(), "failed to open favicon.ico", slog.String("error", err.Error()))
+			middleware.GetLogger(c).WarnContext(c.UserContext(), "failed to open favicon.ico", slog.String("error", err.Error()))
 			return fiber.ErrInternalServerError
 		}
 		defer f.Close()
