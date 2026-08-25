@@ -2,13 +2,9 @@ const API_URL = '';
 
 const manualCheckinsBody = document.getElementById('manual-checkins-body');
 const pageStatus = document.getElementById('page-status');
+const pendingFamiliesContainer = document.getElementById('pending-families');
 
-const modal = document.getElementById('manual-checkin-modal');
-const manualCheckinForm = document.getElementById('manual-checkin-form');
-const manualFirstName = document.getElementById('manual-first-name');
-const manualLastName = document.getElementById('manual-last-name');
-const manualSubmitButton = document.getElementById('manual-checkin-submit');
-
+const PENDING_FAMILIES_REFRESH_INTERVAL_MS = 5000;
 const DEFAULT_CHECKED_OUT_AFTER = '-12h';
 const MANUAL_CHECKINS_REFRESH_INTERVAL_MS = 5000;
 let manualCheckinsController = null;
@@ -32,31 +28,10 @@ function clearPageStatus() {
     pageStatus.textContent = '';
 }
 
-function setManualCheckinError(message) {
-    const errorEl = document.getElementById('manual-checkin-error');
-    if (!errorEl) return;
-
-    if (message) {
-        errorEl.textContent = message;
-        errorEl.classList.remove('hidden');
-    } else {
-        errorEl.textContent = '';
-        errorEl.classList.add('hidden');
-    }
-}
-
-function toggleManualCheckinModal(open) {
-    if (!modal) return;
-
-    if (open) {
-        modal.classList.remove('hidden');
-        modal.setAttribute('aria-hidden', 'false');
-    } else {
-        modal.classList.add('hidden');
-        modal.setAttribute('aria-hidden', 'true');
-        setManualCheckinError('');
-        if (manualCheckinForm) manualCheckinForm.reset();
-    }
+function escapeHtml(value) {
+    const div = document.createElement('div');
+    div.textContent = String(value ?? '');
+    return div.innerHTML;
 }
 
 async function fetchJson(path, options = {}) {
@@ -202,13 +177,86 @@ async function loadManualCheckins() {
     }
 }
 
-async function createManualCheckin(payload) {
-    return fetchJson('/v1/checkins/manual-checkins', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify(payload)
+function renderPendingFamilies(submissions) {
+    if (!pendingFamiliesContainer) return;
+    if (!submissions.length) {
+        pendingFamiliesContainer.innerHTML = '<p class="text-sm text-slate-500">No pending families.</p>';
+        return;
+    }
+    pendingFamiliesContainer.innerHTML = '';
+    submissions.forEach(sub => {
+        const childrenNames = sub.children
+            .map(child => `${escapeHtml(child.first_name)} ${escapeHtml(child.last_name)}`)
+            .join(', ');
+        const card = document.createElement('div');
+        card.className = 'rounded-md border border-amber-200 bg-amber-50 p-4';
+        card.innerHTML = `
+            <p class="font-semibold text-slate-900">${escapeHtml(sub.parent.first_name)} ${escapeHtml(sub.parent.last_name)}</p>
+            <p class="text-sm text-slate-600">${childrenNames}</p>
+            <p class="text-xs text-slate-400">${formatCreatedAt(sub.created_at)}</p>
+            <div class="mt-3 flex gap-2">
+                <button data-approve="${escapeHtml(sub.public_id)}" class="rounded bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-500 cursor-pointer">Approve</button>
+                <button data-reject="${escapeHtml(sub.public_id)}" class="rounded bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-500 cursor-pointer">Reject</button>
+            </div>`;
+        pendingFamiliesContainer.appendChild(card);
     });
 }
+
+async function loadPendingFamilies() {
+    if (!pendingFamiliesContainer) return;
+    try {
+        const data = await fetchJson('/v1/checkins/guest-submissions?status=pending');
+        renderPendingFamilies(Array.isArray(data) ? data : []);
+    } catch (error) {
+        if (error?.name === 'AbortError') return;
+        pendingFamiliesContainer.innerHTML = '<p class="text-sm text-red-600">Failed to load pending families.</p>';
+    }
+}
+
+async function setSubmissionStatus(publicId, status) {
+    await fetchJson(`/v1/checkins/guest-submissions/${publicId}/status`, {
+        method: 'PATCH',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({status})
+    });
+}
+
+async function approveSubmission(publicId) {
+    await setSubmissionStatus(publicId, 'approved');
+    await loadPendingFamilies();
+    await loadManualCheckins();
+}
+
+async function rejectSubmission(publicId) {
+    await setSubmissionStatus(publicId, 'rejected');
+    await loadPendingFamilies();
+}
+
+// event delegation
+if (pendingFamiliesContainer) {
+    pendingFamiliesContainer.addEventListener('click', async (event) => {
+        const target = event.target;
+        if (!(target instanceof HTMLButtonElement)) return;
+        const id = target.dataset.approve || target.dataset.reject;
+        if (!id || target.disabled) return;
+        target.disabled = true;
+        try {
+            if (target.dataset.approve) {
+                await approveSubmission(id);
+            } else {
+                await rejectSubmission(id);
+            }
+        } catch (error) {
+            setPageStatus(`Failed to update: ${error.message}`, 'error');
+            target.disabled = false;
+        }
+    });
+}
+
+window.renderPendingFamilies = renderPendingFamilies;
+window.loadPendingFamilies = loadPendingFamilies;
+window.approveSubmission = approveSubmission;
+window.rejectSubmission = rejectSubmission;
 
 async function checkOutManualCheckin(publicId, checkedOut) {
     if (!publicId) return;
@@ -220,61 +268,6 @@ async function checkOutManualCheckin(publicId, checkedOut) {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-    const openManualCheckinButton = document.getElementById('open-manual-checkin');
-
-    if (openManualCheckinButton) {
-        openManualCheckinButton.addEventListener('click', () => {
-            toggleManualCheckinModal(true);
-            if (manualFirstName) manualFirstName.focus();
-        });
-    }
-
-    document.querySelectorAll('[data-modal-close]').forEach((closeButton) => {
-        closeButton.addEventListener('click', () => toggleManualCheckinModal(false));
-    });
-
-    if (manualCheckinForm) {
-        manualCheckinForm.addEventListener('submit', async (event) => {
-            event.preventDefault();
-            setManualCheckinError('');
-
-            const firstName = manualFirstName?.value.trim() || '';
-            const lastName = manualLastName?.value.trim() || '';
-
-            if (!firstName || !lastName) {
-                setManualCheckinError('First and last name are required.');
-                return;
-            }
-
-            if (manualSubmitButton) {
-                manualSubmitButton.disabled = true;
-                manualSubmitButton.textContent = 'Saving...';
-            }
-
-            try {
-                await createManualCheckin({
-                    first_name: firstName,
-                    last_name: lastName
-                });
-                toggleManualCheckinModal(false);
-                await loadManualCheckins();
-            } catch (error) {
-                setManualCheckinError(error.message || 'Unable to save manual check-in.');
-            } finally {
-                if (manualSubmitButton) {
-                    manualSubmitButton.disabled = false;
-                    manualSubmitButton.textContent = 'Save';
-                }
-            }
-        });
-    }
-
-    document.addEventListener('keydown', (event) => {
-        if (event.key === 'Escape') {
-            toggleManualCheckinModal(false);
-        }
-    });
-
     if (manualCheckinsBody) {
         manualCheckinsBody.addEventListener('click', async (event) => {
             const target = event.target;
@@ -301,4 +294,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     loadManualCheckins();
     setInterval(loadManualCheckins, MANUAL_CHECKINS_REFRESH_INTERVAL_MS);
+
+    loadPendingFamilies();
+    setInterval(loadPendingFamilies, PENDING_FAMILIES_REFRESH_INTERVAL_MS);
 });
