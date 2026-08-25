@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NW Kids - Check In</title>
+    <link rel="icon" type="image/x-icon" href="/favicon.ico"/>
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"/>
+    <link rel="stylesheet" href="/static/css/tailwind.css?v=dev">
+</head>
+<body class="min-h-screen bg-slate-50 text-slate-900">
+<div class="max-w-lg mx-auto px-6 py-10">
+    <header class="flex flex-col items-center gap-4 mb-8">
+        <img src="/static/img/NWKids-logo.svg" alt="NWKids Logo" class="h-16 w-auto">
+        <h1 class="text-2xl font-semibold text-center">Guest Check-In</h1>
+        <p class="text-sm text-slate-600 text-center">Share your family's info and we'll take care of the rest.</p>
+    </header>
+
+    <form id="kiosk-form" class="space-y-6 rounded-xl border border-slate-200 bg-white p-6 shadow-sm" autocomplete="off" novalidate>
+        <section class="space-y-4">
+            <h2 class="text-lg font-semibold text-slate-800">Parent / Guardian</h2>
+            <div>
+                <label for="parent-first-name" class="block text-sm font-semibold text-gray-700">First name</label>
+                <input id="parent-first-name" name="parent_first_name" type="text" autocomplete="off" required
+                       class="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-base text-gray-900 shadow-sm focus:border-gray-500 focus:outline-none">
+            </div>
+            <div>
+                <label for="parent-last-name" class="block text-sm font-semibold text-gray-700">Last name</label>
+                <input id="parent-last-name" name="parent_last_name" type="text" autocomplete="off" required
+                       class="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-base text-gray-900 shadow-sm focus:border-gray-500 focus:outline-none">
+            </div>
+            <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div>
+                    <label for="parent-phone" class="block text-sm font-semibold text-gray-700">Phone</label>
+                    <input id="parent-phone" name="parent_phone" type="tel" autocomplete="off" required
+                           class="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-base text-gray-900 shadow-sm focus:border-gray-500 focus:outline-none">
+                </div>
+                <div>
+                    <label for="parent-email" class="block text-sm font-semibold text-gray-700">Email</label>
+                    <input id="parent-email" name="parent_email" type="email" autocomplete="off" required
+                           class="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-base text-gray-900 shadow-sm focus:border-gray-500 focus:outline-none">
+                </div>
+            </div>
+        </section>
+
+        <section class="space-y-4">
+            <h2 class="text-lg font-semibold text-slate-800">Children</h2>
+            <div id="children-container" class="space-y-4"></div>
+            <button id="add-child" type="button"
+                    class="inline-flex items-center justify-center rounded-md border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer">
+                + Add child
+            </button>
+        </section>
+
+        <div id="kiosk-error" class="hidden rounded-md bg-red-50 px-3 py-2 text-sm text-red-700"></div>
+
+        <button id="kiosk-submit" type="submit"
+                class="inline-flex w-full items-center justify-center rounded-md bg-slate-900 px-4 py-3 text-base font-semibold text-white shadow-sm hover:bg-slate-800 focus:outline-none cursor-pointer">
+            Submit
+        </button>
+    </form>
+
+    <div id="welcome-panel" class="hidden rounded-xl border border-slate-200 bg-white p-8 text-center shadow-sm">
+        <h2 class="text-2xl font-semibold text-slate-900 mb-3">Welcome! We're so glad you're here.</h2>
+        <p class="text-slate-600">Our team will take it from here. A staff member will check in your family.</p>
+    </div>
+</div>
+<script src="/static/pages/checkin/checkin.js?v=dev"></script>
+</body>
+</html>
