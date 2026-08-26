@@ -179,12 +179,49 @@ func Test_sqliteRepo_CreateManualCheckin(t *testing.T) {
 				CheckedOutConfirmedAt: time.Time{},
 			},
 		},
+		{
+			name: "create manual checkin with child id",
+			arg: ManualCheckin{
+				FirstName: "somefirstname",
+				LastName:  "somelastname",
+				ChildID:   1,
+			},
+		},
+		{
+			name: "reject missing first name",
+			arg: ManualCheckin{
+				LastName: "somelastname",
+			},
+			expectErr: true,
+		},
+		{
+			name: "reject missing last name",
+			arg: ManualCheckin{
+				FirstName: "somefirstname",
+			},
+			expectErr: true,
+		},
+		{
+			name: "reject whitespace first name",
+			arg: ManualCheckin{
+				FirstName: "   ",
+				LastName:  "somelastname",
+			},
+			expectErr: true,
+		},
+		{
+			name: "reject missing names and child id",
+			arg: ManualCheckin{
+				ChildID: 0,
+			},
+			expectErr: true,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			actual, err := s.CreateManualCheckin(t.Context(), tt.arg)
 			if tt.expectErr {
-				assert.Error(t, err)
+				assert.ErrorIs(t, err, ErrInvalidManualCheckin)
 				return
 			}
 			require.NoError(t, err)

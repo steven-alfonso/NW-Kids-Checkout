@@ -13,10 +13,14 @@ function loadWindow() {
             <form id="kiosk-form" autocomplete="off">
                 <input id="parent-first-name" name="parent_first_name" value="">
                 <input id="parent-last-name" name="parent_last_name" value="">
-                <input id="parent-phone" name="parent_phone" type="tel" pattern=".*\\d.*\\d.*\\d.*\\d.*\\d.*\\d.*\\d.*" value="">
+                <input id="parent-phone" name="parent_phone" type="tel" value="">
                 <input id="parent-email" name="parent_email" type="email" value="">
                 <div id="children-container"></div>
                 <button id="add-child" type="button">Add child</button>
+                <input id="use-parent-last-name" type="checkbox">
+                <span id="use-parent-last-name-toggle-bg"></span>
+                <span id="use-parent-last-name-toggle-knob"></span>
+                <p id="add-child-hint" class="hidden"></p>
                 <button id="kiosk-submit" type="submit">Submit</button>
                 <div id="kiosk-error" class="hidden"></div>
             </form>
@@ -83,8 +87,10 @@ describe('kiosk form', () => {
         }
         expect(window.document.querySelectorAll('.child-row').length).toBe(10);
         expect(window.document.getElementById('add-child').disabled).toBe(true);
+        expect(window.document.getElementById('add-child-hint').classList.contains('hidden')).toBe(false);
         window.removeChildRow(window.document.querySelector('.child-row'));
         expect(window.document.getElementById('add-child').disabled).toBe(false);
+        expect(window.document.getElementById('add-child-hint').classList.contains('hidden')).toBe(true);
     });
 
     it('builds a payload from the DOM', () => {
@@ -163,7 +169,7 @@ describe('kiosk form', () => {
         expect(window.document.getElementById('kiosk-error').classList.contains('hidden')).toBe(true);
     });
 
-    it('flags malformed phone and email via native validity', () => {
+    it('flags malformed phone and email via validity', () => {
         const window = loadWindow();
         window.document.getElementById('parent-first-name').value = 'John';
         window.document.getElementById('parent-last-name').value = 'Smith';
@@ -174,12 +180,113 @@ describe('kiosk form', () => {
         window.document.querySelector('.child-dob').value = '2020-01-01';
 
         expect(window.validateForm()).toBe(false);
-        expect(window.document.getElementById('parent-phone').validity.patternMismatch).toBe(true);
+        expect(window.document.getElementById('parent-phone').validationMessage).toContain('7 digits');
         expect(window.document.getElementById('parent-email').validity.typeMismatch).toBe(true);
 
         window.document.getElementById('parent-phone').value = '5551234';
         window.document.getElementById('parent-email').value = 'john@example.com';
         expect(window.validateForm()).toBe(true);
+    });
+
+    it('fails validation when both phone and email are empty', () => {
+        const window = loadWindow();
+        window.document.getElementById('parent-first-name').value = 'John';
+        window.document.getElementById('parent-last-name').value = 'Smith';
+        window.document.getElementById('parent-phone').value = '';
+        window.document.getElementById('parent-email').value = '';
+        window.document.querySelector('.child-first-name').value = 'Timmy';
+        window.document.querySelector('.child-last-name').value = 'Smith';
+        window.document.querySelector('.child-dob').value = '2020-01-01';
+
+        expect(window.validateForm()).toBe(false);
+        expect(window.document.getElementById('parent-phone').validationMessage).toContain('phone number or an email');
+    });
+
+    it('passes validation with a phone only', () => {
+        const window = loadWindow();
+        window.document.getElementById('parent-first-name').value = 'John';
+        window.document.getElementById('parent-last-name').value = 'Smith';
+        window.document.getElementById('parent-phone').value = '5551234';
+        window.document.getElementById('parent-email').value = '';
+        window.document.querySelector('.child-first-name').value = 'Timmy';
+        window.document.querySelector('.child-last-name').value = 'Smith';
+        window.document.querySelector('.child-dob').value = '2020-01-01';
+        expect(window.validateForm()).toBe(true);
+    });
+
+    it('passes validation with an email only', () => {
+        const window = loadWindow();
+        window.document.getElementById('parent-first-name').value = 'John';
+        window.document.getElementById('parent-last-name').value = 'Smith';
+        window.document.getElementById('parent-phone').value = '';
+        window.document.getElementById('parent-email').value = 'john@example.com';
+        window.document.querySelector('.child-first-name').value = 'Timmy';
+        window.document.querySelector('.child-last-name').value = 'Smith';
+        window.document.querySelector('.child-dob').value = '2020-01-01';
+        expect(window.validateForm()).toBe(true);
+    });
+
+    it('copies the parent last name to all children when the toggle is on', () => {
+        const window = loadWindow();
+        window.addChildRow();
+        window.addChildRow();
+        window.document.getElementById('parent-last-name').value = 'Smith';
+        window.document.getElementById('use-parent-last-name').checked = true;
+        window.handleUseParentLastNameChange();
+        const lastNames = Array.from(window.document.querySelectorAll('.child-last-name')).map(input => input.value);
+        expect(lastNames).toEqual(['Smith', 'Smith', 'Smith']);
+    });
+
+    it('keeps child last names in sync while the toggle is on', () => {
+        const window = loadWindow();
+        window.document.getElementById('parent-last-name').value = 'Smith';
+        window.document.getElementById('use-parent-last-name').checked = true;
+        window.handleUseParentLastNameChange();
+        window.document.querySelector('.child-last-name').value = 'Jones';
+        window.document.getElementById('parent-last-name').value = 'Johnson';
+        window.handleParentLastNameInput();
+        const lastNames = Array.from(window.document.querySelectorAll('.child-last-name')).map(input => input.value);
+        expect(lastNames).toEqual(['Johnson']);
+    });
+
+    it('applies the parent last name to newly added children while the toggle is on', () => {
+        const window = loadWindow();
+        window.document.getElementById('parent-last-name').value = 'Smith';
+        window.document.getElementById('use-parent-last-name').checked = true;
+        window.handleUseParentLastNameChange();
+        window.addChildRow();
+        const lastNames = Array.from(window.document.querySelectorAll('.child-last-name')).map(input => input.value);
+        expect(lastNames).toEqual(['Smith', 'Smith']);
+    });
+
+    it('clears child last names when parent last name is cleared while toggle is on', () => {
+        const window = loadWindow();
+        window.document.getElementById('parent-last-name').value = 'Smith';
+        window.document.getElementById('use-parent-last-name').checked = true;
+        window.handleUseParentLastNameChange();
+        expect(window.document.querySelector('.child-last-name').value).toBe('Smith');
+
+        window.document.getElementById('parent-last-name').value = '';
+        window.handleParentLastNameInput();
+        expect(window.document.querySelector('.child-last-name').value).toBe('');
+    });
+
+    it('toggles the switch visual when the checkbox changes', () => {
+        const window = loadWindow();
+        const bg = window.document.getElementById('use-parent-last-name-toggle-bg');
+        const knob = window.document.getElementById('use-parent-last-name-toggle-knob');
+        expect(bg.style.backgroundColor).toBe('var(--color-slate-200)');
+        expect(knob.style.transform).toBe('translateX(0)');
+
+        window.document.getElementById('use-parent-last-name').checked = true;
+        window.handleUseParentLastNameChange();
+        expect(bg.style.backgroundColor).toBe('var(--color-emerald-500)');
+        expect(knob.style.transform).toBe('translateX(1rem)');
+
+        window.document.getElementById('use-parent-last-name').checked = false;
+        window.handleUseParentLastNameChange();
+        expect(bg.style.backgroundColor).toBe('var(--color-slate-200)');
+        expect(knob.style.transform).toBe('translateX(0)');
     });
 
     it('passes validation with a fully valid form', () => {

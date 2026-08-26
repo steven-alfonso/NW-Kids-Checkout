@@ -38,6 +38,7 @@ func (controller *Controller) RegisterRoutes(app *fiber.App) {
 	manualGroup.Use(middleware.AuthRequired(controller.sessionStore, ""))
 
 	manualGroup.Get("/manual-checkins", controller.GetManualCheckins)
+	manualGroup.Post("/manual-checkins", controller.PostManualCheckin)
 	manualGroup.Patch("/manual-checkins/:public_id/checked_out", controller.PatchManualCheckedOut)
 	manualGroup.Patch("/manual-checkins/:public_id/checked_out_confirmed", controller.PatchManualCheckedOutConfirmed)
 
@@ -67,6 +68,46 @@ func (controller *Controller) GetManualCheckins(c *fiber.Ctx) error {
 		manualCheckins = sortManualCheckins(manualCheckins)
 	}
 	return c.JSON(repoManualCheckinSliceToOutput(manualCheckins))
+}
+
+func (controller *Controller) PostManualCheckin(c *fiber.Ctx) error {
+	type manualCheckinPayload struct {
+		PublicID          string `json:"public_id"`
+		FirstName         string `json:"first_name"`
+		LastName          string `json:"last_name"`
+		ImmediateCheckout bool   `json:"immediate_checkout"`
+	}
+
+	var payload manualCheckinPayload
+	if err := json.Unmarshal(c.Body(), &payload); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "invalid JSON")
+	}
+
+	if payload.FirstName == "" {
+		return fiber.NewError(fiber.StatusBadRequest, "first_name is required")
+	}
+	if payload.LastName == "" {
+		return fiber.NewError(fiber.StatusBadRequest, "last_name is required")
+	}
+
+	manualCheckin := manualcheckin.ManualCheckin{
+		PublicID:  payload.PublicID,
+		FirstName: payload.FirstName,
+		LastName:  payload.LastName,
+	}
+	if payload.ImmediateCheckout {
+		manualCheckin.CheckedOutAt = time.Now().UTC()
+	}
+
+	created, err := controller.manualRepo.CreateManualCheckin(c.Context(), manualCheckin)
+	if err != nil {
+		if errors.Is(err, manualcheckin.ErrInvalidManualCheckin) {
+			return fiber.NewError(fiber.StatusBadRequest, err.Error())
+		}
+		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
+	}
+
+	return c.JSON(repoManualCheckinToOutput(created))
 }
 
 func (controller *Controller) PatchManualCheckedOut(c *fiber.Ctx) error {

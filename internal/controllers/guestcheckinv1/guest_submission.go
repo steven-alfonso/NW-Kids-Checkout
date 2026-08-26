@@ -37,6 +37,7 @@ func (controller *Controller) RegisterRoutes(app *fiber.App) {
 	group.Post("/guest-submissions", controller.CreateSubmission)
 	group.Get("/guest-submissions", controller.ListSubmissions)
 	group.Patch("/guest-submissions/:public_id/status", controller.PatchSubmissionStatus)
+	group.Post("/guest-submissions/:public_id/checkins", controller.CreateSubmissionCheckins)
 
 	adminGroup := app.Group("/v1/admin")
 	adminGroup.Use(middleware.AuthRequired(controller.sessionStore, "admin"))
@@ -88,8 +89,11 @@ type childPayload struct {
 }
 
 func validateCreateSubmissionPayload(p createSubmissionPayload) error {
-	if p.Parent.FirstName == "" || p.Parent.LastName == "" || p.Parent.Phone == "" || p.Parent.Email == "" {
-		return errors.New("parent first_name, last_name, phone, and email are required")
+	if p.Parent.FirstName == "" || p.Parent.LastName == "" {
+		return errors.New("parent first_name and last_name are required")
+	}
+	if p.Parent.Phone == "" && p.Parent.Email == "" {
+		return errors.New("either parent phone or email is required")
 	}
 	if len(p.Children) == 0 {
 		return errors.New("at least one child is required")
@@ -98,16 +102,18 @@ func validateCreateSubmissionPayload(p createSubmissionPayload) error {
 		return errors.New("at most 10 children are allowed per submission")
 	}
 
-	digits := 0
-	for _, r := range p.Parent.Phone {
-		if r >= '0' && r <= '9' {
-			digits++
+	if p.Parent.Phone != "" {
+		digits := 0
+		for _, r := range p.Parent.Phone {
+			if r >= '0' && r <= '9' {
+				digits++
+			}
+		}
+		if digits < 7 {
+			return errors.New("phone must contain at least 7 digits")
 		}
 	}
-	if digits < 7 {
-		return errors.New("phone must contain at least 7 digits")
-	}
-	if !strings.Contains(p.Parent.Email, "@") {
+	if p.Parent.Email != "" && !strings.Contains(p.Parent.Email, "@") {
 		return errors.New("invalid email")
 	}
 
@@ -258,6 +264,33 @@ func (controller *Controller) PatchSubmissionStatus(c *fiber.Ctx) error {
 	return c.JSON(submissionToSummary(updated[0]))
 }
 
+func (controller *Controller) CreateSubmissionCheckins(c *fiber.Ctx) error {
+	publicID := c.Params("public_id")
+	if publicID == "" {
+		return fiber.NewError(fiber.StatusBadRequest, "public_id is required")
+	}
+
+	err := controller.submissionRepo.CreateManualCheckins(c.Context(), publicID)
+	if err != nil {
+		if errors.Is(err, repo.ErrNotFound) {
+			return fiber.NewError(fiber.StatusNotFound, "submission not found")
+		}
+		if errors.Is(err, guestsubmission.ErrManualCheckinsExist) {
+			return fiber.NewError(fiber.StatusBadRequest, "manual check-ins already exist for this submission")
+		}
+		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
+	}
+
+	updated, err := controller.submissionRepo.ListSubmissions(c.Context(), guestsubmission.Filter{PublicID: publicID})
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
+	}
+	if len(updated) == 0 {
+		return fiber.NewError(fiber.StatusInternalServerError, "submission not found after update")
+	}
+	return c.JSON(submissionToSummary(updated[0]))
+}
+
 func buildFilter(c *fiber.Ctx) (guestsubmission.Filter, error) {
 	filter := guestsubmission.Filter{}
 	if status := c.Query("status"); status != "" {
@@ -265,6 +298,9 @@ func buildFilter(c *fiber.Ctx) (guestsubmission.Filter, error) {
 	}
 	if id := c.Query("public_id"); id != "" {
 		filter.PublicID = id
+	}
+	if q := c.Query("without_manual_checkins"); q == "true" || q == "1" {
+		filter.WithoutManualCheckins = true
 	}
 	return filter, nil
 }
@@ -274,6 +310,8 @@ func isValidTransition(isAdmin bool, from, to string) bool {
 	case from == guestsubmission.StatusPending && to == guestsubmission.StatusApproved:
 		return true
 	case from == guestsubmission.StatusPending && to == guestsubmission.StatusRejected:
+		return true
+	case isAdmin && from == guestsubmission.StatusPending && to == guestsubmission.StatusEntered:
 		return true
 	case isAdmin && from == guestsubmission.StatusApproved && to == guestsubmission.StatusEntered:
 		return true

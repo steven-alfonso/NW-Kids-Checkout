@@ -54,6 +54,22 @@ describe('admin-guest-entries', () => {
         expect(labels).toContain('grade');
     });
 
+    it('renders missing phone/email as an em dash on parent chips', () => {
+        const window = loadWindow();
+        const entry = {
+            public_id: 'sub-4',
+            status: 'approved',
+            parent: {first_name: 'A', last_name: 'B', phone: '', email: ''},
+            children: []
+        };
+        const container = window.document.createElement('div');
+        window.renderEntry(container, entry);
+        const phoneChip = Array.from(container.querySelectorAll('[data-copy]')).find(btn => btn.dataset.label === 'phone');
+        const emailChip = Array.from(container.querySelectorAll('[data-copy]')).find(btn => btn.dataset.label === 'email');
+        expect(phoneChip.textContent).toBe('—');
+        expect(emailChip.textContent).toBe('—');
+    });
+
     it('shows a Copied tooltip on the field after copying', () => {
         const window = loadWindow();
         const entry = {
@@ -114,6 +130,19 @@ describe('admin-guest-entries', () => {
         const pendingCard = cards[1];
         expect(approvedCard.className).toContain('border-l-amber-400');
         expect(pendingCard.className).not.toContain('border-l-amber-400');
+    });
+
+    it('renders the mark-entered button on pending cards', () => {
+        const window = loadWindow();
+        const container = window.document.createElement('div');
+        window.renderEntry(container, {
+            public_id: 'pend-1',
+            status: 'pending',
+            parent: {first_name: 'C', last_name: 'D', phone: '2', email: 'c@d.com'},
+            children: []
+        });
+        const btn = container.querySelector('[data-mark-entered="pend-1"]');
+        expect(btn).not.toBeNull();
     });
 
     it('renders the entered section collapsed by default and toggles it open', async () => {

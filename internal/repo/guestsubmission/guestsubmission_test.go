@@ -100,6 +100,50 @@ func Test_sqliteRepo_ListSubmissions(t *testing.T) {
 		assert.Equal(t, "a@b.com", res[0].Parent.Email)
 	})
 
+	t.Run("filter by derived statuses", func(t *testing.T) {
+		res, err := s.ListSubmissions(t.Context(), Filter{Status: StatusPending})
+		require.NoError(t, err)
+		require.Len(t, res, 2)
+
+		now := time.Now().UTC()
+		require.NoError(t, s.UpdateSubmissionStatus(t.Context(), a.PublicID, StatusApproved, now))
+		require.NoError(t, s.UpdateSubmissionStatus(t.Context(), b.PublicID, StatusEntered, now))
+
+		approved, err := s.ListSubmissions(t.Context(), Filter{Status: StatusApproved})
+		require.NoError(t, err)
+		require.Len(t, approved, 1)
+		assert.Equal(t, a.PublicID, approved[0].PublicID)
+		assert.Equal(t, StatusApproved, approved[0].Status)
+
+		entered, err := s.ListSubmissions(t.Context(), Filter{Status: StatusEntered})
+		require.NoError(t, err)
+		require.Len(t, entered, 1)
+		assert.Equal(t, b.PublicID, entered[0].PublicID)
+		assert.Equal(t, StatusEntered, entered[0].Status)
+
+		pending, err := s.ListSubmissions(t.Context(), Filter{Status: StatusPending})
+		require.NoError(t, err)
+		require.Len(t, pending, 0)
+	})
+
+	t.Run("unknown status filter errors", func(t *testing.T) {
+		_, err := s.ListSubmissions(t.Context(), Filter{Status: "bogus"})
+		require.Error(t, err)
+	})
+
+	t.Run("without manual checkins excludes entered families with rows", func(t *testing.T) {
+		now := time.Now().UTC()
+		require.NoError(t, s.UpdateSubmissionStatus(t.Context(), a.PublicID, StatusEntered, now))
+		require.NoError(t, s.CreateManualCheckins(t.Context(), a.PublicID))
+
+		require.NoError(t, s.UpdateSubmissionStatus(t.Context(), b.PublicID, StatusEntered, now))
+
+		res, err := s.ListSubmissions(t.Context(), Filter{Status: StatusEntered, WithoutManualCheckins: true})
+		require.NoError(t, err)
+		require.Len(t, res, 1)
+		assert.Equal(t, b.PublicID, res[0].PublicID)
+	})
+
 	t.Run("children belong to the right parent", func(t *testing.T) {
 		res, err := s.ListSubmissions(t.Context(), Filter{PublicID: b.PublicID})
 		require.NoError(t, err)
@@ -137,6 +181,21 @@ func Test_sqliteRepo_UpdateSubmissionStatus(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, StatusEntered, res[0].Status)
 		assert.WithinDuration(t, now, res[0].EnteredAt, time.Second)
+		assert.True(t, res[0].ApprovedAt.IsZero(), "approved_at should be cleared when entered")
+		assert.True(t, res[0].RejectedAt.IsZero(), "rejected_at should be cleared when entered")
+	})
+
+	t.Run("rejected", func(t *testing.T) {
+		now := time.Now().UTC()
+		err := s.UpdateSubmissionStatus(t.Context(), sub.PublicID, StatusRejected, now)
+		require.NoError(t, err)
+
+		res, err := s.ListSubmissions(t.Context(), Filter{PublicID: sub.PublicID})
+		require.NoError(t, err)
+		assert.Equal(t, StatusRejected, res[0].Status)
+		assert.WithinDuration(t, now, res[0].RejectedAt, time.Second)
+		assert.True(t, res[0].ApprovedAt.IsZero(), "approved_at should be cleared when rejected")
+		assert.True(t, res[0].EnteredAt.IsZero(), "entered_at should be cleared when rejected")
 	})
 
 	t.Run("unknown public id returns repo.ErrNotFound", func(t *testing.T) {
@@ -183,6 +242,63 @@ func Test_sqliteRepo_ApproveSubmission(t *testing.T) {
 
 	t.Run("unknown public id returns repo.ErrNotFound", func(t *testing.T) {
 		err := s.ApproveSubmission(t.Context(), "does-not-exist", time.Now().UTC())
+		require.ErrorIs(t, err, repo.ErrNotFound)
+	})
+}
+
+func Test_sqliteRepo_CreateManualCheckins(t *testing.T) {
+	wipeAll(t)
+	s := NewRepo(testDB)
+
+	sub, err := s.CreateSubmission(t.Context(), Parent{
+		FirstName: "John", LastName: "Smith", Phone: "555-1234", Email: "john@example.com",
+	}, []Child{
+		{FirstName: "Timmy", LastName: "Smith", DOB: "2020-01-01", Grade: "k"},
+		{FirstName: "Sara", LastName: "Smith", DOB: "2018-06-15", Grade: "1"},
+	})
+	require.NoError(t, err)
+
+	t.Run("creates rows without changing entered status", func(t *testing.T) {
+		err := s.UpdateSubmissionStatus(t.Context(), sub.PublicID, StatusEntered, time.Now().UTC())
+		require.NoError(t, err)
+
+		require.NoError(t, s.CreateManualCheckins(t.Context(), sub.PublicID))
+
+		for _, child := range sub.Children {
+			var firstName, lastName string
+			err := testDB.QueryRowContext(t.Context(),
+				"SELECT first_name, last_name FROM manual_checkins WHERE child_id = ?", child.ID).
+				Scan(&firstName, &lastName)
+			require.NoError(t, err)
+			assert.Equal(t, child.FirstName, firstName)
+			assert.Equal(t, child.LastName, lastName)
+		}
+
+		res, err := s.ListSubmissions(t.Context(), Filter{PublicID: sub.PublicID})
+		require.NoError(t, err)
+		require.Len(t, res, 1)
+		assert.Equal(t, StatusEntered, res[0].Status)
+		assert.True(t, res[0].ApprovedAt.IsZero(), "status must remain entered")
+	})
+
+	t.Run("duplicate creation returns ErrManualCheckinsExist", func(t *testing.T) {
+		err := s.CreateManualCheckins(t.Context(), sub.PublicID)
+		require.ErrorIs(t, err, ErrManualCheckinsExist)
+	})
+
+	t.Run("rejected submission errors", func(t *testing.T) {
+		rejSub, err := s.CreateSubmission(t.Context(), Parent{
+			FirstName: "Jane", LastName: "Doe", Phone: "555-0000", Email: "j@d.com",
+		}, []Child{{FirstName: "Sam", LastName: "Doe", DOB: "2019-02-02", Grade: "1"}})
+		require.NoError(t, err)
+		require.NoError(t, s.UpdateSubmissionStatus(t.Context(), rejSub.PublicID, StatusRejected, time.Now().UTC()))
+
+		err = s.CreateManualCheckins(t.Context(), rejSub.PublicID)
+		require.Error(t, err)
+	})
+
+	t.Run("unknown public id returns repo.ErrNotFound", func(t *testing.T) {
+		err := s.CreateManualCheckins(t.Context(), "does-not-exist")
 		require.ErrorIs(t, err, repo.ErrNotFound)
 	})
 }

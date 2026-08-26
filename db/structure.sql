@@ -35,16 +35,6 @@ CREATE TABLE events
 , auto_fetch INTEGER DEFAULT 0, last_checked_out_time DATETIME DEFAULT NULL, location_group_id INTEGER REFERENCES location_groups (id));
 CREATE UNIQUE INDEX idx_location_groups_name ON location_groups (name);
 CREATE INDEX idx_unique_pcid ON events(planning_center_id);
-CREATE TABLE IF NOT EXISTS "manual_checkins" (
-    id INTEGER PRIMARY KEY,
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    public_id TEXT,
-    first_name TEXT NOT NULL,
-    last_name TEXT NOT NULL,
-    checked_out_at DATETIME DEFAULT NULL,
-    checked_out_confirmed_at DATETIME DEFAULT NULL
-, child_id INTEGER NULL REFERENCES children(id));
-CREATE INDEX idx_manual_checked_out_at ON manual_checkins (checked_out_at);
 CREATE TABLE event_check_windows
 (
     id                INTEGER PRIMARY KEY,
@@ -62,7 +52,8 @@ CREATE TABLE parents (
     last_name TEXT NOT NULL,
     phone TEXT NOT NULL,
     email TEXT NOT NULL,
-    created_at DATETIME NOT NULL
+    created_at DATETIME NOT NULL,
+    CHECK (phone <> '' OR email <> '')
 );
 CREATE TABLE children (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -77,11 +68,21 @@ CREATE TABLE guest_submissions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     public_id TEXT NOT NULL UNIQUE,
     parent_id INTEGER NOT NULL REFERENCES parents(id),
-    status TEXT NOT NULL,
     approved_at DATETIME NULL,
     rejected_at DATETIME NULL,
     entered_at DATETIME NULL,
     created_at DATETIME NOT NULL
 );
-CREATE INDEX idx_guest_submissions_status ON guest_submissions(status);
 CREATE INDEX idx_children_parent_id ON children(parent_id);
+CREATE TABLE IF NOT EXISTS "manual_checkins" (
+    id INTEGER PRIMARY KEY,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    public_id TEXT,
+    first_name TEXT NOT NULL,
+    last_name TEXT NOT NULL,
+    checked_out_at DATETIME DEFAULT NULL,
+    checked_out_confirmed_at DATETIME DEFAULT NULL,
+    child_id INTEGER NULL REFERENCES children(id),
+    CHECK (child_id IS NOT NULL OR (first_name <> '' AND last_name <> ''))
+);
+CREATE INDEX idx_manual_checked_out_at ON manual_checkins (checked_out_at);

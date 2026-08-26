@@ -4,6 +4,12 @@ const manualCheckinsBody = document.getElementById('manual-checkins-body');
 const pageStatus = document.getElementById('page-status');
 const pendingFamiliesContainer = document.getElementById('pending-families');
 
+const modal = document.getElementById('manual-checkin-modal');
+const manualCheckinForm = document.getElementById('manual-checkin-form');
+const manualFirstName = document.getElementById('manual-first-name');
+const manualLastName = document.getElementById('manual-last-name');
+const manualSubmitButton = document.getElementById('manual-checkin-submit');
+
 const PENDING_FAMILIES_REFRESH_INTERVAL_MS = 5000;
 const DEFAULT_CHECKED_OUT_AFTER = '-12h';
 const MANUAL_CHECKINS_REFRESH_INTERVAL_MS = 5000;
@@ -26,6 +32,33 @@ function setPageStatus(message, tone = 'info') {
 function clearPageStatus() {
     pageStatus.classList.add('hidden');
     pageStatus.textContent = '';
+}
+
+function setManualCheckinError(message) {
+    const errorEl = document.getElementById('manual-checkin-error');
+    if (!errorEl) return;
+
+    if (message) {
+        errorEl.textContent = message;
+        errorEl.classList.remove('hidden');
+    } else {
+        errorEl.textContent = '';
+        errorEl.classList.add('hidden');
+    }
+}
+
+function toggleManualCheckinModal(open) {
+    if (!modal) return;
+
+    if (open) {
+        modal.classList.remove('hidden');
+        modal.setAttribute('aria-hidden', 'false');
+    } else {
+        modal.classList.add('hidden');
+        modal.setAttribute('aria-hidden', 'true');
+        setManualCheckinError('');
+        if (manualCheckinForm) manualCheckinForm.reset();
+    }
 }
 
 function escapeHtml(value) {
@@ -185,19 +218,29 @@ function renderPendingFamilies(submissions) {
     }
     pendingFamiliesContainer.innerHTML = '';
     submissions.forEach(sub => {
-        const childrenNames = sub.children
-            .map(child => `${escapeHtml(child.first_name)} ${escapeHtml(child.last_name)}`)
-            .join(', ');
+        const childrenHtml = sub.children
+            .map(child => `<span class="block">${escapeHtml(child.first_name)} ${escapeHtml(child.last_name)}</span>`)
+            .join('');
+        const isEntered = sub.status === 'entered';
         const card = document.createElement('div');
-        card.className = 'rounded-md border border-amber-200 bg-amber-50 p-4';
+        card.className = isEntered
+            ? 'rounded-md border border-emerald-200 bg-emerald-50 p-4'
+            : 'rounded-md border border-amber-200 bg-amber-50 p-4';
         card.innerHTML = `
-            <p class="font-semibold text-slate-900">${escapeHtml(sub.parent.first_name)} ${escapeHtml(sub.parent.last_name)}</p>
-            <p class="text-sm text-slate-600">${childrenNames}</p>
+            <p class="font-semibold text-slate-900">
+                ${escapeHtml(sub.parent.first_name)} ${escapeHtml(sub.parent.last_name)}
+                ${isEntered ? '<span class="ml-2 inline-flex items-center rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-semibold text-emerald-700">Entered</span>' : ''}
+            </p>
+            <div class="text-sm text-slate-600">${childrenHtml}</div>
             <p class="text-xs text-slate-400">${formatCreatedAt(sub.created_at)}</p>
-            <div class="mt-3 flex gap-2">
-                <button data-approve="${escapeHtml(sub.public_id)}" class="rounded bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-500 cursor-pointer">Approve</button>
-                <button data-reject="${escapeHtml(sub.public_id)}" class="rounded bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-500 cursor-pointer">Reject</button>
-            </div>`;
+            ${isEntered
+                ? `<div class="mt-3 flex gap-2">
+                    <button data-create-checkins="${escapeHtml(sub.public_id)}" class="rounded-md border border-slate-700 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100 cursor-pointer">Create manual check-in</button>
+                </div>`
+                : `<div class="mt-3 flex gap-2">
+                    <button data-approve="${escapeHtml(sub.public_id)}" class="rounded-md border border-emerald-600 px-3 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-50 cursor-pointer">Approve</button>
+                    <button data-reject="${escapeHtml(sub.public_id)}" class="rounded-md border border-red-600 px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-50 cursor-pointer">Reject</button>
+                </div>`}`;
         pendingFamiliesContainer.appendChild(card);
     });
 }
@@ -205,8 +248,13 @@ function renderPendingFamilies(submissions) {
 async function loadPendingFamilies() {
     if (!pendingFamiliesContainer) return;
     try {
-        const data = await fetchJson('/v1/checkins/guest-submissions?status=pending');
-        renderPendingFamilies(Array.isArray(data) ? data : []);
+        const [pending, entered] = await Promise.all([
+            fetchJson('/v1/checkins/guest-submissions?status=pending'),
+            fetchJson('/v1/checkins/guest-submissions?status=entered&without_manual_checkins=true')
+        ]);
+        const merged = [...(Array.isArray(pending) ? pending : []), ...(Array.isArray(entered) ? entered : [])]
+            .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+        renderPendingFamilies(merged);
     } catch (error) {
         if (error?.name === 'AbortError') return;
         pendingFamiliesContainer.innerHTML = '<p class="text-sm text-red-600">Failed to load pending families.</p>';
@@ -232,19 +280,29 @@ async function rejectSubmission(publicId) {
     await loadPendingFamilies();
 }
 
+async function createManualCheckins(publicId) {
+    await fetchJson(`/v1/checkins/guest-submissions/${publicId}/checkins`, {
+        method: 'POST'
+    });
+    await loadPendingFamilies();
+    await loadManualCheckins();
+}
+
 // event delegation
 if (pendingFamiliesContainer) {
     pendingFamiliesContainer.addEventListener('click', async (event) => {
         const target = event.target;
         if (!(target instanceof HTMLButtonElement)) return;
-        const id = target.dataset.approve || target.dataset.reject;
+        const id = target.dataset.approve || target.dataset.reject || target.dataset.createCheckins;
         if (!id || target.disabled) return;
         target.disabled = true;
         try {
             if (target.dataset.approve) {
                 await approveSubmission(id);
-            } else {
+            } else if (target.dataset.reject) {
                 await rejectSubmission(id);
+            } else {
+                await createManualCheckins(id);
             }
         } catch (error) {
             setPageStatus(`Failed to update: ${error.message}`, 'error');
@@ -257,6 +315,18 @@ window.renderPendingFamilies = renderPendingFamilies;
 window.loadPendingFamilies = loadPendingFamilies;
 window.approveSubmission = approveSubmission;
 window.rejectSubmission = rejectSubmission;
+window.createManualCheckins = createManualCheckins;
+window.createManualCheckin = createManualCheckin;
+window.toggleManualCheckinModal = toggleManualCheckinModal;
+window.setManualCheckinError = setManualCheckinError;
+
+async function createManualCheckin(payload) {
+    return fetchJson('/v1/checkins/manual-checkins', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(payload)
+    });
+}
 
 async function checkOutManualCheckin(publicId, checkedOut) {
     if (!publicId) return;
@@ -268,6 +338,61 @@ async function checkOutManualCheckin(publicId, checkedOut) {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+    const openManualCheckinButton = document.getElementById('open-manual-checkin');
+
+    if (openManualCheckinButton) {
+        openManualCheckinButton.addEventListener('click', () => {
+            toggleManualCheckinModal(true);
+            if (manualFirstName) manualFirstName.focus();
+        });
+    }
+
+    document.querySelectorAll('[data-modal-close]').forEach((closeButton) => {
+        closeButton.addEventListener('click', () => toggleManualCheckinModal(false));
+    });
+
+    if (manualCheckinForm) {
+        manualCheckinForm.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            setManualCheckinError('');
+
+            const firstName = manualFirstName?.value.trim() || '';
+            const lastName = manualLastName?.value.trim() || '';
+
+            if (!firstName || !lastName) {
+                setManualCheckinError('First and last name are required.');
+                return;
+            }
+
+            if (manualSubmitButton) {
+                manualSubmitButton.disabled = true;
+                manualSubmitButton.textContent = 'Saving...';
+            }
+
+            try {
+                await createManualCheckin({
+                    first_name: firstName,
+                    last_name: lastName
+                });
+                toggleManualCheckinModal(false);
+                await loadManualCheckins();
+            } catch (error) {
+                setManualCheckinError(error.message || 'Unable to save manual check-in.');
+            } finally {
+                if (manualSubmitButton) {
+                    manualSubmitButton.disabled = false;
+                    manualSubmitButton.textContent = 'Save';
+                }
+            }
+        });
+    }
+
+    document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') {
+            toggleManualCheckinModal(false);
+        }
+    });
+
     if (manualCheckinsBody) {
         manualCheckinsBody.addEventListener('click', async (event) => {
             const target = event.target;

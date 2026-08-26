@@ -57,7 +57,7 @@ function chip(value, label) {
     btn.dataset.copy = value ?? '';
     btn.dataset.label = label;
     btn.className = 'inline-flex items-center rounded-md border border-slate-300 bg-white px-2.5 py-1 text-sm text-slate-700 hover:bg-slate-100 cursor-pointer';
-    btn.textContent = value ?? '';
+    btn.textContent = (value ?? '') || '—';
     btn.title = `Copy ${labelText}`;
 
     wrap.append(lbl, btn);
@@ -114,7 +114,7 @@ function renderEntry(container, entry) {
     });
     card.appendChild(childrenBlock);
 
-    if (entry.status === 'approved') {
+    if (entry.status === 'approved' || entry.status === 'pending') {
         const markEntered = document.createElement('button');
         markEntered.type = 'button';
         markEntered.dataset.markEntered = entry.public_id;

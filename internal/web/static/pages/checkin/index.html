@@ -60,12 +60,12 @@
                 </div>
                 <div>
                     <label for="parent-phone" class="block text-sm font-semibold text-gray-700">Phone</label>
-                    <input id="parent-phone" name="parent_phone" type="tel" autocomplete="off" pattern=".*\d.*\d.*\d.*\d.*\d.*\d.*\d.*" title="Phone must contain at least 7 digits" required
+                    <input id="parent-phone" name="parent_phone" type="tel" autocomplete="off"
                            class="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-base text-gray-900 shadow-sm focus:border-gray-500 focus:outline-none">
                 </div>
                 <div>
                     <label for="parent-email" class="block text-sm font-semibold text-gray-700">Email</label>
-                    <input id="parent-email" name="parent_email" type="email" autocomplete="off" required
+                    <input id="parent-email" name="parent_email" type="email" autocomplete="off"
                            class="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-base text-gray-900 shadow-sm focus:border-gray-500 focus:outline-none">
                 </div>
             </div>
@@ -73,11 +73,20 @@
 
         <section class="space-y-4">
             <h2 class="text-lg font-semibold text-slate-800">Children</h2>
+            <label class="inline-flex cursor-pointer items-center gap-3 text-sm font-medium text-slate-700 select-none">
+                <span class="relative inline-flex h-5 w-9 items-center">
+                    <input id="use-parent-last-name" type="checkbox" class="peer absolute opacity-0 w-0 h-0">
+                    <span id="use-parent-last-name-toggle-bg" class="toggle-bg h-5 w-9 rounded-full" style="background-color: var(--color-slate-200)"></span>
+                    <span id="use-parent-last-name-toggle-knob" class="toggle-knob absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white shadow" style="transform: translateX(0)"></span>
+                </span>
+                Use same last name for all children
+            </label>
             <div id="children-container" class="space-y-4"></div>
             <button id="add-child" type="button"
-                    class="inline-flex items-center justify-center rounded-md border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer">
+                    class="inline-flex items-center justify-center rounded-md border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent">
                 + Add child
             </button>
+            <p id="add-child-hint" class="hidden text-sm text-slate-500">You've added the maximum of 10 children — we're all set!</p>
         </section>
 
         <div id="kiosk-error" class="hidden rounded-md bg-red-50 px-3 py-2 text-sm text-red-700"></div>

@@ -44,7 +44,13 @@ function childRowTemplate() {
 
 function addChildRow() {
     if (childrenContainer.querySelectorAll('.child-row').length >= MAX_CHILDREN) return;
-    childrenContainer.appendChild(childRowTemplate());
+    const row = childRowTemplate();
+    const toggle = document.getElementById('use-parent-last-name');
+    const lastName = getParentLastName();
+    if (toggle?.checked && lastName) {
+        row.querySelector('.child-last-name').value = lastName;
+    }
+    childrenContainer.appendChild(row);
     updateChildCount();
 }
 
@@ -56,9 +62,14 @@ function removeChildRow(row) {
 
 function updateChildCount() {
     const count = childrenContainer.querySelectorAll('.child-row').length;
+    const atMax = count >= MAX_CHILDREN;
     const addChildButton = document.getElementById('add-child');
     if (addChildButton) {
-        addChildButton.disabled = count >= MAX_CHILDREN;
+        addChildButton.disabled = atMax;
+    }
+    const hint = document.getElementById('add-child-hint');
+    if (hint) {
+        hint.classList.toggle('hidden', !atMax);
     }
 }
 
@@ -150,6 +161,26 @@ function showForm() {
 
 function validateForm() {
     if (!kioskForm) return true;
+    const phoneInput = document.getElementById('parent-phone');
+    const emailInput = document.getElementById('parent-email');
+    const phone = phoneInput?.value.trim() ?? '';
+    const email = emailInput?.value.trim() ?? '';
+
+    phoneInput?.setCustomValidity('');
+    emailInput?.setCustomValidity('');
+
+    if (!phone && !email) {
+        phoneInput?.setCustomValidity('Please provide either a phone number or an email');
+        return false;
+    }
+    if (phone) {
+        const digits = phone.replace(/\D/g, '').length;
+        if (digits < 7) {
+            phoneInput?.setCustomValidity('Phone must contain at least 7 digits');
+            return false;
+        }
+    }
+
     return kioskForm.checkValidity();
 }
 
@@ -186,8 +217,53 @@ if (kioskForm) {
     });
 }
 
+function getParentLastName() {
+    const input = document.getElementById('parent-last-name');
+    return input ? input.value.trim() : '';
+}
+
+function syncChildrenLastName() {
+    const lastName = document.getElementById('parent-last-name')?.value ?? '';
+    childrenContainer.querySelectorAll('.child-last-name').forEach(input => {
+        input.value = lastName;
+    });
+}
+
+function handleParentLastNameInput() {
+    if (document.getElementById('use-parent-last-name')?.checked) {
+        syncChildrenLastName();
+    }
+}
+
+function setUseParentLastNameToggleVisual(checked) {
+    const bg = document.getElementById('use-parent-last-name-toggle-bg');
+    const knob = document.getElementById('use-parent-last-name-toggle-knob');
+    if (bg && knob) {
+        bg.style.backgroundColor = checked ? 'var(--color-emerald-500)' : 'var(--color-slate-200)';
+        knob.style.transform = checked ? 'translateX(1rem)' : 'translateX(0)';
+    }
+}
+
+function handleUseParentLastNameChange() {
+    const toggle = document.getElementById('use-parent-last-name');
+    const checked = Boolean(toggle?.checked);
+    setUseParentLastNameToggleVisual(checked);
+    if (checked) {
+        syncChildrenLastName();
+    }
+}
+
 const addChildButton = document.getElementById('add-child');
 if (addChildButton) addChildButton.addEventListener('click', addChildRow);
+
+const useParentLastNameToggle = document.getElementById('use-parent-last-name');
+if (useParentLastNameToggle) {
+    useParentLastNameToggle.addEventListener('change', handleUseParentLastNameChange);
+}
+const parentLastNameInput = document.getElementById('parent-last-name');
+if (parentLastNameInput) {
+    parentLastNameInput.addEventListener('input', handleParentLastNameInput);
+}
 
 if (childrenContainer && !childrenContainer.querySelector('.child-row')) {
     addChildRow();
@@ -197,6 +273,12 @@ updateChildCount();
 window.addChildRow = addChildRow;
 window.removeChildRow = removeChildRow;
 window.updateChildCount = updateChildCount;
+window.syncChildrenLastName = syncChildrenLastName;
+window.handleParentLastNameInput = handleParentLastNameInput;
+window.handleUseParentLastNameChange = handleUseParentLastNameChange;
+window.setUseParentLastNameToggleVisual = setUseParentLastNameToggleVisual;
+
+setUseParentLastNameToggleVisual(document.getElementById('use-parent-last-name')?.checked);
 window.buildPayload = buildPayload;
 window.resetForm = resetForm;
 window.showWelcome = showWelcome;
