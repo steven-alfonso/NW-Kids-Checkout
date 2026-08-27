@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"mime"
 	"strings"
 	"time"
@@ -31,9 +32,15 @@ func NewController(db *sql.DB, sessionStore session.Storer) *Controller {
 	}
 }
 
+func noStoreCache(c *fiber.Ctx) error {
+	c.Set("Cache-Control", "no-store")
+	return c.Next()
+}
+
 func (controller *Controller) RegisterRoutes(app *fiber.App) {
 	group := app.Group("/v1/checkins")
 	group.Use(middleware.AuthRequired(controller.sessionStore, ""))
+	group.Use(noStoreCache)
 	group.Post("/guest-submissions", controller.CreateSubmission)
 	group.Get("/guest-submissions", controller.ListSubmissions)
 	group.Patch("/guest-submissions/:public_id/status", controller.PatchSubmissionStatus)
@@ -41,6 +48,7 @@ func (controller *Controller) RegisterRoutes(app *fiber.App) {
 
 	adminGroup := app.Group("/v1/admin")
 	adminGroup.Use(middleware.AuthRequired(controller.sessionStore, "admin"))
+	adminGroup.Use(noStoreCache)
 	adminGroup.Get("/guest-submissions", controller.AdminListSubmissions)
 
 	app.Get("/checkin", middleware.AuthRequired(controller.sessionStore, ""), controller.KioskPage)
@@ -133,8 +141,6 @@ func validateCreateSubmissionPayload(p createSubmissionPayload) error {
 }
 
 func (controller *Controller) CreateSubmission(c *fiber.Ctx) error {
-	c.Set("Cache-Control", "no-store")
-
 	var payload createSubmissionPayload
 	if err := json.Unmarshal(c.Body(), &payload); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "invalid JSON")
@@ -161,7 +167,8 @@ func (controller *Controller) CreateSubmission(c *fiber.Ctx) error {
 
 	submission, err := controller.submissionRepo.CreateSubmission(c.Context(), parent, children)
 	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
+		slog.Error("failed to create submission", "error", err)
+		return fiber.NewError(fiber.StatusInternalServerError, "internal error")
 	}
 
 	return c.JSON(submissionToResponse(submission))
@@ -178,7 +185,8 @@ func (controller *Controller) ListSubmissions(c *fiber.Ctx) error {
 
 	submissions, err := controller.submissionRepo.ListSubmissions(c.Context(), filter)
 	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
+		slog.Error("failed to list submissions", "error", err)
+		return fiber.NewError(fiber.StatusInternalServerError, "internal error")
 	}
 
 	return c.JSON(submissionsToSummary(submissions))
@@ -192,7 +200,8 @@ func (controller *Controller) AdminListSubmissions(c *fiber.Ctx) error {
 
 	submissions, err := controller.submissionRepo.ListSubmissions(c.Context(), filter)
 	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
+		slog.Error("failed to list admin submissions", "error", err)
+		return fiber.NewError(fiber.StatusInternalServerError, "internal error")
 	}
 
 	return c.JSON(submissionsToResponse(submissions))
@@ -227,7 +236,8 @@ func (controller *Controller) PatchSubmissionStatus(c *fiber.Ctx) error {
 
 	submissions, err := controller.submissionRepo.ListSubmissions(c.Context(), guestsubmission.Filter{PublicID: publicID})
 	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
+		slog.Error("failed to list submissions for patch", "error", err)
+		return fiber.NewError(fiber.StatusInternalServerError, "internal error")
 	}
 	if len(submissions) == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "submission not found")
@@ -251,12 +261,15 @@ func (controller *Controller) PatchSubmissionStatus(c *fiber.Ctx) error {
 		if errors.Is(err, repo.ErrNotFound) {
 			return fiber.NewError(fiber.StatusNotFound, "submission not found")
 		}
-		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
+		if errors.Is(err, guestsubmission.ErrConflict) {
+			return fiber.NewError(fiber.StatusBadRequest, "submission status changed, please retry")
+		}
+		return fiber.NewError(fiber.StatusInternalServerError, "internal error")
 	}
 
 	updated, err := controller.submissionRepo.ListSubmissions(c.Context(), guestsubmission.Filter{PublicID: publicID})
 	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
+		return fiber.NewError(fiber.StatusInternalServerError, "internal error")
 	}
 	if len(updated) == 0 {
 		return fiber.NewError(fiber.StatusInternalServerError, "submission not found after update")
@@ -278,12 +291,14 @@ func (controller *Controller) CreateSubmissionCheckins(c *fiber.Ctx) error {
 		if errors.Is(err, guestsubmission.ErrManualCheckinsExist) {
 			return fiber.NewError(fiber.StatusBadRequest, "manual check-ins already exist for this submission")
 		}
-		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
+		slog.Error("failed to create manual checkins", "error", err)
+		return fiber.NewError(fiber.StatusInternalServerError, "internal error")
 	}
 
 	updated, err := controller.submissionRepo.ListSubmissions(c.Context(), guestsubmission.Filter{PublicID: publicID})
 	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
+		slog.Error("failed to list submissions after checkin creation", "error", err)
+		return fiber.NewError(fiber.StatusInternalServerError, "internal error")
 	}
 	if len(updated) == 0 {
 		return fiber.NewError(fiber.StatusInternalServerError, "submission not found after update")

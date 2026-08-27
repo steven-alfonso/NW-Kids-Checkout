@@ -72,7 +72,10 @@ type Repo interface {
 	CreateManualCheckins(ctx context.Context, publicID string) error
 }
 
-var ErrManualCheckinsExist = errors.New("manual check-ins already exist for this submission")
+var (
+	ErrManualCheckinsExist = errors.New("manual check-ins already exist for this submission")
+	ErrConflict            = errors.New("conflict: submission status changed since last read")
+)
 
 func statusFromTimestamps(approved, rejected, entered bool) string {
 	switch {
@@ -103,6 +106,7 @@ func statusPredicate(status string) (squirrel.Sqlizer, error) {
 	case StatusRejected:
 		return squirrel.And{
 			squirrel.NotEq{"rejected_at": nil},
+			squirrel.Eq{"approved_at": nil},
 			squirrel.Eq{"entered_at": nil},
 		}, nil
 	case StatusEntered:
@@ -303,11 +307,31 @@ func (s *sqliteRepo) UpdateSubmissionStatus(ctx context.Context, publicID string
 
 	switch status {
 	case StatusApproved:
-		builder = builder.Set("approved_at", now.UTC()).Set("rejected_at", nil).Set("entered_at", nil)
+		builder = builder.
+			Set("approved_at", now.UTC()).Set("rejected_at", nil).Set("entered_at", nil).
+			Where(squirrel.And{
+				squirrel.Eq{"approved_at": nil},
+				squirrel.Eq{"rejected_at": nil},
+				squirrel.Eq{"entered_at": nil},
+			})
 	case StatusRejected:
-		builder = builder.Set("rejected_at", now.UTC()).Set("approved_at", nil).Set("entered_at", nil)
+		builder = builder.
+			Set("rejected_at", now.UTC()).Set("approved_at", nil).Set("entered_at", nil).
+			Where(squirrel.And{
+				squirrel.Eq{"approved_at": nil},
+				squirrel.Eq{"rejected_at": nil},
+				squirrel.Eq{"entered_at": nil},
+			})
 	case StatusEntered:
-		builder = builder.Set("entered_at", now.UTC()).Set("approved_at", nil).Set("rejected_at", nil)
+		builder = builder.
+			Set("entered_at", now.UTC()).Set("approved_at", nil).Set("rejected_at", nil).
+			Where(squirrel.And{
+				squirrel.Eq{"entered_at": nil},
+				squirrel.Or{
+					squirrel.And{squirrel.Eq{"approved_at": nil}, squirrel.Eq{"rejected_at": nil}},
+					squirrel.NotEq{"approved_at": nil},
+				},
+			})
 	default:
 		return fmt.Errorf("unknown status: %s", status)
 	}
@@ -321,7 +345,17 @@ func (s *sqliteRepo) UpdateSubmissionStatus(ctx context.Context, publicID string
 		return fmt.Errorf("rows affected: %w", err)
 	}
 	if ra == 0 {
-		return repo.ErrNotFound
+		var exists bool
+		err = squirrel.Select("1").From("guest_submissions").
+			Where(squirrel.Eq{"public_id": publicID}).
+			RunWith(s.db).QueryRowContext(ctx).Scan(&exists)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return repo.ErrNotFound
+			}
+			return fmt.Errorf("checking submission existence: %w", err)
+		}
+		return ErrConflict
 	}
 	return nil
 }
@@ -360,6 +394,11 @@ func (s *sqliteRepo) ApproveSubmission(ctx context.Context, publicID string, now
 		Set("rejected_at", nil).
 		Set("entered_at", nil).
 		Where(squirrel.Eq{"public_id": publicID}).
+		Where(squirrel.And{
+			squirrel.Eq{"approved_at": nil},
+			squirrel.Eq{"rejected_at": nil},
+			squirrel.Eq{"entered_at": nil},
+		}).
 		RunWith(tx).
 		ExecContext(ctx); err != nil {
 		return fmt.Errorf("updating submission status: %w", err)
@@ -422,20 +461,18 @@ func (s *sqliteRepo) insertManualCheckins(ctx context.Context, tx *sql.Tx, paren
 	if err != nil {
 		return fmt.Errorf("querying children: %w", err)
 	}
+	defer rows.Close()
 	children := make([]checkinChild, 0)
 	for rows.Next() {
 		var child checkinChild
 		if err := rows.Scan(&child.ID, &child.FirstName, &child.LastName); err != nil {
-			rows.Close()
 			return fmt.Errorf("scanning child: %w", err)
 		}
 		children = append(children, child)
 	}
 	if err := rows.Err(); err != nil {
-		rows.Close()
 		return fmt.Errorf("iterating children: %w", err)
 	}
-	rows.Close()
 
 	if len(children) == 0 {
 		return errors.New("submission has no children")

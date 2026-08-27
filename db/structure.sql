@@ -83,6 +83,8 @@ CREATE TABLE IF NOT EXISTS "manual_checkins" (
     checked_out_at DATETIME DEFAULT NULL,
     checked_out_confirmed_at DATETIME DEFAULT NULL,
     child_id INTEGER NULL REFERENCES children(id),
+    -- Either child_id is set (linked to a child record) OR first_name and
+    -- last_name must be non-empty (standalone guest checkin without a child record).
     CHECK (child_id IS NOT NULL OR (first_name <> '' AND last_name <> ''))
 );
 CREATE INDEX idx_manual_checked_out_at ON manual_checkins (checked_out_at);

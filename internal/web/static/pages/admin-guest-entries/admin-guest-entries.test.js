@@ -132,7 +132,20 @@ describe('admin-guest-entries', () => {
         expect(pendingCard.className).not.toContain('border-l-amber-400');
     });
 
-    it('renders the mark-entered button on pending cards', () => {
+    it('renders the mark-entered button on approved cards', () => {
+        const window = loadWindow();
+        const container = window.document.createElement('div');
+        window.renderEntry(container, {
+            public_id: 'appr-1',
+            status: 'approved',
+            parent: {first_name: 'A', last_name: 'B', phone: '1', email: 'a@b.com'},
+            children: []
+        });
+        const btn = container.querySelector('[data-mark-entered="appr-1"]');
+        expect(btn).not.toBeNull();
+    });
+
+    it('does not render the mark-entered button on pending cards', () => {
         const window = loadWindow();
         const container = window.document.createElement('div');
         window.renderEntry(container, {
@@ -142,7 +155,7 @@ describe('admin-guest-entries', () => {
             children: []
         });
         const btn = container.querySelector('[data-mark-entered="pend-1"]');
-        expect(btn).not.toBeNull();
+        expect(btn).toBeNull();
     });
 
     it('renders the entered section collapsed by default and toggles it open', async () => {

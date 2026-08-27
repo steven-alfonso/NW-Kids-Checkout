@@ -114,7 +114,7 @@ function renderEntry(container, entry) {
     });
     card.appendChild(childrenBlock);
 
-    if (entry.status === 'approved' || entry.status === 'pending') {
+    if (entry.status === 'approved') {
         const markEntered = document.createElement('button');
         markEntered.type = 'button';
         markEntered.dataset.markEntered = entry.public_id;

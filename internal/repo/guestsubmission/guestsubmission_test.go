@@ -132,24 +132,83 @@ func Test_sqliteRepo_ListSubmissions(t *testing.T) {
 	})
 
 	t.Run("without manual checkins excludes entered families with rows", func(t *testing.T) {
+		wipeAll(t)
+		s2 := NewRepo(testDB)
+		standalone, err := s2.CreateSubmission(t.Context(), Parent{
+			FirstName: "Standalone", LastName: "Family", Phone: "99", Email: "s@f.com",
+		}, []Child{{FirstName: "SF", LastName: "Family", DOB: "2020-01-01", Grade: "k"}})
+		require.NoError(t, err)
+		entered, err := s2.CreateSubmission(t.Context(), Parent{
+			FirstName: "Entered", LastName: "Only", Phone: "88", Email: "e@o.com",
+		}, []Child{{FirstName: "EO", LastName: "Only", DOB: "2020-01-01", Grade: "k"}})
+		require.NoError(t, err)
+
 		now := time.Now().UTC()
-		require.NoError(t, s.UpdateSubmissionStatus(t.Context(), a.PublicID, StatusEntered, now))
-		require.NoError(t, s.CreateManualCheckins(t.Context(), a.PublicID))
+		require.NoError(t, s2.UpdateSubmissionStatus(t.Context(), standalone.PublicID, StatusEntered, now))
+		require.NoError(t, s2.CreateManualCheckins(t.Context(), standalone.PublicID))
 
-		require.NoError(t, s.UpdateSubmissionStatus(t.Context(), b.PublicID, StatusEntered, now))
+		require.NoError(t, s2.UpdateSubmissionStatus(t.Context(), entered.PublicID, StatusEntered, now))
 
-		res, err := s.ListSubmissions(t.Context(), Filter{Status: StatusEntered, WithoutManualCheckins: true})
+		res, err := s2.ListSubmissions(t.Context(), Filter{Status: StatusEntered, WithoutManualCheckins: true})
 		require.NoError(t, err)
 		require.Len(t, res, 1)
-		assert.Equal(t, b.PublicID, res[0].PublicID)
+		assert.Equal(t, entered.PublicID, res[0].PublicID)
 	})
 
 	t.Run("children belong to the right parent", func(t *testing.T) {
-		res, err := s.ListSubmissions(t.Context(), Filter{PublicID: b.PublicID})
+		wipeAll(t)
+		s3 := NewRepo(testDB)
+		b, err := s3.CreateSubmission(t.Context(), Parent{
+			FirstName: "Jane", LastName: "Doe", Phone: "2", Email: "j@d.com",
+		}, []Child{{FirstName: "Sam", LastName: "Doe", DOB: "2019-02-02", Grade: "1"}})
+		require.NoError(t, err)
+		res, err := s3.ListSubmissions(t.Context(), Filter{PublicID: b.PublicID})
 		require.NoError(t, err)
 		require.Len(t, res, 1)
 		assert.Equal(t, "Sam", res[0].Children[0].FirstName)
 	})
+}
+
+func Test_statusPredicate(t *testing.T) {
+	t.Run("rejected predicate excludes rows with both approved_at and rejected_at", func(t *testing.T) {
+		now := time.Now().UTC()
+
+		sub, err := createSubmissionDirect(t, testDB, Parent{
+			FirstName: "Dual", LastName: "Timestamp", Phone: "555-9999", Email: "dual@test.com",
+		}, []Child{{FirstName: "DT", LastName: "Timestamp", DOB: "2020-01-01", Grade: "k"}})
+		require.NoError(t, err)
+
+		// Set both approved_at and rejected_at directly in the DB
+		_, err = testDB.ExecContext(t.Context(),
+			`UPDATE guest_submissions SET approved_at = ?, rejected_at = ? WHERE public_id = ?`,
+			now, now, sub.PublicID)
+		require.NoError(t, err)
+
+		// Should NOT appear under "rejected" filter
+		rejected, err := squirrel.Select("id").From("guest_submissions").
+			Where(statusPredicateForTest(t, StatusRejected)).
+			RunWith(testDB).QueryContext(t.Context())
+		require.NoError(t, err)
+		defer rejected.Close()
+		count := 0
+		for rejected.Next() {
+			count++
+		}
+		assert.Equal(t, 0, count, "should not appear under StatusRejected when both timestamps are set")
+	})
+}
+
+func statusPredicateForTest(t *testing.T, status string) squirrel.Sqlizer {
+	t.Helper()
+	p, err := statusPredicate(status)
+	require.NoError(t, err)
+	return p
+}
+
+func createSubmissionDirect(t *testing.T, db *sql.DB, parent Parent, children []Child) (Submission, error) {
+	t.Helper()
+	s := NewRepo(db)
+	return s.CreateSubmission(t.Context(), parent, children)
 }
 
 func Test_sqliteRepo_UpdateSubmissionStatus(t *testing.T) {
@@ -186,16 +245,41 @@ func Test_sqliteRepo_UpdateSubmissionStatus(t *testing.T) {
 	})
 
 	t.Run("rejected", func(t *testing.T) {
-		now := time.Now().UTC()
-		err := s.UpdateSubmissionStatus(t.Context(), sub.PublicID, StatusRejected, now)
+		rejSub, err := s.CreateSubmission(t.Context(), Parent{
+			FirstName: "Reject", LastName: "Test", Phone: "2", Email: "rej@test.com",
+		}, []Child{{FirstName: "RT", LastName: "Test", DOB: "2020-01-01", Grade: "k"}})
 		require.NoError(t, err)
 
-		res, err := s.ListSubmissions(t.Context(), Filter{PublicID: sub.PublicID})
+		now := time.Now().UTC()
+		err = s.UpdateSubmissionStatus(t.Context(), rejSub.PublicID, StatusRejected, now)
+		require.NoError(t, err)
+
+		res, err := s.ListSubmissions(t.Context(), Filter{PublicID: rejSub.PublicID})
 		require.NoError(t, err)
 		assert.Equal(t, StatusRejected, res[0].Status)
 		assert.WithinDuration(t, now, res[0].RejectedAt, time.Second)
 		assert.True(t, res[0].ApprovedAt.IsZero(), "approved_at should be cleared when rejected")
 		assert.True(t, res[0].EnteredAt.IsZero(), "entered_at should be cleared when rejected")
+	})
+
+	t.Run("concurrent status change returns ErrConflict", func(t *testing.T) {
+		raceSub, err := s.CreateSubmission(t.Context(), Parent{
+			FirstName: "Race", LastName: "Test", Phone: "3", Email: "race@test.com",
+		}, []Child{{FirstName: "RC", LastName: "Test", DOB: "2020-01-01", Grade: "k"}})
+		require.NoError(t, err)
+		assert.Equal(t, StatusPending, raceSub.Status)
+
+		now := time.Now().UTC()
+		err = s.UpdateSubmissionStatus(t.Context(), raceSub.PublicID, StatusRejected, now)
+		require.NoError(t, err)
+
+		err = s.UpdateSubmissionStatus(t.Context(), raceSub.PublicID, StatusApproved, now)
+		require.ErrorIs(t, err, ErrConflict)
+
+		res, err := s.ListSubmissions(t.Context(), Filter{PublicID: raceSub.PublicID})
+		require.NoError(t, err)
+		require.Len(t, res, 1)
+		assert.Equal(t, StatusRejected, res[0].Status, "status must not be overwritten by stale caller")
 	})
 
 	t.Run("unknown public id returns repo.ErrNotFound", func(t *testing.T) {

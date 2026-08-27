@@ -300,4 +300,58 @@ describe('kiosk form', () => {
         window.document.querySelector('.child-dob').value = '2020-01-01';
         expect(window.validateForm()).toBe(true);
     });
+
+    it('fails validation when child first name is empty', () => {
+        const window = loadWindow();
+        window.document.getElementById('parent-first-name').value = 'John';
+        window.document.getElementById('parent-last-name').value = 'Smith';
+        window.document.getElementById('parent-phone').value = '5551234';
+        window.document.querySelector('.child-first-name').value = '';
+        window.document.querySelector('.child-last-name').value = 'Smith';
+        window.document.querySelector('.child-dob').value = '2020-01-01';
+        expect(window.validateForm()).toBe(false);
+        expect(window.document.querySelector('.child-first-name').validationMessage).toContain('First name is required');
+    });
+
+    it('fails validation when child last name is empty', () => {
+        const window = loadWindow();
+        window.document.getElementById('parent-first-name').value = 'John';
+        window.document.getElementById('parent-last-name').value = 'Smith';
+        window.document.getElementById('parent-phone').value = '5551234';
+        window.document.querySelector('.child-first-name').value = 'Timmy';
+        window.document.querySelector('.child-last-name').value = '';
+        window.document.querySelector('.child-dob').value = '2020-01-01';
+        expect(window.validateForm()).toBe(false);
+        expect(window.document.querySelector('.child-last-name').validationMessage).toContain('Last name is required');
+    });
+
+    it('shows kiosk error when no children are present', () => {
+        const window = loadWindow();
+        window.document.getElementById('parent-first-name').value = 'John';
+        window.document.getElementById('parent-last-name').value = 'Smith';
+        window.document.getElementById('parent-phone').value = '5551234';
+        const rows = window.document.querySelectorAll('.child-row');
+        for (let i = rows.length - 1; i >= 0; i--) {
+            rows[i].remove();
+        }
+        expect(window.validateForm()).toBe(false);
+        expect(window.document.getElementById('kiosk-error').textContent).toContain('At least one child');
+    });
+
+    it('validates each child row independently', () => {
+        const window = loadWindow();
+        window.addChildRow();
+        window.document.getElementById('parent-first-name').value = 'John';
+        window.document.getElementById('parent-last-name').value = 'Smith';
+        window.document.getElementById('parent-phone').value = '5551234';
+        const rows = window.document.querySelectorAll('.child-row');
+        rows[0].querySelector('.child-first-name').value = 'Timmy';
+        rows[0].querySelector('.child-last-name').value = 'Smith';
+        rows[0].querySelector('.child-dob').value = '2020-01-01';
+        rows[1].querySelector('.child-first-name').value = '';
+        rows[1].querySelector('.child-last-name').value = 'Smith';
+        rows[1].querySelector('.child-dob').value = '2020-01-01';
+        expect(window.validateForm()).toBe(false);
+        expect(rows[1].querySelector('.child-first-name').validationMessage).toContain('First name is required');
+    });
 });

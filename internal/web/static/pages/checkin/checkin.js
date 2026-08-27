@@ -181,6 +181,30 @@ function validateForm() {
         }
     }
 
+    const childRows = childrenContainer.querySelectorAll('.child-row');
+    if (childRows.length === 0) {
+        setKioskError('At least one child is required');
+        return false;
+    }
+
+    for (const row of childRows) {
+        const firstName = row.querySelector('.child-first-name');
+        const lastName = row.querySelector('.child-last-name');
+        firstName?.setCustomValidity('');
+        lastName?.setCustomValidity('');
+        if (!firstName?.value.trim()) {
+            firstName?.setCustomValidity('First name is required');
+            setKioskError('');
+            return false;
+        }
+        if (!lastName?.value.trim()) {
+            lastName?.setCustomValidity('Last name is required');
+            setKioskError('');
+            return false;
+        }
+    }
+
+    setKioskError('');
     return kioskForm.checkValidity();
 }
 
