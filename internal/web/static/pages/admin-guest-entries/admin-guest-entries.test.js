@@ -182,4 +182,29 @@ describe('admin-guest-entries', () => {
         expect(getBody().classList.contains('hidden')).toBe(true);
         expect(getBody().classList.contains('space-y-4')).toBe(false);
     });
+
+    it('toggles entered section when clicking inner span/text (dead zone fix)', async () => {
+        const window = loadWindow();
+        const entered = {public_id: 'e-2', status: 'entered', parent: {first_name: 'E', last_name: 'F', phone: '3', email: 'e@f.com'}, children: []};
+        window.fetch = async () => ({ok: true, status: 200, json: async () => [entered]});
+        await window.loadEntries();
+
+        const getBody = () => window.document.getElementById('collapsible-section-entered');
+        const getToggle = () => window.document.querySelector('[data-collapse-toggle="entered"]');
+
+        expect(getBody().classList.contains('hidden')).toBe(true);
+        expect(getToggle().getAttribute('aria-expanded')).toBe('false');
+
+        // Click on inner label span (simulates user clicking text rather than button padding)
+        const labelSpan = getToggle().querySelector('span:not([aria-hidden])');
+        labelSpan.click();
+        expect(getBody().classList.contains('hidden')).toBe(false);
+        expect(getToggle().getAttribute('aria-expanded')).toBe('true');
+
+        // Click on arrow span to collapse again
+        const arrowSpan = getToggle().querySelector('span[aria-hidden="true"]');
+        arrowSpan.click();
+        expect(getBody().classList.contains('hidden')).toBe(true);
+        expect(getToggle().getAttribute('aria-expanded')).toBe('false');
+    });
 });

@@ -195,15 +195,16 @@ if (entriesContainer) {
     entriesContainer.addEventListener('click', async (event) => {
         const target = event.target;
         if (!(target instanceof HTMLElement)) return;
-        if (target.dataset.collapseToggle) {
+        const toggle = target.closest('[data-collapse-toggle]');
+        if (toggle) {
             enteredCollapsed = !enteredCollapsed;
-            const body = document.getElementById(`collapsible-section-${target.dataset.collapseToggle}`);
+            const body = document.getElementById(`collapsible-section-${toggle.dataset.collapseToggle}`);
             if (body) {
                 body.classList.toggle('hidden', enteredCollapsed);
                 body.classList.toggle('space-y-4', !enteredCollapsed);
             }
-            target.setAttribute('aria-expanded', String(!enteredCollapsed));
-            target.querySelector('span[aria-hidden="true"]').textContent = enteredCollapsed ? '▸' : '▾';
+            toggle.setAttribute('aria-expanded', String(!enteredCollapsed));
+            toggle.querySelector('span[aria-hidden="true"]').textContent = enteredCollapsed ? '▸' : '▾';
             return;
         }
         if (target.dataset.copy !== undefined) {
