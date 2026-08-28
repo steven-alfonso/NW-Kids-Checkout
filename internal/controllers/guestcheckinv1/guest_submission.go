@@ -97,7 +97,7 @@ type childPayload struct {
 }
 
 func validateCreateSubmissionPayload(p createSubmissionPayload) error {
-	if p.Parent.FirstName == "" || p.Parent.LastName == "" {
+	if strings.TrimSpace(p.Parent.FirstName) == "" || strings.TrimSpace(p.Parent.LastName) == "" {
 		return errors.New("parent first_name and last_name are required")
 	}
 	if p.Parent.Phone == "" && p.Parent.Email == "" {
@@ -126,7 +126,7 @@ func validateCreateSubmissionPayload(p createSubmissionPayload) error {
 	}
 
 	for i, child := range p.Children {
-		if child.FirstName == "" || child.LastName == "" || child.DOB == "" || child.Grade == "" {
+		if strings.TrimSpace(child.FirstName) == "" || strings.TrimSpace(child.LastName) == "" || strings.TrimSpace(child.DOB) == "" || strings.TrimSpace(child.Grade) == "" {
 			return fmt.Errorf("child %d: first_name, last_name, dob, and grade are required", i+1)
 		}
 		dob, err := time.Parse("2006-01-02", child.DOB)
@@ -264,6 +264,7 @@ func (controller *Controller) PatchSubmissionStatus(c *fiber.Ctx) error {
 		if errors.Is(err, guestsubmission.ErrConflict) {
 			return fiber.NewError(fiber.StatusBadRequest, "submission status changed, please retry")
 		}
+		slog.Error("failed to update submission status", "public_id", publicID, "error", err)
 		return fiber.NewError(fiber.StatusInternalServerError, "internal error")
 	}
 
@@ -287,9 +288,6 @@ func (controller *Controller) CreateSubmissionCheckins(c *fiber.Ctx) error {
 	if err != nil {
 		if errors.Is(err, repo.ErrNotFound) {
 			return fiber.NewError(fiber.StatusNotFound, "submission not found")
-		}
-		if errors.Is(err, guestsubmission.ErrManualCheckinsExist) {
-			return fiber.NewError(fiber.StatusBadRequest, "manual check-ins already exist for this submission")
 		}
 		slog.Error("failed to create manual checkins", "error", err)
 		return fiber.NewError(fiber.StatusInternalServerError, "internal error")

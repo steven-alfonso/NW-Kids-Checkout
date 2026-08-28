@@ -2,6 +2,7 @@ package guestcheckinv1
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -136,6 +137,14 @@ func TestController_CreateSubmissionValidation(t *testing.T) {
 		{"bad phone", map[string]interface{}{
 			"parent":   map[string]interface{}{"first_name": "A", "last_name": "B", "phone": "12", "email": "a@b.com"},
 			"children": []map[string]interface{}{{"first_name": "C", "last_name": "D", "dob": "2020-01-01", "grade": "k"}},
+		}},
+		{"whitespace-only parent names", map[string]interface{}{
+			"parent":   map[string]interface{}{"first_name": "   ", "last_name": "   ", "phone": "1234567", "email": "a@b.com"},
+			"children": []map[string]interface{}{{"first_name": "C", "last_name": "D", "dob": "2020-01-01", "grade": "k"}},
+		}},
+		{"whitespace-only child name", map[string]interface{}{
+			"parent":   map[string]interface{}{"first_name": "A", "last_name": "B", "phone": "1234567", "email": "a@b.com"},
+			"children": []map[string]interface{}{{"first_name": " ", "last_name": "\t", "dob": "2020-01-01", "grade": "k"}},
 		}},
 		{"more than 10 children", map[string]interface{}{
 			"parent": map[string]interface{}{"first_name": "A", "last_name": "B", "phone": "1234567", "email": "a@b.com"},
@@ -358,11 +367,16 @@ func TestController_CreateCheckinsAlreadyExist(t *testing.T) {
 		FirstName: "A", LastName: "B", Phone: "1234567", Email: "a@b.com",
 	}, []guestsubmission.Child{{FirstName: "C", LastName: "D", DOB: "2020-01-01", Grade: "k"}})
 	require.NoError(t, err)
+	require.NoError(t, repo.UpdateSubmissionStatus(t.Context(), sub.PublicID, guestsubmission.StatusEntered, time.Now().UTC()))
 	require.NoError(t, repo.CreateManualCheckins(t.Context(), sub.PublicID))
 
 	req := httptest.NewRequest("POST", fmt.Sprintf("/v1/checkins/guest-submissions/%s/checkins", sub.PublicID), nil)
 	resp, _ := app.Test(req)
-	require.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
+	require.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	var count int
+	require.NoError(t, testDB.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM manual_checkins").Scan(&count))
+	assert.Equal(t, 1, count)
 }
 
 func TestController_CreateCheckinsNotFound(t *testing.T) {
@@ -383,6 +397,47 @@ func TestController_PatchSubmissionNotFound(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	resp, _ := app.Test(req)
 	require.Equal(t, fiber.StatusNotFound, resp.StatusCode)
+}
+
+type conflictApproveRepo struct {
+	guestsubmission.Repo
+	submission guestsubmission.Submission
+}
+
+func (r *conflictApproveRepo) ListSubmissions(ctx context.Context, filter guestsubmission.Filter) ([]guestsubmission.Submission, error) {
+	return []guestsubmission.Submission{r.submission}, nil
+}
+
+func (r *conflictApproveRepo) ApproveSubmission(ctx context.Context, publicID string, now time.Time) error {
+	return guestsubmission.ErrConflict
+}
+
+func TestController_ApproveConflictReturnsBadRequest(t *testing.T) {
+	app := fiber.New()
+	store := session.New()
+	app.Use(func(c *fiber.Ctx) error {
+		sess, _ := store.Get(c)
+		sess.Set("authenticated", true)
+		sess.Set("role", "")
+		if err := sess.Save(); err != nil {
+			return err
+		}
+		return c.Next()
+	})
+	ctrl := Controller{
+		submissionRepo: &conflictApproveRepo{submission: guestsubmission.Submission{
+			PublicID: "abc123",
+			Status:   guestsubmission.StatusPending,
+		}},
+		sessionStore: store,
+	}
+	ctrl.RegisterRoutes(app)
+
+	body, _ := json.Marshal(map[string]interface{}{"status": "approved"})
+	req := httptest.NewRequest("PATCH", "/v1/checkins/guest-submissions/abc123/status", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := app.Test(req)
+	require.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
 }
 
 func TestController_RequiresAuth(t *testing.T) {

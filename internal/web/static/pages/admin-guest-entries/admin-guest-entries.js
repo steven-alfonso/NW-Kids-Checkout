@@ -124,7 +124,7 @@ function renderEntry(container, entry) {
     }
 
     container.appendChild(card);
-    return container.querySelectorAll('[data-copy]');
+    return card.querySelectorAll('[data-copy]');
 }
 
 async function copyValue(value) {

@@ -328,6 +328,17 @@ func Test_sqliteRepo_ApproveSubmission(t *testing.T) {
 		err := s.ApproveSubmission(t.Context(), "does-not-exist", time.Now().UTC())
 		require.ErrorIs(t, err, repo.ErrNotFound)
 	})
+
+	t.Run("approving a submission that is no longer pending returns ErrConflict", func(t *testing.T) {
+		nonPending, err := s.CreateSubmission(t.Context(), Parent{
+			FirstName: "Ann", LastName: "Other", Phone: "555-9999", Email: "a@o.com",
+		}, []Child{{FirstName: "Kid", LastName: "Other", DOB: "2019-02-02", Grade: "1"}})
+		require.NoError(t, err)
+		require.NoError(t, s.UpdateSubmissionStatus(t.Context(), nonPending.PublicID, StatusEntered, time.Now().UTC()))
+
+		err = s.ApproveSubmission(t.Context(), nonPending.PublicID, time.Now().UTC())
+		require.ErrorIs(t, err, ErrConflict)
+	})
 }
 
 func Test_sqliteRepo_CreateManualCheckins(t *testing.T) {
@@ -365,9 +376,21 @@ func Test_sqliteRepo_CreateManualCheckins(t *testing.T) {
 		assert.True(t, res[0].ApprovedAt.IsZero(), "status must remain entered")
 	})
 
-	t.Run("duplicate creation returns ErrManualCheckinsExist", func(t *testing.T) {
+	t.Run("duplicate creation is a no-op", func(t *testing.T) {
 		err := s.CreateManualCheckins(t.Context(), sub.PublicID)
-		require.ErrorIs(t, err, ErrManualCheckinsExist)
+		require.NoError(t, err)
+
+		err = s.CreateManualCheckins(t.Context(), sub.PublicID)
+		require.NoError(t, err)
+
+		for _, child := range sub.Children {
+			var count int
+			err := testDB.QueryRowContext(t.Context(),
+				"SELECT COUNT(*) FROM manual_checkins WHERE child_id = ?", child.ID).
+				Scan(&count)
+			require.NoError(t, err)
+			assert.Equal(t, 1, count, "each child should have exactly 1 manual_checkins row")
+		}
 	})
 
 	t.Run("rejected submission errors", func(t *testing.T) {
@@ -378,6 +401,16 @@ func Test_sqliteRepo_CreateManualCheckins(t *testing.T) {
 		require.NoError(t, s.UpdateSubmissionStatus(t.Context(), rejSub.PublicID, StatusRejected, time.Now().UTC()))
 
 		err = s.CreateManualCheckins(t.Context(), rejSub.PublicID)
+		require.Error(t, err)
+	})
+
+	t.Run("pending submission errors", func(t *testing.T) {
+		pendingSub, err := s.CreateSubmission(t.Context(), Parent{
+			FirstName: "Jim", LastName: "Bean", Phone: "555-1111", Email: "j@b.com",
+		}, []Child{{FirstName: "Kid", LastName: "Bean", DOB: "2019-02-02", Grade: "1"}})
+		require.NoError(t, err)
+
+		err = s.CreateManualCheckins(t.Context(), pendingSub.PublicID)
 		require.Error(t, err)
 	})
 

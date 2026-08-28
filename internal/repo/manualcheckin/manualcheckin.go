@@ -14,7 +14,7 @@ import (
 	"github.com/google/uuid"
 )
 
-var ErrInvalidManualCheckin = errors.New("manual checkin must reference a child or provide first and last name")
+var ErrInvalidManualCheckin = errors.New("manual checkin must provide first and last name")
 
 type Filter struct {
 	ID                 int64
@@ -154,7 +154,7 @@ func (s *sqliteRepo) ListManualCheckins(ctx context.Context, filter Filter) ([]M
 }
 
 func (s *sqliteRepo) CreateManualCheckin(ctx context.Context, manualCheckin ManualCheckin) (ManualCheckin, error) {
-	if manualCheckin.ChildID == 0 && (strings.TrimSpace(manualCheckin.FirstName) == "" || strings.TrimSpace(manualCheckin.LastName) == "") {
+	if strings.TrimSpace(manualCheckin.FirstName) == "" || strings.TrimSpace(manualCheckin.LastName) == "" {
 		return ManualCheckin{}, ErrInvalidManualCheckin
 	}
 

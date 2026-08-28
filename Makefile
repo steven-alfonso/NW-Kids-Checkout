@@ -22,11 +22,13 @@ db-reset:
         INSERT INTO schema_migrations (version, dirty) VALUES ($$latest, 0);"
 
 .PHONY: db-migrate
+# The snapshot dumps raw sqlite_master text (not .schema) so db/structure.sql
+# is byte-identical regardless of the sqlite3 CLI version.
 db-migrate:
 	@tmpdb=$$(mktemp) && \
 	sqlite3 $$tmpdb < db/pragmas.sqlite && \
 	migrate -source file://db/migrations -database "sqlite3://$$tmpdb" up && \
-	sqlite3 $$tmpdb .schema | grep -v -e '^CREATE TABLE schema_migrations' -e '^CREATE UNIQUE INDEX version_unique ON schema_migrations' -e '^CREATE TABLE sqlite_sequence' > db/structure.sql && \
+	sqlite3 -batch -noheader -init /dev/null $$tmpdb "SELECT sql || ';' FROM sqlite_master WHERE type IN ('table','index') AND name NOT IN ('schema_migrations','sqlite_sequence','version_unique') AND sql IS NOT NULL;" > db/structure.sql && \
 	rm -f $$tmpdb && \
 	migrate -source file://db/migrations -database "sqlite3://$(KIDS_CHECKIN_DB_FILE)" up
 

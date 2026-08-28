@@ -74,7 +74,7 @@ CREATE TABLE guest_submissions (
     created_at DATETIME NOT NULL
 );
 CREATE INDEX idx_children_parent_id ON children(parent_id);
-CREATE TABLE IF NOT EXISTS "manual_checkins" (
+CREATE TABLE "manual_checkins" (
     id INTEGER PRIMARY KEY,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     public_id TEXT,

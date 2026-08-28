@@ -216,6 +216,24 @@ func Test_sqliteRepo_CreateManualCheckin(t *testing.T) {
 			},
 			expectErr: true,
 		},
+		{
+			name: "reject blank first name with child id",
+			arg: ManualCheckin{
+				ChildID:   1,
+				FirstName: "   ",
+				LastName:  "somechild",
+			},
+			expectErr: true,
+		},
+		{
+			name: "reject blank last name with child id",
+			arg: ManualCheckin{
+				ChildID:   1,
+				FirstName: "somechild",
+				LastName:  "   ",
+			},
+			expectErr: true,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -67,14 +67,14 @@ type Repo interface {
 	// transaction. Returns repo.ErrNotFound if publicID is unknown.
 	ApproveSubmission(ctx context.Context, publicID string, now time.Time) error
 	// CreateManualCheckins creates one manual_checkins row per child of the
-	// submission without changing its status. Returns ErrManualCheckinsExist
-	// if rows already exist for the submission's children.
+	// submission without changing its status. If rows already exist for the
+	// submission's children, this is a no-op (returns nil). Returns an error
+	// unless the submission is approved or entered (not pending/rejected).
 	CreateManualCheckins(ctx context.Context, publicID string) error
 }
 
 var (
-	ErrManualCheckinsExist = errors.New("manual check-ins already exist for this submission")
-	ErrConflict            = errors.New("conflict: submission status changed since last read")
+	ErrConflict = errors.New("conflict: submission status changed since last read")
 )
 
 func statusFromTimestamps(approved, rejected, entered bool) string {
@@ -382,7 +382,7 @@ func (s *sqliteRepo) ApproveSubmission(ctx context.Context, publicID string, now
 		return fmt.Errorf("querying guest submission: %w", err)
 	}
 	if approvedAt.Valid || rejectedAt.Valid || enteredAt.Valid {
-		return fmt.Errorf("cannot approve submission in status %s", statusFromTimestamps(approvedAt.Valid, rejectedAt.Valid, enteredAt.Valid))
+		return fmt.Errorf("%w: cannot approve submission in status %s", ErrConflict, statusFromTimestamps(approvedAt.Valid, rejectedAt.Valid, enteredAt.Valid))
 	}
 
 	if err := s.insertManualCheckins(ctx, tx, parentID); err != nil {
@@ -418,13 +418,13 @@ func (s *sqliteRepo) CreateManualCheckins(ctx context.Context, publicID string) 
 	defer tx.Rollback()
 
 	var parentID int64
-	var rejectedAt sql.NullTime
-	err = squirrel.Select("parent_id", "rejected_at").
+	var approvedAt, rejectedAt, enteredAt sql.NullTime
+	err = squirrel.Select("parent_id", "approved_at", "rejected_at", "entered_at").
 		From("guest_submissions").
 		Where(squirrel.Eq{"public_id": publicID}).
 		RunWith(tx).
 		QueryRowContext(ctx).
-		Scan(&parentID, &rejectedAt)
+		Scan(&parentID, &approvedAt, &rejectedAt, &enteredAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return repo.ErrNotFound
@@ -433,6 +433,9 @@ func (s *sqliteRepo) CreateManualCheckins(ctx context.Context, publicID string) 
 	}
 	if rejectedAt.Valid {
 		return fmt.Errorf("cannot create manual check-ins for rejected submission")
+	}
+	if !approvedAt.Valid && !enteredAt.Valid {
+		return fmt.Errorf("cannot create manual check-ins for pending submission")
 	}
 
 	if err := s.insertManualCheckins(ctx, tx, parentID); err != nil {
@@ -493,7 +496,7 @@ func (s *sqliteRepo) insertManualCheckins(ctx context.Context, tx *sql.Tx, paren
 		return fmt.Errorf("checking existing manual checkins: %w", err)
 	}
 	if existing > 0 {
-		return ErrManualCheckinsExist
+		return nil // already created; no-op
 	}
 
 	for _, child := range children {
