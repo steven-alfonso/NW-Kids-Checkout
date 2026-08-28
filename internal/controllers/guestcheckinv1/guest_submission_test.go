@@ -473,6 +473,35 @@ func TestController_CreateCheckinsInvalidStatusReturnsBadRequest(t *testing.T) {
 	})
 }
 
+func TestController_InvalidStatusReturnsBadRequest(t *testing.T) {
+	app, _, testDB := setupAuthedApp(t, "")
+	wipeSubmissionTables(t, testDB)
+
+	req := httptest.NewRequest("GET", "/v1/checkins/guest-submissions?status=bogus", nil)
+	resp, _ := app.Test(req)
+	require.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
+	assert.NotEqual(t, fiber.StatusInternalServerError, resp.StatusCode)
+
+	// Test admin endpoint with same DB but admin role
+	adminApp := fiber.New()
+	adminStore := session.New()
+	adminApp.Use(func(c *fiber.Ctx) error {
+		sess, _ := adminStore.Get(c)
+		sess.Set("authenticated", true)
+		sess.Set("role", "admin")
+		if err := sess.Save(); err != nil {
+			return err
+		}
+		return c.Next()
+	})
+	NewController(testDB, adminStore).RegisterRoutes(adminApp)
+
+	adminReq := httptest.NewRequest("GET", "/v1/admin/guest-submissions?status=bogus", nil)
+	adminResp, _ := adminApp.Test(adminReq)
+	require.Equal(t, fiber.StatusBadRequest, adminResp.StatusCode)
+	assert.NotEqual(t, fiber.StatusInternalServerError, adminResp.StatusCode)
+}
+
 func TestController_RequiresAuth(t *testing.T) {
 	app := fiber.New()
 	store := session.New()
