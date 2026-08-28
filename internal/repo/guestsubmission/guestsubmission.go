@@ -56,6 +56,7 @@ type Filter struct {
 	Status                string
 	PublicID              string
 	WithoutManualCheckins bool
+	Limit                 int
 }
 
 type Repo interface {
@@ -218,6 +219,9 @@ func (s *sqliteRepo) ListSubmissions(ctx context.Context, filter Filter) ([]Subm
 			"NOT EXISTS (SELECT 1 FROM manual_checkins mc JOIN children ch ON ch.id = mc.child_id WHERE ch.parent_id = guest_submissions.parent_id)"))
 	}
 	builder = builder.OrderBy("created_at DESC")
+	if filter.Limit > 0 {
+		builder = builder.Limit(uint64(filter.Limit))
+	}
 
 	rows, err := builder.RunWith(s.db).QueryContext(ctx)
 	if err != nil {

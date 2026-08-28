@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"mime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -197,6 +198,9 @@ func (controller *Controller) AdminListSubmissions(c *fiber.Ctx) error {
 	if err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, err.Error())
 	}
+	if filter.Limit == 0 {
+		filter.Limit = 100
+	}
 
 	submissions, err := controller.submissionRepo.ListSubmissions(c.Context(), filter)
 	if err != nil {
@@ -322,6 +326,16 @@ func buildFilter(c *fiber.Ctx) (guestsubmission.Filter, error) {
 	}
 	if q := c.Query("without_manual_checkins"); q == "true" || q == "1" {
 		filter.WithoutManualCheckins = true
+	}
+	if s := c.Query("limit"); s != "" {
+		n, err := strconv.Atoi(s)
+		if err != nil || n <= 0 {
+			return guestsubmission.Filter{}, fiber.NewError(fiber.StatusBadRequest, "invalid limit")
+		}
+		if n > 200 {
+			n = 200
+		}
+		filter.Limit = n
 	}
 	return filter, nil
 }

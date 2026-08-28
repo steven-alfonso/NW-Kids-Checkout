@@ -167,6 +167,45 @@ func Test_sqliteRepo_ListSubmissions(t *testing.T) {
 		require.Len(t, res, 1)
 		assert.Equal(t, "Sam", res[0].Children[0].FirstName)
 	})
+
+	t.Run("limit truncates and orders by created_at DESC", func(t *testing.T) {
+		wipeAll(t)
+		s4 := NewRepo(testDB)
+		now := time.Now().UTC()
+		subs := make([]Submission, 0, 3)
+		for i := range 3 {
+			sub, err := s4.CreateSubmission(t.Context(), Parent{
+				FirstName: "Limit", LastName: string(rune('A' + i)), Phone: "1", Email: "l@test.com",
+			}, []Child{{FirstName: "Kid", LastName: string(rune('A' + i)), DOB: "2020-01-01", Grade: "k"}})
+			require.NoError(t, err)
+			// Spread created_at by minutes to make ordering deterministic.
+			createdAt := now.Add(time.Duration(i) * time.Minute)
+			_, err = testDB.ExecContext(t.Context(), `UPDATE guest_submissions SET created_at = ? WHERE public_id = ?`, createdAt, sub.PublicID)
+			require.NoError(t, err)
+			_, err = testDB.ExecContext(t.Context(), `UPDATE parents SET created_at = ? WHERE id = ?`, createdAt, sub.ParentID)
+			require.NoError(t, err)
+			sub.CreatedAt = createdAt
+			subs = append(subs, sub)
+		}
+
+		res, err := s4.ListSubmissions(t.Context(), Filter{Limit: 2})
+		require.NoError(t, err)
+		require.Len(t, res, 2)
+		// Most recent first (highest created_at).
+		assert.Equal(t, subs[2].PublicID, res[0].PublicID)
+		assert.Equal(t, subs[1].PublicID, res[1].PublicID)
+		assert.True(t, res[0].CreatedAt.After(res[1].CreatedAt) || res[0].CreatedAt.Equal(res[1].CreatedAt))
+
+		// No limit returns all 3.
+		all, err := s4.ListSubmissions(t.Context(), Filter{})
+		require.NoError(t, err)
+		require.Len(t, all, 3)
+
+		// Limit larger than total still returns all.
+		large, err := s4.ListSubmissions(t.Context(), Filter{Limit: 10})
+		require.NoError(t, err)
+		require.Len(t, large, 3)
+	})
 }
 
 func Test_statusPredicate(t *testing.T) {
