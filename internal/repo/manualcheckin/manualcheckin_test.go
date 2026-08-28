@@ -153,6 +153,22 @@ func Test_sqliteRepo_CreateManualCheckin(t *testing.T) {
 	s := NewRepo(testDB)
 	_, err := squirrel.Delete("manual_checkins").RunWith(testDB).ExecContext(t.Context())
 	require.NoError(t, err)
+	_, err = squirrel.Delete("children").RunWith(testDB).ExecContext(t.Context())
+	require.NoError(t, err)
+	_, err = squirrel.Delete("parents").RunWith(testDB).ExecContext(t.Context())
+	require.NoError(t, err)
+
+	// Seed a valid parent/child for FK-constrained cases.
+	res, err := squirrel.Insert("parents").Columns("first_name", "last_name", "phone", "email", "created_at").
+		Values("Seed", "Parent", "555-0000", "seed@test.com", time.Now().UTC()).RunWith(testDB).ExecContext(t.Context())
+	require.NoError(t, err)
+	seedParentID, err := res.LastInsertId()
+	require.NoError(t, err)
+	res, err = squirrel.Insert("children").Columns("parent_id", "first_name", "last_name", "dob", "grade", "created_at").
+		Values(seedParentID, "Seed", "Child", "2020-01-01", "k", time.Now().UTC()).RunWith(testDB).ExecContext(t.Context())
+	require.NoError(t, err)
+	seedChildID, err := res.LastInsertId()
+	require.NoError(t, err)
 
 	tests := []struct {
 		name      string
@@ -184,7 +200,7 @@ func Test_sqliteRepo_CreateManualCheckin(t *testing.T) {
 			arg: ManualCheckin{
 				FirstName: "somefirstname",
 				LastName:  "somelastname",
-				ChildID:   1,
+				ChildID:   seedChildID,
 			},
 		},
 		{
@@ -219,7 +235,7 @@ func Test_sqliteRepo_CreateManualCheckin(t *testing.T) {
 		{
 			name: "reject blank first name with child id",
 			arg: ManualCheckin{
-				ChildID:   1,
+				ChildID:   seedChildID,
 				FirstName: "   ",
 				LastName:  "somechild",
 			},
@@ -228,7 +244,7 @@ func Test_sqliteRepo_CreateManualCheckin(t *testing.T) {
 		{
 			name: "reject blank last name with child id",
 			arg: ManualCheckin{
-				ChildID:   1,
+				ChildID:   seedChildID,
 				FirstName: "somechild",
 				LastName:  "   ",
 			},
@@ -418,10 +434,26 @@ func Test_sqliteRepo_SetManualCheckedOutConfirmedAt(t *testing.T) {
 func Test_sqliteRepo_CreateManualCheckinWithChildID(t *testing.T) {
 	_, err := squirrel.Delete("manual_checkins").RunWith(testDB).ExecContext(t.Context())
 	require.NoError(t, err)
+	_, err = squirrel.Delete("children").RunWith(testDB).ExecContext(t.Context())
+	require.NoError(t, err)
+	_, err = squirrel.Delete("parents").RunWith(testDB).ExecContext(t.Context())
+	require.NoError(t, err)
+
+	// Create a valid parent/child to satisfy FK constraint on child_id.
+	res, err := squirrel.Insert("parents").Columns("first_name", "last_name", "phone", "email", "created_at").
+		Values("Parent", "One", "555-0001", "parent1@test.com", time.Now().UTC()).RunWith(testDB).ExecContext(t.Context())
+	require.NoError(t, err)
+	parentID, err := res.LastInsertId()
+	require.NoError(t, err)
+	res, err = squirrel.Insert("children").Columns("parent_id", "first_name", "last_name", "dob", "grade", "created_at").
+		Values(parentID, "Timmy", "Smith", "2020-01-01", "k", time.Now().UTC()).RunWith(testDB).ExecContext(t.Context())
+	require.NoError(t, err)
+	childID, err := res.LastInsertId()
+	require.NoError(t, err)
 
 	s := NewRepo(testDB)
 	created, err := s.CreateManualCheckin(t.Context(), ManualCheckin{
-		ChildID:   42,
+		ChildID:   childID,
 		FirstName: "timmy",
 		LastName:  "smith",
 	})
@@ -430,5 +462,5 @@ func Test_sqliteRepo_CreateManualCheckinWithChildID(t *testing.T) {
 	rows, err := s.ListManualCheckins(t.Context(), Filter{ID: created.ID, Limit: 1})
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
-	assert.Equal(t, int64(42), rows[0].ChildID)
+	assert.Equal(t, childID, rows[0].ChildID)
 }

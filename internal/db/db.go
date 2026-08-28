@@ -22,6 +22,7 @@ func InitDB(dataSourceName string) (*sql.DB, error) {
 	}
 
 	_, err = db.Exec(`
+  		PRAGMA foreign_keys = ON;
   		PRAGMA synchronous = NORMAL;
   		PRAGMA temp_store = MEMORY;
   		PRAGMA busy_timeout = 5000;`)

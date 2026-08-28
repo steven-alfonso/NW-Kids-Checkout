@@ -389,7 +389,7 @@ func (s *sqliteRepo) ApproveSubmission(ctx context.Context, publicID string, now
 		return err
 	}
 
-	if _, err := squirrel.Update("guest_submissions").
+	res, err := squirrel.Update("guest_submissions").
 		Set("approved_at", now.UTC()).
 		Set("rejected_at", nil).
 		Set("entered_at", nil).
@@ -400,8 +400,16 @@ func (s *sqliteRepo) ApproveSubmission(ctx context.Context, publicID string, now
 			squirrel.Eq{"entered_at": nil},
 		}).
 		RunWith(tx).
-		ExecContext(ctx); err != nil {
+		ExecContext(ctx)
+	if err != nil {
 		return fmt.Errorf("updating submission status: %w", err)
+	}
+	ra, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("rows affected: %w", err)
+	}
+	if ra == 0 {
+		return ErrConflict
 	}
 
 	if err := tx.Commit(); err != nil {

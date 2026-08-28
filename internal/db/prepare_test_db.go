@@ -14,6 +14,11 @@ func PrepareTestDB() (*sql.DB, Cleanup, error) {
 		return nil, nil, err
 	}
 
+	_, err = tempDB.Exec(`PRAGMA foreign_keys = ON;`)
+	if err != nil {
+		return nil, nil, err
+	}
+
 	// Apply the schema to the in-memory database
 	_, err = tempDB.Exec(db.Schema)
 	if err != nil {
