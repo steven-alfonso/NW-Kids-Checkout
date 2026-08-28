@@ -440,6 +440,39 @@ func TestController_ApproveConflictReturnsBadRequest(t *testing.T) {
 	require.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
 }
 
+func TestController_CreateCheckinsInvalidStatusReturnsBadRequest(t *testing.T) {
+	app, _, testDB := setupAuthedApp(t, "")
+	wipeSubmissionTables(t, testDB)
+
+	repo := guestsubmission.NewRepo(testDB)
+
+	t.Run("pending returns 400 not 500", func(t *testing.T) {
+		sub, err := repo.CreateSubmission(t.Context(), guestsubmission.Parent{
+			FirstName: "A", LastName: "B", Phone: "1234567", Email: "a@b.com",
+		}, []guestsubmission.Child{{FirstName: "C", LastName: "D", DOB: "2020-01-01", Grade: "k"}})
+		require.NoError(t, err)
+
+		req := httptest.NewRequest("POST", fmt.Sprintf("/v1/checkins/guest-submissions/%s/checkins", sub.PublicID), nil)
+		resp, _ := app.Test(req)
+		require.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
+		assert.NotEqual(t, fiber.StatusInternalServerError, resp.StatusCode)
+	})
+
+	t.Run("rejected returns 400 not 500", func(t *testing.T) {
+		wipeSubmissionTables(t, testDB)
+		sub, err := repo.CreateSubmission(t.Context(), guestsubmission.Parent{
+			FirstName: "E", LastName: "F", Phone: "1234567", Email: "e@f.com",
+		}, []guestsubmission.Child{{FirstName: "G", LastName: "H", DOB: "2020-01-01", Grade: "k"}})
+		require.NoError(t, err)
+		require.NoError(t, repo.UpdateSubmissionStatus(t.Context(), sub.PublicID, guestsubmission.StatusRejected, time.Now().UTC()))
+
+		req := httptest.NewRequest("POST", fmt.Sprintf("/v1/checkins/guest-submissions/%s/checkins", sub.PublicID), nil)
+		resp, _ := app.Test(req)
+		require.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
+		assert.NotEqual(t, fiber.StatusInternalServerError, resp.StatusCode)
+	})
+}
+
 func TestController_RequiresAuth(t *testing.T) {
 	app := fiber.New()
 	store := session.New()

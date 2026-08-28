@@ -74,7 +74,8 @@ type Repo interface {
 }
 
 var (
-	ErrConflict = errors.New("conflict: submission status changed since last read")
+	ErrConflict      = errors.New("conflict: submission status changed since last read")
+	ErrInvalidStatus = errors.New("invalid submission status")
 )
 
 func statusFromTimestamps(approved, rejected, entered bool) string {
@@ -440,10 +441,10 @@ func (s *sqliteRepo) CreateManualCheckins(ctx context.Context, publicID string) 
 		return fmt.Errorf("querying guest submission: %w", err)
 	}
 	if rejectedAt.Valid {
-		return fmt.Errorf("cannot create manual check-ins for rejected submission")
+		return fmt.Errorf("%w: cannot create manual check-ins for rejected submission", ErrInvalidStatus)
 	}
 	if !approvedAt.Valid && !enteredAt.Valid {
-		return fmt.Errorf("cannot create manual check-ins for pending submission")
+		return fmt.Errorf("%w: cannot create manual check-ins for pending submission", ErrInvalidStatus)
 	}
 
 	if err := s.insertManualCheckins(ctx, tx, parentID); err != nil {

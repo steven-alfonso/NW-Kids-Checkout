@@ -289,6 +289,9 @@ func (controller *Controller) CreateSubmissionCheckins(c *fiber.Ctx) error {
 		if errors.Is(err, repo.ErrNotFound) {
 			return fiber.NewError(fiber.StatusNotFound, "submission not found")
 		}
+		if errors.Is(err, guestsubmission.ErrInvalidStatus) {
+			return fiber.NewError(fiber.StatusBadRequest, err.Error())
+		}
 		slog.Error("failed to create manual checkins", "error", err)
 		return fiber.NewError(fiber.StatusInternalServerError, "internal error")
 	}
