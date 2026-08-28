@@ -216,7 +216,7 @@ func (s *sqliteRepo) ListSubmissions(ctx context.Context, filter Filter) ([]Subm
 	}
 	if filter.WithoutManualCheckins {
 		builder = builder.Where(squirrel.Expr(
-			"NOT EXISTS (SELECT 1 FROM manual_checkins mc JOIN children ch ON ch.id = mc.child_id WHERE ch.parent_id = guest_submissions.parent_id)"))
+			"EXISTS (SELECT 1 FROM children ch WHERE ch.parent_id = guest_submissions.parent_id AND NOT EXISTS (SELECT 1 FROM manual_checkins mc WHERE mc.child_id = ch.id))"))
 	}
 	builder = builder.OrderBy("created_at DESC")
 	if filter.Limit > 0 {
@@ -471,6 +471,7 @@ func (s *sqliteRepo) insertManualCheckins(ctx context.Context, tx *sql.Tx, paren
 	rows, err := squirrel.Select("id", "first_name", "last_name").
 		From("children").
 		Where(squirrel.Eq{"parent_id": parentID}).
+		Where(squirrel.Expr("NOT EXISTS (SELECT 1 FROM manual_checkins mc WHERE mc.child_id = children.id)")).
 		OrderBy("id").
 		RunWith(tx).
 		QueryContext(ctx)
@@ -491,25 +492,18 @@ func (s *sqliteRepo) insertManualCheckins(ctx context.Context, tx *sql.Tx, paren
 	}
 
 	if len(children) == 0 {
-		return errors.New("submission has no children")
-	}
-
-	var existing int
-	if err := squirrel.Select("COUNT(*)").From("manual_checkins").
-		Where(squirrel.Eq{"child_id": func() []int64 {
-			ids := make([]int64, 0, len(children))
-			for _, child := range children {
-				ids = append(ids, child.ID)
-			}
-			return ids
-		}()}).
-		RunWith(tx).
-		QueryRowContext(ctx).
-		Scan(&existing); err != nil {
-		return fmt.Errorf("checking existing manual checkins: %w", err)
-	}
-	if existing > 0 {
-		return nil // already created; no-op
+		var total int
+		if err := squirrel.Select("COUNT(*)").From("children").
+			Where(squirrel.Eq{"parent_id": parentID}).
+			RunWith(tx).
+			QueryRowContext(ctx).
+			Scan(&total); err != nil {
+			return fmt.Errorf("checking children count: %w", err)
+		}
+		if total == 0 {
+			return errors.New("submission has no children")
+		}
+		return nil // all children already have manual_checkins; per-child no-op
 	}
 
 	for _, child := range children {

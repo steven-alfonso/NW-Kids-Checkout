@@ -458,3 +458,100 @@ func Test_sqliteRepo_CreateManualCheckins(t *testing.T) {
 		require.ErrorIs(t, err, repo.ErrNotFound)
 	})
 }
+
+func Test_sqliteRepo_CreateManualCheckins_PartialCoverage(t *testing.T) {
+	wipeAll(t)
+	s := NewRepo(testDB)
+
+	sub, err := s.CreateSubmission(t.Context(), Parent{
+		FirstName: "Partial", LastName: "Family", Phone: "555-1234", Email: "partial@test.com",
+	}, []Child{
+		{FirstName: "Kid1", LastName: "Family", DOB: "2020-01-01", Grade: "k"},
+		{FirstName: "Kid2", LastName: "Family", DOB: "2019-02-02", Grade: "1"},
+	})
+	require.NoError(t, err)
+	require.Len(t, sub.Children, 2)
+	require.NoError(t, s.UpdateSubmissionStatus(t.Context(), sub.PublicID, StatusEntered, time.Now().UTC()))
+
+	// Simulate partially covered family: manually insert checkin for only first child.
+	_, err = testDB.ExecContext(t.Context(),
+		`INSERT INTO manual_checkins (public_id, child_id, first_name, last_name, checked_out_at, checked_out_confirmed_at) VALUES (?, ?, ?, ?, NULL, NULL)`,
+		uuid.New().String(), sub.Children[0].ID, sub.Children[0].FirstName, sub.Children[0].LastName)
+	require.NoError(t, err)
+
+	// WithoutManualCheckins should include partially covered family (per-child semantics).
+	res, err := s.ListSubmissions(t.Context(), Filter{Status: StatusEntered, WithoutManualCheckins: true})
+	require.NoError(t, err)
+	found := false
+	for _, r := range res {
+		if r.PublicID == sub.PublicID {
+			found = true
+			break
+		}
+	}
+	assert.True(t, found, "partially covered family should be visible via WithoutManualCheckins")
+
+	// CreateManualCheckins should backfill only the missing child.
+	require.NoError(t, s.CreateManualCheckins(t.Context(), sub.PublicID))
+
+	for _, child := range sub.Children {
+		var count int
+		err := testDB.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM manual_checkins WHERE child_id = ?", child.ID).Scan(&count)
+		require.NoError(t, err)
+		assert.Equal(t, 1, count, "each child should have exactly 1 manual_checkins row after partial backfill (child %d)", child.ID)
+	}
+
+	// Second call is still idempotent.
+	require.NoError(t, s.CreateManualCheckins(t.Context(), sub.PublicID))
+	var total int
+	err = testDB.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM manual_checkins WHERE child_id IN (?,?)", sub.Children[0].ID, sub.Children[1].ID).Scan(&total)
+	require.NoError(t, err)
+	assert.Equal(t, 2, total)
+
+	// Now fully covered family should be hidden from WithoutManualCheckins.
+	res, err = s.ListSubmissions(t.Context(), Filter{Status: StatusEntered, WithoutManualCheckins: true})
+	require.NoError(t, err)
+	for _, r := range res {
+		assert.NotEqual(t, sub.PublicID, r.PublicID, "fully covered family should not appear in WithoutManualCheckins")
+	}
+}
+
+func Test_sqliteRepo_ListSubmissions_WithoutManualCheckins_PartialAfterCleanup(t *testing.T) {
+	wipeAll(t)
+	s := NewRepo(testDB)
+
+	sub, err := s.CreateSubmission(t.Context(), Parent{
+		FirstName: "Cleanup", LastName: "Family", Phone: "555-1234", Email: "cleanup@test.com",
+	}, []Child{
+		{FirstName: "Kid1", LastName: "Family", DOB: "2020-01-01", Grade: "k"},
+		{FirstName: "Kid2", LastName: "Family", DOB: "2019-02-02", Grade: "1"},
+	})
+	require.NoError(t, err)
+	require.NoError(t, s.UpdateSubmissionStatus(t.Context(), sub.PublicID, StatusEntered, time.Now().UTC()))
+	require.NoError(t, s.CreateManualCheckins(t.Context(), sub.PublicID))
+
+	// Simulate RemoveOldManualCheckins deleting only one child's row (per-row delete).
+	_, err = testDB.ExecContext(t.Context(), "DELETE FROM manual_checkins WHERE child_id = ?", sub.Children[0].ID)
+	require.NoError(t, err)
+
+	// Partially cleaned family should be visible.
+	res, err := s.ListSubmissions(t.Context(), Filter{Status: StatusEntered, WithoutManualCheckins: true})
+	require.NoError(t, err)
+	found := false
+	for _, r := range res {
+		if r.PublicID == sub.PublicID {
+			found = true
+			break
+		}
+	}
+	assert.True(t, found, "partially cleaned family should be visible after per-row delete")
+
+	// Backfill should restore missing child only.
+	require.NoError(t, s.CreateManualCheckins(t.Context(), sub.PublicID))
+	for _, child := range sub.Children {
+		var count int
+		err := testDB.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM manual_checkins WHERE child_id = ?", child.ID).Scan(&count)
+		require.NoError(t, err)
+		assert.Equal(t, 1, count)
+	}
+}
