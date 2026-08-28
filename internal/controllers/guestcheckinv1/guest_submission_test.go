@@ -66,7 +66,7 @@ func TestController_CreateSubmission(t *testing.T) {
 	req := httptest.NewRequest("POST", "/v1/checkins/guest-submissions", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	resp, _ := app.Test(req)
-	require.Equal(t, fiber.StatusOK, resp.StatusCode)
+	require.Equal(t, fiber.StatusCreated, resp.StatusCode)
 
 	var created Submission
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&created))
@@ -79,6 +79,37 @@ func TestController_CreateSubmission(t *testing.T) {
 	var parentCount int
 	require.NoError(t, testDB.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM parents").Scan(&parentCount))
 	assert.Equal(t, 1, parentCount)
+}
+
+func TestController_CreateSubmissionContentType(t *testing.T) {
+	app, _, testDB := setupAuthedApp(t, "")
+	wipeSubmissionTables(t, testDB)
+
+	payload := map[string]any{
+		"parent":   map[string]any{"first_name": "John", "last_name": "Smith", "phone": "555-1234", "email": "john@example.com"},
+		"children": []map[string]any{{"first_name": "Timmy", "last_name": "Smith", "dob": "2020-01-01", "grade": "1st Grade"}},
+	}
+	body, _ := json.Marshal(payload)
+
+	t.Run("wrong content type returns 415", func(t *testing.T) {
+		req := httptest.NewRequest("POST", "/v1/checkins/guest-submissions", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "text/plain")
+		resp, _ := app.Test(req)
+		require.Equal(t, fiber.StatusUnsupportedMediaType, resp.StatusCode)
+	})
+
+	t.Run("missing content type returns 415", func(t *testing.T) {
+		req := httptest.NewRequest("POST", "/v1/checkins/guest-submissions", bytes.NewReader(body))
+		resp, _ := app.Test(req)
+		require.Equal(t, fiber.StatusUnsupportedMediaType, resp.StatusCode)
+	})
+
+	t.Run("charset suffix still 201", func(t *testing.T) {
+		req := httptest.NewRequest("POST", "/v1/checkins/guest-submissions", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json; charset=utf-8")
+		resp, _ := app.Test(req)
+		require.Equal(t, fiber.StatusCreated, resp.StatusCode)
+	})
 }
 
 func TestController_CreateSubmissionRequiresPhoneOrEmail(t *testing.T) {
@@ -104,7 +135,7 @@ func TestController_CreateSubmissionRequiresPhoneOrEmail(t *testing.T) {
 			req := httptest.NewRequest("POST", "/v1/checkins/guest-submissions", bytes.NewReader(body))
 			req.Header.Set("Content-Type", "application/json")
 			resp, _ := app.Test(req)
-			require.Equal(t, fiber.StatusOK, resp.StatusCode)
+			require.Equal(t, fiber.StatusCreated, resp.StatusCode)
 
 			var created Submission
 			require.NoError(t, json.NewDecoder(resp.Body).Decode(&created))

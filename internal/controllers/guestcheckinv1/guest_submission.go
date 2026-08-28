@@ -142,6 +142,15 @@ func validateCreateSubmissionPayload(p createSubmissionPayload) error {
 }
 
 func (controller *Controller) CreateSubmission(c *fiber.Ctx) error {
+	contentType := c.Get("Content-Type")
+	if contentType == "" {
+		return fiber.NewError(fiber.StatusUnsupportedMediaType, "unsupported media type")
+	}
+	mediaType, _, err := mime.ParseMediaType(contentType)
+	if err != nil || mediaType != fiber.MIMEApplicationJSON {
+		return fiber.NewError(fiber.StatusUnsupportedMediaType, "unsupported media type")
+	}
+
 	var payload createSubmissionPayload
 	if err := json.Unmarshal(c.Body(), &payload); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "invalid JSON")
@@ -172,7 +181,7 @@ func (controller *Controller) CreateSubmission(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusInternalServerError, "internal error")
 	}
 
-	return c.JSON(submissionToResponse(submission))
+	return c.Status(fiber.StatusCreated).JSON(submissionToResponse(submission))
 }
 
 func (controller *Controller) ListSubmissions(c *fiber.Ctx) error {
