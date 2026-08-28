@@ -178,6 +178,15 @@ func (s *sqliteRepo) CreateManualCheckin(ctx context.Context, manualCheckin Manu
 	if manualCheckin.ChildID > 0 {
 		id := manualCheckin.ChildID
 		childID = &id
+
+		var exists int
+		err := squirrel.Select("1").From("children").Where(squirrel.Eq{"id": manualCheckin.ChildID}).RunWith(s.db).QueryRowContext(ctx).Scan(&exists)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return ManualCheckin{}, fmt.Errorf("%w: child %d not found", ErrInvalidManualCheckin, manualCheckin.ChildID)
+			}
+			return ManualCheckin{}, fmt.Errorf("validating child_id: %w", err)
+		}
 	}
 
 	builder := squirrel.Insert("manual_checkins").
@@ -187,6 +196,9 @@ func (s *sqliteRepo) CreateManualCheckin(ctx context.Context, manualCheckin Manu
 
 	res, err := builder.ExecContext(ctx)
 	if err != nil {
+		if strings.Contains(err.Error(), "FOREIGN KEY") {
+			return ManualCheckin{}, fmt.Errorf("%w: %v", ErrInvalidManualCheckin, err)
+		}
 		return ManualCheckin{}, err
 	}
 

@@ -9,7 +9,7 @@ import (
 type Cleanup func()
 
 func PrepareTestDB() (*sql.DB, Cleanup, error) {
-	tempDB, err := sql.Open("sqlite3", "file::memory:?cache=shared")
+	tempDB, err := sql.Open("sqlite3", "file::memory:?cache=shared&_foreign_keys=on")
 	if err != nil {
 		return nil, nil, err
 	}

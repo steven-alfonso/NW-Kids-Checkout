@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"log/slog"
+	"strings"
 
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -16,7 +17,16 @@ func InitDB(dataSourceName string) (*sql.DB, error) {
 
 	slog.Info("initializing database connection", slog.String("dsn", dataSourceName))
 
-	db, err := sql.Open("sqlite3", dataSourceName)
+	dsn := dataSourceName
+	if !strings.Contains(dsn, "_foreign_keys") {
+		if strings.Contains(dsn, "?") {
+			dsn += "&_foreign_keys=on"
+		} else {
+			dsn += "?_foreign_keys=on"
+		}
+	}
+
+	db, err := sql.Open("sqlite3", dsn)
 	if err != nil {
 		return nil, err
 	}
