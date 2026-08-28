@@ -44,6 +44,8 @@ CREATE TABLE manual_checkins_new (
     CHECK (child_id IS NOT NULL OR (first_name <> '' AND last_name <> ''))
 );
 
+UPDATE manual_checkins SET first_name='Unknown', last_name='Guest' WHERE first_name='' OR last_name='';
+
 INSERT INTO manual_checkins_new (id, created_at, public_id, first_name, last_name, checked_out_at, checked_out_confirmed_at)
 SELECT id, created_at, public_id, first_name, last_name, checked_out_at, checked_out_confirmed_at
 FROM manual_checkins;

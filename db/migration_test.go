@@ -119,3 +119,62 @@ func TestMigration_GuestFamilyModel_NoRedundantAlterTable(t *testing.T) {
 	require.NoError(t, err, "child_id column should exist after migration")
 	assert.Equal(t, "child_id", childIDCol)
 }
+
+func TestMigration_GuestFamilyModel_BlankNameBackfill(t *testing.T) {
+	db, err := sql.Open("sqlite3", "file::memory:?cache=shared")
+	require.NoError(t, err)
+	defer db.Close()
+
+	targetMigration := "migrations/20260825030013_add_guest_family_model.up.sqlite"
+	applyMigrationsUpTo(t, db, targetMigration)
+
+	// Insert legacy blank-name rows that would have been allowed by main's
+	// CreateManualCheckin but violate the new CHECK constraint.
+	_, err = db.Exec(`INSERT INTO manual_checkins (first_name, last_name) VALUES ('', '')`)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO manual_checkins (first_name, last_name) VALUES ('', 'Doe')`)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO manual_checkins (first_name, last_name) VALUES ('John', '')`)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO manual_checkins (first_name, last_name) VALUES ('Alice', 'Smith')`)
+	require.NoError(t, err)
+
+	upSQL, err := os.ReadFile(targetMigration)
+	require.NoError(t, err)
+	_, err = db.Exec(string(upSQL))
+	require.NoError(t, err, "up migration should succeed even with legacy blank-name rows")
+
+	var count int
+	err = db.QueryRow("SELECT COUNT(*) FROM manual_checkins").Scan(&count)
+	require.NoError(t, err)
+	assert.Equal(t, 4, count, "all rows should survive migration")
+
+	rows, err := db.Query(`SELECT first_name, last_name FROM manual_checkins ORDER BY id`)
+	require.NoError(t, err)
+	defer rows.Close()
+
+	type pair struct{ first, last string }
+	var got []pair
+	for rows.Next() {
+		var f, l string
+		require.NoError(t, rows.Scan(&f, &l))
+		got = append(got, pair{f, l})
+	}
+	require.NoError(t, rows.Err())
+	require.Len(t, got, 4)
+
+	// Blank rows should be backfilled to Unknown/Guest.
+	assert.Equal(t, "Unknown", got[0].first)
+	assert.Equal(t, "Guest", got[0].last)
+	assert.Equal(t, "Unknown", got[1].first)
+	assert.Equal(t, "Guest", got[1].last)
+	assert.Equal(t, "Unknown", got[2].first)
+	assert.Equal(t, "Guest", got[2].last)
+	// Normal row should be untouched.
+	assert.Equal(t, "Alice", got[3].first)
+	assert.Equal(t, "Smith", got[3].last)
+
+	// Verify CHECK constraint is enforced after migration.
+	_, err = db.Exec(`INSERT INTO manual_checkins (first_name, last_name) VALUES ('', 'Doe')`)
+	assert.Error(t, err, "blank names should be rejected after migration")
+}
