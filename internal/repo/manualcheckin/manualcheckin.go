@@ -154,6 +154,7 @@ func (s *sqliteRepo) ListManualCheckins(ctx context.Context, filter Filter) ([]M
 }
 
 func (s *sqliteRepo) CreateManualCheckin(ctx context.Context, manualCheckin ManualCheckin) (ManualCheckin, error) {
+	// Names required even with child_id to ensure standalone guest checkin data completeness; stricter than DB CHECK which permits blank names with child_id.
 	if strings.TrimSpace(manualCheckin.FirstName) == "" || strings.TrimSpace(manualCheckin.LastName) == "" {
 		return ManualCheckin{}, ErrInvalidManualCheckin
 	}

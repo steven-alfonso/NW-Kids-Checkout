@@ -277,6 +277,9 @@ func (controller *Controller) PatchSubmissionStatus(c *fiber.Ctx) error {
 		if errors.Is(err, guestsubmission.ErrConflict) {
 			return fiber.NewError(fiber.StatusBadRequest, "submission status changed, please retry")
 		}
+		if errors.Is(err, guestsubmission.ErrInvalidStatus) || errors.Is(err, guestsubmission.ErrInvalidSubmission) {
+			return fiber.NewError(fiber.StatusBadRequest, err.Error())
+		}
 		slog.Error("failed to update submission status", "public_id", publicID, "error", err)
 		return fiber.NewError(fiber.StatusInternalServerError, "internal error")
 	}
@@ -302,7 +305,7 @@ func (controller *Controller) CreateSubmissionCheckins(c *fiber.Ctx) error {
 		if errors.Is(err, repo.ErrNotFound) {
 			return fiber.NewError(fiber.StatusNotFound, "submission not found")
 		}
-		if errors.Is(err, guestsubmission.ErrInvalidStatus) {
+		if errors.Is(err, guestsubmission.ErrInvalidStatus) || errors.Is(err, guestsubmission.ErrInvalidSubmission) {
 			return fiber.NewError(fiber.StatusBadRequest, err.Error())
 		}
 		slog.Error("failed to create manual checkins", "error", err)
@@ -341,6 +344,7 @@ func buildFilter(c *fiber.Ctx) (guestsubmission.Filter, error) {
 		if err != nil || n <= 0 {
 			return guestsubmission.Filter{}, fiber.NewError(fiber.StatusBadRequest, "invalid limit")
 		}
+		// limit capped at 200, default 100
 		if n > 200 {
 			n = 200
 		}

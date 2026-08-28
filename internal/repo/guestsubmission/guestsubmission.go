@@ -75,8 +75,9 @@ type Repo interface {
 }
 
 var (
-	ErrConflict      = errors.New("conflict: submission status changed since last read")
-	ErrInvalidStatus = errors.New("invalid submission status")
+	ErrConflict          = errors.New("conflict: submission status changed since last read")
+	ErrInvalidStatus     = errors.New("invalid submission status")
+	ErrInvalidSubmission = errors.New("invalid submission")
 )
 
 func statusFromTimestamps(approved, rejected, entered bool) string {
@@ -215,8 +216,7 @@ func (s *sqliteRepo) ListSubmissions(ctx context.Context, filter Filter) ([]Subm
 		builder = builder.Where(squirrel.Eq{"public_id": filter.PublicID})
 	}
 	if filter.WithoutManualCheckins {
-		builder = builder.Where(squirrel.Expr(
-			"EXISTS (SELECT 1 FROM children ch WHERE ch.parent_id = guest_submissions.parent_id AND NOT EXISTS (SELECT 1 FROM manual_checkins mc WHERE mc.child_id = ch.id))"))
+		builder = builder.Where(withoutManualCheckinsExpr())
 	}
 	builder = builder.OrderBy("created_at DESC")
 	if filter.Limit > 0 {
@@ -471,7 +471,7 @@ func (s *sqliteRepo) insertManualCheckins(ctx context.Context, tx *sql.Tx, paren
 	rows, err := squirrel.Select("id", "first_name", "last_name").
 		From("children").
 		Where(squirrel.Eq{"parent_id": parentID}).
-		Where(squirrel.Expr("NOT EXISTS (SELECT 1 FROM manual_checkins mc WHERE mc.child_id = children.id)")).
+		Where(childWithoutManualCheckinExpr()).
 		OrderBy("id").
 		RunWith(tx).
 		QueryContext(ctx)
@@ -501,7 +501,7 @@ func (s *sqliteRepo) insertManualCheckins(ctx context.Context, tx *sql.Tx, paren
 			return fmt.Errorf("checking children count: %w", err)
 		}
 		if total == 0 {
-			return errors.New("submission has no children")
+			return fmt.Errorf("%w: submission has no children", ErrInvalidSubmission)
 		}
 		return nil // all children already have manual_checkins; per-child no-op
 	}
@@ -514,4 +514,16 @@ func (s *sqliteRepo) insertManualCheckins(ctx context.Context, tx *sql.Tx, paren
 		}
 	}
 	return nil
+}
+
+// withoutManualCheckinsExpr returns a filter that keeps only submissions
+// where at least one child of the submission has no manual_checkins row.
+// Shared semantics with childWithoutManualCheckinExpr: both test for the
+// absence of a manual_checkins row for a child (NOT EXISTS on manual_checkins).
+func withoutManualCheckinsExpr() squirrel.Sqlizer {
+	return squirrel.Expr("EXISTS (SELECT 1 FROM children ch WHERE ch.parent_id = guest_submissions.parent_id AND NOT EXISTS (SELECT 1 FROM manual_checkins mc WHERE mc.child_id = ch.id))")
+}
+
+func childWithoutManualCheckinExpr() squirrel.Sqlizer {
+	return squirrel.Expr("NOT EXISTS (SELECT 1 FROM manual_checkins mc WHERE mc.child_id = children.id)")
 }
