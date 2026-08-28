@@ -36,6 +36,8 @@ function loadWindow() {
         json: async () => ({public_id: 'abc', status: 'pending'}),
         text: async () => ''
     });
+    // Sync JSDOM Date with Node's mocked Date (for fake timers).
+    dom.window.Date = Date;
     dom.window.eval(script);
     return dom.window;
 }
@@ -353,5 +355,55 @@ describe('kiosk form', () => {
         rows[1].querySelector('.child-dob').value = '2020-01-01';
         expect(window.validateForm()).toBe(false);
         expect(rows[1].querySelector('.child-first-name').validationMessage).toContain('First name is required');
+    });
+
+    it('sets DOB max to local date (en-CA) not UTC', () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-03-15T12:00:00Z'));
+        const window = loadWindow();
+        const expected = new Date().toLocaleDateString('en-CA');
+        const dobInput = window.document.querySelector('.child-dob');
+        expect(dobInput.getAttribute('max')).toBe(expected);
+        // newly added rows also use local date
+        window.addChildRow();
+        const rows = window.document.querySelectorAll('.child-row');
+        expect(rows[1].querySelector('.child-dob').getAttribute('max')).toBe(expected);
+        // ensure implementation uses local date, not UTC (en-CA vs toISOString)
+        expect(script).not.toContain("toISOString().split('T')[0]");
+        expect(script).toContain("toLocaleDateString('en-CA')");
+    });
+
+    it('resets toggle visual after resetForm', () => {
+        const window = loadWindow();
+        const toggle = window.document.getElementById('use-parent-last-name');
+        const bg = window.document.getElementById('use-parent-last-name-toggle-bg');
+        const knob = window.document.getElementById('use-parent-last-name-toggle-knob');
+        toggle.checked = true;
+        window.handleUseParentLastNameChange();
+        expect(bg.style.backgroundColor).toBe('var(--color-emerald-500)');
+        expect(knob.style.transform).toBe('translateX(1rem)');
+        window.resetForm();
+        expect(toggle.checked).toBe(false);
+        expect(bg.style.backgroundColor).toBe('var(--color-slate-200)');
+        expect(knob.style.transform).toBe('translateX(0)');
+    });
+
+    it('rejects a future DOB in validateForm', () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-03-15T12:00:00Z'));
+        const window = loadWindow();
+        window.document.getElementById('parent-first-name').value = 'John';
+        window.document.getElementById('parent-last-name').value = 'Smith';
+        window.document.getElementById('parent-phone').value = '5551234';
+        window.document.querySelector('.child-first-name').value = 'Timmy';
+        window.document.querySelector('.child-last-name').value = 'Smith';
+        // use a clearly future date regardless of mocked today
+        const future = '2099-01-01';
+        window.document.querySelector('.child-dob').value = future;
+        expect(window.validateForm()).toBe(false);
+        expect(window.document.querySelector('.child-dob').validationMessage).toContain('Birthdate cannot be in the future');
+        // past date should pass (phone required, etc. already satisfied)
+        window.document.querySelector('.child-dob').value = '2020-01-01';
+        expect(window.validateForm()).toBe(true);
     });
 });

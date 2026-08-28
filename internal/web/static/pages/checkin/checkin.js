@@ -28,7 +28,7 @@ function childRowTemplate() {
                 <input class="child-last-name ${inputClass}" name="child_last_name" type="text" autocomplete="off" required>
             </label>
             <label class="block text-sm font-semibold text-gray-700">Birthdate
-                <input class="child-dob ${inputClass}" name="child_dob" type="date" autocomplete="off" max="${new Date().toISOString().split('T')[0]}" required>
+                <input class="child-dob ${inputClass}" name="child_dob" type="date" autocomplete="off" max="${new Date().toLocaleDateString('en-CA')}" required>
             </label>
             <label class="block text-sm font-semibold text-gray-700">Grade
                 <select class="child-grade ${inputClass}" name="child_grade" autocomplete="off">
@@ -96,6 +96,7 @@ function buildPayload() {
 
 function resetForm() {
     kioskForm.reset();
+    setUseParentLastNameToggleVisual(document.getElementById('use-parent-last-name')?.checked ?? false);
     const rows = childrenContainer.querySelectorAll('.child-row');
     for (let i = rows.length - 1; i >= 1; i--) {
         rows[i].remove();
@@ -190,8 +191,10 @@ function validateForm() {
     for (const row of childRows) {
         const firstName = row.querySelector('.child-first-name');
         const lastName = row.querySelector('.child-last-name');
+        const dob = row.querySelector('.child-dob');
         firstName?.setCustomValidity('');
         lastName?.setCustomValidity('');
+        dob?.setCustomValidity('');
         if (!firstName?.value.trim()) {
             firstName?.setCustomValidity('First name is required');
             setKioskError('');
@@ -201,6 +204,14 @@ function validateForm() {
             lastName?.setCustomValidity('Last name is required');
             setKioskError('');
             return false;
+        }
+        if (dob?.value) {
+            const today = new Date().toLocaleDateString('en-CA');
+            if (dob.value > today) {
+                dob.setCustomValidity('Birthdate cannot be in the future');
+                setKioskError('');
+                return false;
+            }
         }
     }
 
