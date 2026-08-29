@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io"
 	"kids-checkin/internal/controllers/admin"
 	"kids-checkin/internal/controllers/login"
 	"kids-checkin/internal/controllers/middleware"
@@ -22,14 +23,16 @@ import (
 	"kids-checkin/internal/controllers/manualcheckinv1"
 	"kids-checkin/internal/controllers/metricsv1"
 	"kids-checkin/internal/controllers/planningcenterv1"
+	"kids-checkin/internal/controllers/session"
 	"kids-checkin/internal/db"
 	"kids-checkin/internal/repo/metrics"
+	"kids-checkin/internal/web/menu"
 	"kids-checkin/internal/web/static"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/filesystem"
 	"github.com/gofiber/fiber/v2/middleware/recover"
-	"github.com/gofiber/fiber/v2/middleware/session"
+	fibersession "github.com/gofiber/fiber/v2/middleware/session"
 	"github.com/gofiber/storage/sqlite3"
 )
 
@@ -45,7 +48,7 @@ func StartServer(port int, dbFilepath string) error {
 	})
 
 	// 2. Setup Session Middleware with 2-week TTL
-	store := session.New(session.Config{
+	store := fibersession.New(fibersession.Config{
 		Storage:        storage,
 		Expiration:     180 * 24 * time.Hour, // 180-day TTL
 		CookieHTTPOnly: true,                 // Security: prevents JS from reading cookie
@@ -182,17 +185,38 @@ func StartServer(port int, dbFilepath string) error {
 	return nil
 }
 
-func registerRoutes(app *fiber.App, db *sql.DB, sessionStore *session.Store, paginationStore planningcenterv1.PaginationStore) {
-	app.Get("/", func(c *fiber.Ctx) error {
+func homePageHandler(sessionStore session.Storer) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		sess, err := sessionStore.Get(c)
+		if err != nil {
+			return fiber.NewError(fiber.StatusInternalServerError, "could not fetch session")
+		}
+		authenticated, _ := sess.Get("authenticated").(bool)
+		role, _ := sess.Get("role").(string)
+
 		f, err := static.EmbeddedFS.Open("pages/home/index.html")
 		if err != nil {
 			return fiber.ErrInternalServerError
 		}
 		defer f.Close()
 
+		content, err := io.ReadAll(f)
+		if err != nil {
+			return fiber.ErrInternalServerError
+		}
+		menuHTML, err := menu.RenderHTML(authenticated, role)
+		if err != nil {
+			return fiber.ErrInternalServerError
+		}
+		html := strings.Replace(string(content), menu.Placeholder, menuHTML, 1)
+
 		c.Type("html")
-		return c.SendStream(f)
-	})
+		return c.Send([]byte(html))
+	}
+}
+
+func registerRoutes(app *fiber.App, db *sql.DB, sessionStore *fibersession.Store, paginationStore planningcenterv1.PaginationStore) {
+	app.Get("/", homePageHandler(sessionStore))
 
 	app.Get("/api/session", func(c *fiber.Ctx) error {
 		sess, _ := sessionStore.Get(c)

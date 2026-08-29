@@ -22,6 +22,7 @@ import (
 	"kids-checkin/internal/repo/checkin"
 	"kids-checkin/internal/repo/location"
 	"kids-checkin/internal/repo/manualcheckin"
+	"kids-checkin/internal/web/menu"
 	"kids-checkin/internal/web/static"
 
 	"github.com/gofiber/contrib/websocket"
@@ -89,14 +90,29 @@ func (controller *Controller) checkoutsWeb(c *fiber.Ctx) error {
 		}
 		defer f.Close()
 
-		var htmlStream io.Reader = f
+		content, err := io.ReadAll(f)
+		if err != nil {
+			return fiber.ErrInternalServerError
+		}
+
+		html := string(content)
+		sess, err := controller.sessionStore.Get(c)
+		if err != nil {
+			return fiber.NewError(fiber.StatusInternalServerError, "could not fetch session")
+		}
+		authenticated, _ := sess.Get("authenticated").(bool)
+		role, _ := sess.Get("role").(string)
+
+		menuHTML, err := menu.RenderHTML(authenticated, role)
+		if err != nil {
+			return fiber.ErrInternalServerError
+		}
+		html = strings.Replace(html, menu.Placeholder, menuHTML, 1)
+
+		var htmlStream io.Reader = strings.NewReader(html)
 		if static.IsDev() {
-			content, readErr := io.ReadAll(f)
-			if readErr != nil {
-				return fiber.ErrInternalServerError
-			}
 			htmlStream = bytes.NewReader([]byte(strings.Replace(
-				string(content),
+				html,
 				"</body>",
 				`<script src="/static/dev/preview.js"></script></body>`,
 				1,

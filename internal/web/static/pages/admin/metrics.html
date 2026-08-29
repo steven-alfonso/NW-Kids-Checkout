@@ -48,6 +48,7 @@
     <div class="mb-4 flex flex-wrap items-center gap-4">
         <div class="inline-flex rounded-lg border border-slate-200 bg-white p-1 shadow-sm" role="tablist">
             <button id="tab-daily" role="tab" aria-selected="true" class="rounded-md px-3 py-1.5 text-sm font-medium transition-colors">Daily</button>
+            <button id="tab-guest" role="tab" aria-selected="false" class="rounded-md px-3 py-1.5 text-sm font-medium transition-colors">Guest</button>
             <button id="tab-fetch-latency" role="tab" aria-selected="false" class="rounded-md px-3 py-1.5 text-sm font-medium transition-colors">Fetch Latency</button>
         </div>
         <div class="flex items-center gap-3">
@@ -71,12 +72,11 @@
                     <th class="px-4 py-3">Confirmed</th>
                     <th class="px-4 py-3">Unconfirmed</th>
                     <th class="px-4 py-3">Avg confirm (min)</th>
-                    <th class="px-4 py-3">Manual</th>
                 </tr>
                 </thead>
                 <tbody id="metrics-body" class="divide-y divide-slate-100">
                 <tr>
-                    <td class="px-4 py-6 text-center text-slate-500" colspan="7">Loading metrics...</td>
+                    <td class="px-4 py-6 text-center text-slate-500" colspan="6">Loading metrics...</td>
                 </tr>
                 </tbody>
             </table>
@@ -101,6 +101,29 @@
                 <tbody id="fetch-latency-body" class="divide-y divide-slate-100">
                 <tr>
                     <td class="px-4 py-6 text-center text-slate-500" colspan="5">Loading fetch latency...</td>
+                </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div id="view-guest" class="hidden">
+        <div class="rounded-xl border border-slate-200 bg-white shadow-sm">
+            <table class="min-w-full text-sm">
+                <thead class="sticky top-0 z-10 bg-slate-100 text-left text-xs uppercase tracking-wide text-slate-600 shadow-sm">
+                <tr>
+                    <th class="px-4 py-3">Date</th>
+                    <th class="px-4 py-3">Submissions</th>
+                    <th class="px-4 py-3">Kids</th>
+                    <th class="px-4 py-3">Entered</th>
+                    <th class="px-4 py-3">Approved</th>
+                    <th class="px-4 py-3">Rejected</th>
+                    <th class="px-4 py-3">Pending</th>
+                </tr>
+                </thead>
+                <tbody id="guest-body" class="divide-y divide-slate-100">
+                <tr>
+                    <td class="px-4 py-6 text-center text-slate-500" colspan="7">Loading guest metrics...</td>
                 </tr>
                 </tbody>
             </table>

@@ -35,6 +35,23 @@
             border: 4px solid transparent;
             border-top-color: #0f172a;
         }
+
+        [role="tab"] {
+            cursor: pointer;
+            transition: background-color 150ms, color 150ms;
+        }
+        [role="tab"][aria-selected="true"] {
+            background-color: var(--color-slate-800);
+            color: var(--color-white);
+            box-shadow: var(--shadow-sm);
+        }
+        [role="tab"][aria-selected="false"] {
+            color: var(--color-slate-600);
+        }
+        [role="tab"][aria-selected="false"]:hover {
+            background-color: var(--color-slate-100);
+            color: var(--color-slate-900);
+        }
     </style>
 </head>
 <body class="min-h-screen bg-slate-50 text-slate-900">
@@ -42,15 +59,37 @@
     <header class="flex flex-col gap-3 mb-8">
         <div class="flex items-center justify-between">
             <div class="flex items-center gap-3">
-                <a href="/"><img src="/static/img/NWKids-logo.svg" alt="NWKids Logo" class="h-14 w-auto"></a>
+                <a href="/admin"><img src="/static/img/NWKids-logo.svg" alt="NWKids Logo" class="h-14 w-auto"></a>
                 <h1 class="text-3xl font-semibold">Guest Entries</h1>
             </div>
         </div>
         <p class="text-sm text-slate-600">Click any value to copy it, then paste it into Planning Center.</p>
     </header>
 
+    <div class="mb-6 inline-flex rounded-lg border border-slate-200 bg-white p-1 shadow-sm" role="tablist">
+        <button id="tab-needs-entry" role="tab" aria-selected="true" class="rounded-md px-3 py-1.5 text-sm font-medium transition-colors">Needs Planning Center Entry</button>
+        <button id="tab-entered" role="tab" aria-selected="false" class="rounded-md px-3 py-1.5 text-sm font-medium transition-colors">Entered</button>
+        <button id="tab-rejected" role="tab" aria-selected="false" class="rounded-md px-3 py-1.5 text-sm font-medium transition-colors">Rejected</button>
+    </div>
+
     <div id="page-status" class="hidden mb-4 rounded-md border border-slate-200 bg-white px-4 py-3 text-sm"></div>
-    <div id="entries-container" class="space-y-4"></div>
+    <div id="entries-container">
+        <div id="view-needs-entry">
+            <div id="pagination-needs-entry-top" class="mb-4"></div>
+            <div id="entries-needs-entry" class="space-y-4"></div>
+            <div id="pagination-needs-entry-bottom" class="mt-4"></div>
+        </div>
+        <div id="view-entered" class="hidden">
+            <div id="pagination-entered-top" class="mb-4"></div>
+            <div id="entries-entered" class="space-y-4"></div>
+            <div id="pagination-entered-bottom" class="mt-4"></div>
+        </div>
+        <div id="view-rejected" class="hidden">
+            <div id="pagination-rejected-top" class="mb-4"></div>
+            <div id="entries-rejected" class="space-y-4"></div>
+            <div id="pagination-rejected-bottom" class="mt-4"></div>
+        </div>
+    </div>
 </div>
 <script src="/static/pages/admin-guest-entries/admin-guest-entries.js?v=dev"></script>
 </body>

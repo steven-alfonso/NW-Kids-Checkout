@@ -57,11 +57,13 @@ type Filter struct {
 	PublicID              string
 	WithoutManualCheckins bool
 	Limit                 int
+	Offset                int
 }
 
 type Repo interface {
 	CreateSubmission(ctx context.Context, parent Parent, children []Child) (Submission, error)
 	ListSubmissions(ctx context.Context, filter Filter) ([]Submission, error)
+	CountSubmissions(ctx context.Context, filter Filter) (int, error)
 	UpdateSubmissionStatus(ctx context.Context, publicID string, status string, now time.Time) error
 	// ApproveSubmission creates one manual_checkins row per child of the
 	// (pending) submission and transitions it to approved in a single
@@ -117,6 +119,23 @@ func statusPredicate(status string) (squirrel.Sqlizer, error) {
 	default:
 		return nil, fmt.Errorf("unknown status: %s", status)
 	}
+}
+
+func applyFilter(builder squirrel.SelectBuilder, filter Filter) (squirrel.SelectBuilder, error) {
+	if filter.Status != "" {
+		statusFilter, err := statusPredicate(filter.Status)
+		if err != nil {
+			return builder, err
+		}
+		builder = builder.Where(statusFilter)
+	}
+	if filter.PublicID != "" {
+		builder = builder.Where(squirrel.Eq{"public_id": filter.PublicID})
+	}
+	if filter.WithoutManualCheckins {
+		builder = builder.Where(withoutManualCheckinsExpr())
+	}
+	return builder, nil
 }
 
 type sqliteRepo struct {
@@ -205,22 +224,16 @@ func (s *sqliteRepo) ListSubmissions(ctx context.Context, filter Filter) ([]Subm
 		"approved_at", "rejected_at", "entered_at", "created_at",
 	).From("guest_submissions")
 
-	if filter.Status != "" {
-		statusFilter, err := statusPredicate(filter.Status)
-		if err != nil {
-			return nil, err
-		}
-		builder = builder.Where(statusFilter)
+	builder, err := applyFilter(builder, filter)
+	if err != nil {
+		return nil, err
 	}
-	if filter.PublicID != "" {
-		builder = builder.Where(squirrel.Eq{"public_id": filter.PublicID})
-	}
-	if filter.WithoutManualCheckins {
-		builder = builder.Where(withoutManualCheckinsExpr())
-	}
-	builder = builder.OrderBy("created_at DESC")
+	builder = builder.OrderBy("created_at DESC, id DESC")
 	if filter.Limit > 0 {
 		builder = builder.Limit(uint64(filter.Limit))
+	}
+	if filter.Offset > 0 {
+		builder = builder.Offset(uint64(filter.Offset))
 	}
 
 	rows, err := builder.RunWith(s.db).QueryContext(ctx)
@@ -305,6 +318,19 @@ func (s *sqliteRepo) ListSubmissions(ctx context.Context, filter Filter) ([]Subm
 	}
 
 	return submissions, nil
+}
+
+func (s *sqliteRepo) CountSubmissions(ctx context.Context, filter Filter) (int, error) {
+	builder, err := applyFilter(squirrel.Select("COUNT(*)").From("guest_submissions"), filter)
+	if err != nil {
+		return 0, err
+	}
+
+	var total int
+	if err := builder.RunWith(s.db).QueryRowContext(ctx).Scan(&total); err != nil {
+		return 0, fmt.Errorf("counting guest submissions: %w", err)
+	}
+	return total, nil
 }
 
 func (s *sqliteRepo) UpdateSubmissionStatus(ctx context.Context, publicID string, status string, now time.Time) error {

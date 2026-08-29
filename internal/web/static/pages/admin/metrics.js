@@ -18,6 +18,15 @@ async function loadFetchLatency(days) {
   return response.json();
 }
 
+async function loadGuestMetrics(days) {
+  const response = await fetch(`${API_URL}/v1/admin/metrics/guest?days=${days}`);
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.message || `failed to load guest metrics (${response.status})`);
+  }
+  return response.json();
+}
+
 function escapeHtml(value) {
   return String(value)
     .replace(/&/g, '&amp;')
@@ -39,11 +48,32 @@ function renderMetrics(data) {
           <td class="px-4 py-3 text-slate-800">${m.confirmed}</td>
           <td class="px-4 py-3 text-slate-600">${m.unconfirmed}</td>
           <td class="px-4 py-3 text-slate-600">${m.avg_confirm_minutes}</td>
-          <td class="px-4 py-3 text-slate-600">${m.manual_count}</td>
         </tr>`,
     )
     .join('');
   if (data.daily.length === 0) {
+    body.innerHTML = '<tr><td colspan="6" class="px-4 py-8 text-center text-slate-500">No data yet.</td></tr>';
+  }
+}
+
+function renderGuestMetrics(data) {
+  const body = document.getElementById('guest-body');
+  if (!body) return;
+  body.innerHTML = data.rows
+    .map(
+      (m) => `
+        <tr class="border-b border-slate-100">
+          <td class="px-4 py-3 text-slate-600">${escapeHtml(m.date)}</td>
+          <td class="px-4 py-3 text-slate-800">${m.submissions}</td>
+          <td class="px-4 py-3 text-slate-800">${m.children}</td>
+          <td class="px-4 py-3 text-slate-800">${m.entered}</td>
+          <td class="px-4 py-3 text-slate-800">${m.approved}</td>
+          <td class="px-4 py-3 text-slate-600">${m.rejected}</td>
+          <td class="px-4 py-3 text-slate-600">${m.pending}</td>
+        </tr>`,
+    )
+    .join('');
+  if (data.rows.length === 0) {
     body.innerHTML = '<tr><td colspan="7" class="px-4 py-8 text-center text-slate-500">No data yet.</td></tr>';
   }
 }
@@ -112,21 +142,39 @@ async function main() {
   const daysEl = document.getElementById('metrics-days');
   const tabDaily = document.getElementById('tab-daily');
   const tabLatency = document.getElementById('tab-fetch-latency');
+  const tabGuest = document.getElementById('tab-guest');
   const viewDaily = document.getElementById('view-daily');
   const viewLatency = document.getElementById('view-fetch-latency');
+  const viewGuest = document.getElementById('view-guest');
 
-  const setTab = (latency) => {
-    if (tabDaily) tabDaily.setAttribute('aria-selected', String(!latency));
-    if (tabLatency) tabLatency.setAttribute('aria-selected', String(latency));
-    if (viewDaily) viewDaily.classList.toggle('hidden', latency);
-    if (viewLatency) viewLatency.classList.toggle('hidden', !latency);
+  const setActiveTab = (name) => {
+    const tabs = [
+      ['tab-daily', 'view-daily', 'daily'],
+      ['tab-guest', 'view-guest', 'guest'],
+      ['tab-fetch-latency', 'view-fetch-latency', 'latency'],
+    ];
+    for (const [tabId, viewId, key] of tabs) {
+      const tab = document.getElementById(tabId);
+      const view = document.getElementById(viewId);
+      if (tab) tab.setAttribute('aria-selected', String(key === name));
+      if (view) view.classList.toggle('hidden', key !== name);
+    }
   };
 
-  const load = async (latency) => {
+  const currentView = () => {
+    if (tabLatency && tabLatency.getAttribute('aria-selected') === 'true') return 'latency';
+    if (tabGuest && tabGuest.getAttribute('aria-selected') === 'true') return 'guest';
+    return 'daily';
+  };
+
+  const load = async (view) => {
     try {
-      if (latency) {
+      if (view === 'latency') {
         const data = await loadFetchLatency(daysEl ? daysEl.value : 14);
         renderFetchLatency(data);
+      } else if (view === 'guest') {
+        const data = await loadGuestMetrics(daysEl ? daysEl.value : 14);
+        renderGuestMetrics(data);
       } else {
         const data = await loadMetrics(daysEl ? daysEl.value : 14);
         renderMetrics(data);
@@ -137,12 +185,13 @@ async function main() {
     }
   };
 
-  if (tabDaily) tabDaily.addEventListener('click', () => { setTab(false); load(false); });
-  if (tabLatency) tabLatency.addEventListener('click', () => { setTab(true); load(true); });
-  if (daysEl) daysEl.addEventListener('change', () => load(tabLatency && tabLatency.getAttribute('aria-selected') === 'true'));
-  await load(false);
+  if (tabDaily) tabDaily.addEventListener('click', () => { setActiveTab('daily'); load('daily'); });
+  if (tabLatency) tabLatency.addEventListener('click', () => { setActiveTab('latency'); load('latency'); });
+  if (tabGuest) tabGuest.addEventListener('click', () => { setActiveTab('guest'); load('guest'); });
+  if (daysEl) daysEl.addEventListener('change', () => load(currentView()));
+  await load(currentView());
 }
 
 document.addEventListener('DOMContentLoaded', main);
 
-window.__test = { renderMetrics, renderFetchLatency, renderFetchLatencyRows, loadMetrics, loadFetchLatency };
+window.__test = { renderMetrics, renderFetchLatency, renderFetchLatencyRows, loadMetrics, loadFetchLatency, renderGuestMetrics, loadGuestMetrics };

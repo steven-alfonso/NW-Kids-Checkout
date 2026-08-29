@@ -552,76 +552,16 @@ function updateAllTimes() {
     updateTimes();
 }
 
-function setupMenu() {
-    const menuButton = document.getElementById('menu-button');
-    const menu = document.getElementById('kebab-menu');
-
-    if (!menuButton || !menu) return;
-
-    function closeMenu() {
-        menu.classList.add('hidden');
-        menuButton.setAttribute('aria-expanded', 'false');
-    }
-
-    function toggleMenu(event) {
-        event.stopPropagation();
-        const isOpen = !menu.classList.contains('hidden');
-        if (isOpen) {
-            closeMenu();
-            return;
-        }
-        menu.classList.remove('hidden');
-        menuButton.setAttribute('aria-expanded', 'true');
-    }
-
-    menuButton.addEventListener('click', toggleMenu);
-    menu.querySelectorAll('a').forEach((link) => {
-        link.addEventListener('click', closeMenu);
-    });
-    document.addEventListener('click', (event) => {
-        if (menu.classList.contains('hidden')) return;
-        if (!menu.contains(event.target)) closeMenu();
-    });
-    document.addEventListener('keydown', (event) => {
-        if (event.key === 'Escape') closeMenu();
-    });
-}
-
-async function revealAdminLink() {
-    try {
-        const response = await fetch('/api/session', { credentials: 'same-origin' });
-        const loginLink = document.getElementById('login-link');
-        const logoutLink = document.getElementById('logout-link');
-        const adminLink = document.getElementById('admin-link');
-        if (!loginLink || !logoutLink || !adminLink) return;
-        if (!response.ok) {
-            loginLink.classList.remove('hidden');
-            logoutLink.classList.add('hidden');
-            return;
-        }
-        const data = await response.json();
-        if (!data || !data.authenticated) {
-            loginLink.classList.remove('hidden');
-            logoutLink.classList.add('hidden');
-            return;
-        }
-        loginLink.classList.add('hidden');
-        logoutLink.classList.remove('hidden');
-        if (data.role === 'admin') {
-            adminLink.classList.remove('hidden');
-        }
-    } catch (error) {
-        return;
-    }
-}
-
 // Initialize and start periodic updates
 document.addEventListener('DOMContentLoaded', function () {
     dom.childrenList = document.getElementById('children-list');
     dom.currentTime = document.getElementById('current-time');
 
-    setupMenu();
-    revealAdminLink();
+    if (typeof window.initKebabMenu === "function") {
+        window.initKebabMenu();
+    } else if (window.NWKidsKebabMenu && typeof window.NWKidsKebabMenu.initKebabMenu === "function") {
+        window.NWKidsKebabMenu.initKebabMenu();
+    }
 
     window.addEventListener('resize', () => {
         requestAnimationFrame(clampChildrenListScroll);

@@ -3,6 +3,7 @@ package manualcheckinv1
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -300,6 +301,32 @@ func TestController_PatchManualCheckedOut(t *testing.T) {
 		require.NotNil(t, response.CheckedOutAt)
 		assert.WithinDuration(t, time.Now().UTC(), *response.CheckedOutAt, 2*time.Second)
 	})
+}
+
+func TestController_ManualCheckinsPage_ServerRenderedMenu(t *testing.T) {
+	app, store := setupAuthedApp()
+	controller := NewController(nil, store)
+	controller.RegisterRoutes(app)
+
+	req := httptest.NewRequest("GET", "/manual-checkins", nil)
+	req.Header.Set("Accept", "text/html")
+	resp, err := app.Test(req)
+	require.NoError(t, err)
+	require.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	html := string(body)
+
+	// setupAuthedApp sets role=admin, so admin and logout links are rendered.
+	assert.Contains(t, html, `id="menu-button"`)
+	assert.Contains(t, html, `id="kebab-menu"`)
+	assert.Contains(t, html, `id="guest-checkin-link"`)
+	assert.Contains(t, html, `id="manual-checkins-link"`)
+	assert.Contains(t, html, `id="admin-link"`)
+	assert.Contains(t, html, `id="logout-link"`)
+	assert.NotContains(t, html, `id="login-link"`)
+	assert.NotContains(t, html, "<!-- kebab-menu-links -->")
 }
 
 func setupAuthedApp() (*fiber.App, *session.Store) {

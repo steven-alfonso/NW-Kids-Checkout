@@ -19,7 +19,6 @@ type DailyMetric struct {
 	Confirmed         int
 	Unconfirmed       int
 	AvgConfirmMinutes float64
-	ManualCount       int
 }
 
 type Filter struct {
@@ -34,9 +33,20 @@ type FetchLatencyMetric struct {
 	P99Ms float64
 }
 
+type GuestMetric struct {
+	Date        string
+	Submissions int
+	Children    int
+	Entered     int
+	Approved    int
+	Rejected    int
+	Pending     int
+}
+
 type Repo interface {
 	ListDailyMetrics(ctx context.Context, filter Filter) ([]DailyMetric, error)
 	ListFetchLatency(ctx context.Context, filter Filter) ([]FetchLatencyMetric, error)
+	ListGuestMetrics(ctx context.Context, filter Filter) ([]GuestMetric, error)
 }
 
 type sqliteRepo struct {
@@ -87,45 +97,6 @@ func (r *sqliteRepo) ListDailyMetrics(ctx context.Context, filter Filter) ([]Dai
 	}
 	if err := pcRows.Err(); err != nil {
 		return nil, fmt.Errorf("iterating checkin metrics: %w", err)
-	}
-
-	manualRows, err := squirrel.Select(
-		"date(created_at) AS day",
-		"COUNT(*) AS count",
-	).
-		From("manual_checkins").
-		Where(squirrel.GtOrEq{"created_at": since}).
-		GroupBy("day").
-		OrderBy("day DESC").
-		RunWith(r.db).
-		QueryContext(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("querying manual metrics: %w", err)
-	}
-	defer manualRows.Close()
-
-	manualByDay := map[string]int{}
-	for manualRows.Next() {
-		var day string
-		var count int
-		if err := manualRows.Scan(&day, &count); err != nil {
-			return nil, fmt.Errorf("scanning manual metrics: %w", err)
-		}
-		manualByDay[day] = count
-	}
-	if err := manualRows.Err(); err != nil {
-		return nil, fmt.Errorf("iterating manual metrics: %w", err)
-	}
-
-	// Merge manual counts into the matching day rows; add rows for manual-only days.
-	for i := range daily {
-		if count, ok := manualByDay[daily[i].Date]; ok {
-			daily[i].ManualCount = count
-			delete(manualByDay, daily[i].Date)
-		}
-	}
-	for day, count := range manualByDay {
-		daily = append(daily, DailyMetric{Date: day, EventName: "Manual Check-Ins", ManualCount: count})
 	}
 
 	// Deterministic sort: day DESC, event_name ASC.
@@ -215,6 +186,85 @@ func (r *sqliteRepo) ListFetchLatency(ctx context.Context, filter Filter) ([]Fet
 		})
 	}
 
+	sort.SliceStable(metrics, func(i, j int) bool {
+		return metrics[i].Date > metrics[j].Date
+	})
+
+	return metrics, nil
+}
+
+func (r *sqliteRepo) ListGuestMetrics(ctx context.Context, filter Filter) ([]GuestMetric, error) {
+	days := filter.Days
+	if days <= 0 {
+		days = 14
+	}
+	since := time.Now().UTC().AddDate(0, 0, -days)
+
+	submissionRows, err := squirrel.Select(
+		"date(created_at) AS day",
+		"COUNT(*) AS submissions",
+		"COALESCE(SUM(CASE WHEN entered_at IS NOT NULL THEN 1 ELSE 0 END), 0) AS entered",
+		"COALESCE(SUM(CASE WHEN entered_at IS NULL AND approved_at IS NOT NULL THEN 1 ELSE 0 END), 0) AS approved",
+		"COALESCE(SUM(CASE WHEN entered_at IS NULL AND approved_at IS NULL AND rejected_at IS NOT NULL THEN 1 ELSE 0 END), 0) AS rejected",
+		"COALESCE(SUM(CASE WHEN entered_at IS NULL AND approved_at IS NULL AND rejected_at IS NULL THEN 1 ELSE 0 END), 0) AS pending",
+	).
+		From("guest_submissions").
+		Where(squirrel.GtOrEq{"created_at": since}).
+		GroupBy("day").
+		OrderBy("day DESC").
+		RunWith(r.db).
+		QueryContext(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("querying guest metrics: %w", err)
+	}
+	defer submissionRows.Close()
+
+	guestByDay := map[string]GuestMetric{}
+	for submissionRows.Next() {
+		var gm GuestMetric
+		if err := submissionRows.Scan(&gm.Date, &gm.Submissions, &gm.Entered, &gm.Approved, &gm.Rejected, &gm.Pending); err != nil {
+			return nil, fmt.Errorf("scanning guest metrics: %w", err)
+		}
+		guestByDay[gm.Date] = gm
+	}
+	if err := submissionRows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating guest metrics: %w", err)
+	}
+
+	childRows, err := squirrel.Select(
+		"date(created_at) AS day",
+		"COUNT(*) AS count",
+	).
+		From("children").
+		Where(squirrel.GtOrEq{"created_at": since}).
+		GroupBy("day").
+		OrderBy("day DESC").
+		RunWith(r.db).
+		QueryContext(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("querying guest child metrics: %w", err)
+	}
+	defer childRows.Close()
+
+	for childRows.Next() {
+		var day string
+		var count int
+		if err := childRows.Scan(&day, &count); err != nil {
+			return nil, fmt.Errorf("scanning guest child metrics: %w", err)
+		}
+		if gm, ok := guestByDay[day]; ok {
+			gm.Children = count
+			guestByDay[day] = gm
+		}
+	}
+	if err := childRows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating guest child metrics: %w", err)
+	}
+
+	metrics := make([]GuestMetric, 0, len(guestByDay))
+	for _, gm := range guestByDay {
+		metrics = append(metrics, gm)
+	}
 	sort.SliceStable(metrics, func(i, j int) bool {
 		return metrics[i].Date > metrics[j].Date
 	})

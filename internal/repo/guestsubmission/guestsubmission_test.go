@@ -208,6 +208,98 @@ func Test_sqliteRepo_ListSubmissions(t *testing.T) {
 	})
 }
 
+func Test_sqliteRepo_ListSubmissions_Pagination(t *testing.T) {
+	wipeAll(t)
+	s := NewRepo(testDB)
+
+	now := time.Now().UTC()
+	subs := make([]Submission, 0, 5)
+	for i := range 5 {
+		sub, err := s.CreateSubmission(t.Context(), Parent{
+			FirstName: "Page", LastName: string(rune('A' + i)), Phone: "1", Email: "p@test.com",
+		}, []Child{{FirstName: "Kid", LastName: string(rune('A' + i)), DOB: "2020-01-01", Grade: "k"}})
+		require.NoError(t, err)
+		createdAt := now.Add(time.Duration(i) * time.Minute)
+		_, err = testDB.ExecContext(t.Context(), `UPDATE guest_submissions SET created_at = ? WHERE public_id = ?`, createdAt, sub.PublicID)
+		require.NoError(t, err)
+		sub.CreatedAt = createdAt
+		subs = append(subs, sub)
+	}
+
+	t.Run("offset pages through ordered results", func(t *testing.T) {
+		page1, err := s.ListSubmissions(t.Context(), Filter{Limit: 2, Offset: 0})
+		require.NoError(t, err)
+		require.Len(t, page1, 2)
+		assert.Equal(t, subs[4].PublicID, page1[0].PublicID)
+		assert.Equal(t, subs[3].PublicID, page1[1].PublicID)
+
+		page2, err := s.ListSubmissions(t.Context(), Filter{Limit: 2, Offset: 2})
+		require.NoError(t, err)
+		require.Len(t, page2, 2)
+		assert.Equal(t, subs[2].PublicID, page2[0].PublicID)
+		assert.Equal(t, subs[1].PublicID, page2[1].PublicID)
+
+		page3, err := s.ListSubmissions(t.Context(), Filter{Limit: 2, Offset: 4})
+		require.NoError(t, err)
+		require.Len(t, page3, 1)
+		assert.Equal(t, subs[0].PublicID, page3[0].PublicID)
+	})
+
+	t.Run("offset beyond total returns empty", func(t *testing.T) {
+		res, err := s.ListSubmissions(t.Context(), Filter{Limit: 2, Offset: 10})
+		require.NoError(t, err)
+		require.Len(t, res, 0)
+	})
+}
+
+func Test_sqliteRepo_CountSubmissions(t *testing.T) {
+	wipeAll(t)
+	s := NewRepo(testDB)
+
+	for i := range 3 {
+		_, err := s.CreateSubmission(t.Context(), Parent{
+			FirstName: "Count", LastName: string(rune('A' + i)), Phone: "1", Email: "c@test.com",
+		}, []Child{{FirstName: "Kid", LastName: string(rune('A' + i)), DOB: "2020-01-01", Grade: "k"}})
+		require.NoError(t, err)
+	}
+
+	t.Run("counts all", func(t *testing.T) {
+		total, err := s.CountSubmissions(t.Context(), Filter{})
+		require.NoError(t, err)
+		assert.Equal(t, 3, total)
+	})
+
+	t.Run("counts with status filter", func(t *testing.T) {
+		total, err := s.CountSubmissions(t.Context(), Filter{Status: StatusPending})
+		require.NoError(t, err)
+		assert.Equal(t, 3, total)
+	})
+
+	t.Run("counts with public id filter", func(t *testing.T) {
+		res, err := s.ListSubmissions(t.Context(), Filter{Limit: 1})
+		require.NoError(t, err)
+		require.Len(t, res, 1)
+		total, err := s.CountSubmissions(t.Context(), Filter{PublicID: res[0].PublicID})
+		require.NoError(t, err)
+		assert.Equal(t, 1, total)
+	})
+
+	t.Run("counts per derived status", func(t *testing.T) {
+		res, err := s.ListSubmissions(t.Context(), Filter{Status: StatusPending, Limit: 1})
+		require.NoError(t, err)
+		require.Len(t, res, 1)
+		require.NoError(t, s.UpdateSubmissionStatus(t.Context(), res[0].PublicID, StatusApproved, time.Now().UTC()))
+
+		pending, err := s.CountSubmissions(t.Context(), Filter{Status: StatusPending})
+		require.NoError(t, err)
+		assert.Equal(t, 2, pending)
+
+		approved, err := s.CountSubmissions(t.Context(), Filter{Status: StatusApproved})
+		require.NoError(t, err)
+		assert.Equal(t, 1, approved)
+	})
+}
+
 func Test_statusPredicate(t *testing.T) {
 	t.Run("rejected predicate excludes rows with both approved_at and rejected_at", func(t *testing.T) {
 		now := time.Now().UTC()

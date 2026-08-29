@@ -238,11 +238,78 @@ func TestController_AdminListFullDetail(t *testing.T) {
 	resp, _ := app.Test(req)
 	require.Equal(t, fiber.StatusOK, resp.StatusCode)
 
-	var list []Submission
-	require.NoError(t, json.NewDecoder(resp.Body).Decode(&list))
-	require.Len(t, list, 1)
-	assert.Equal(t, "555", list[0].Parent.Phone)
-	assert.Equal(t, "1st Grade", list[0].Children[0].Grade)
+	var page SubmissionPage
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&page))
+	require.Len(t, page.Items, 1)
+	assert.Equal(t, 1, page.Page)
+	assert.Equal(t, adminGuestPageSize, page.PageSize)
+	assert.Equal(t, 1, page.Total)
+	assert.Equal(t, 1, page.TotalPages)
+	assert.Equal(t, "555", page.Items[0].Parent.Phone)
+	assert.Equal(t, "1st Grade", page.Items[0].Children[0].Grade)
+}
+
+func TestController_AdminListPaginated(t *testing.T) {
+	app, _, testDB := setupAuthedApp(t, "admin")
+	wipeSubmissionTables(t, testDB)
+
+	repo := guestsubmission.NewRepo(testDB)
+	now := time.Now().UTC()
+	publicIDs := make([]string, 0, 11)
+	for i := range 11 {
+		sub, err := repo.CreateSubmission(t.Context(), guestsubmission.Parent{
+			FirstName: "Page", LastName: fmt.Sprintf("P%d", i), Phone: "555", Email: "p@test.com",
+		}, []guestsubmission.Child{{FirstName: "Kid", LastName: fmt.Sprintf("P%d", i), DOB: "2020-01-01", Grade: "k"}})
+		require.NoError(t, err)
+		publicIDs = append(publicIDs, sub.PublicID)
+		createdAt := now.Add(time.Duration(i) * time.Minute)
+		_, err = testDB.ExecContext(t.Context(), `UPDATE guest_submissions SET created_at = ? WHERE public_id = ?`, createdAt, sub.PublicID)
+		require.NoError(t, err)
+	}
+
+	t.Run("page 1 returns the first 10 newest first", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/v1/admin/guest-submissions?page=1", nil)
+		resp, _ := app.Test(req)
+		require.Equal(t, fiber.StatusOK, resp.StatusCode)
+		var page SubmissionPage
+		require.NoError(t, json.NewDecoder(resp.Body).Decode(&page))
+		assert.Equal(t, 1, page.Page)
+		assert.Equal(t, 10, page.PageSize)
+		assert.Equal(t, 11, page.Total)
+		assert.Equal(t, 2, page.TotalPages)
+		require.Len(t, page.Items, 10)
+		assert.Equal(t, publicIDs[10], page.Items[0].PublicID)
+	})
+
+	t.Run("page 2 returns the remainder", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/v1/admin/guest-submissions?page=2", nil)
+		resp, _ := app.Test(req)
+		require.Equal(t, fiber.StatusOK, resp.StatusCode)
+		var page SubmissionPage
+		require.NoError(t, json.NewDecoder(resp.Body).Decode(&page))
+		assert.Equal(t, 2, page.Page)
+		require.Len(t, page.Items, 1)
+		assert.Equal(t, publicIDs[0], page.Items[0].PublicID)
+	})
+
+	t.Run("page beyond the end returns empty items", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/v1/admin/guest-submissions?page=5", nil)
+		resp, _ := app.Test(req)
+		require.Equal(t, fiber.StatusOK, resp.StatusCode)
+		var page SubmissionPage
+		require.NoError(t, json.NewDecoder(resp.Body).Decode(&page))
+		assert.Equal(t, 5, page.Page)
+		assert.Empty(t, page.Items)
+		assert.Equal(t, 11, page.Total)
+	})
+
+	t.Run("invalid page errors", func(t *testing.T) {
+		for _, p := range []string{"0", "-1", "abc"} {
+			req := httptest.NewRequest("GET", "/v1/admin/guest-submissions?page="+p, nil)
+			resp, _ := app.Test(req)
+			assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode, "page=%s", p)
+		}
+	})
 }
 
 func TestController_StaffCannotMarkEntered(t *testing.T) {

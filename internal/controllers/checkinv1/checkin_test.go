@@ -135,6 +135,17 @@ func TestController_CheckoutsWeb_PreviewTag(t *testing.T) {
 		t.Setenv("ENVIRONMENT", "production")
 		assert.NotContains(t, request(t), "preview.js")
 	})
+
+	t.Run("menu links rendered server-side", func(t *testing.T) {
+		t.Setenv("ENVIRONMENT", "production")
+		html := request(t)
+		// setupAuthedApp sets role=admin, so admin and logout links appear
+		assert.Contains(t, html, `id="guest-checkin-link"`)
+		assert.Contains(t, html, `id="admin-link"`)
+		assert.Contains(t, html, `id="logout-link"`)
+		assert.NotContains(t, html, `id="login-link"`)
+		assert.NotContains(t, html, "<!-- kebab-menu-links -->")
+	})
 }
 
 func setupAuthedApp() (*fiber.App, *session.Store) {

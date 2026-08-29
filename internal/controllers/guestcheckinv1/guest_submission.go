@@ -26,6 +26,8 @@ type Controller struct {
 	sessionStore   session.Storer
 }
 
+const adminGuestPageSize = 10
+
 func NewController(db *sql.DB, sessionStore session.Storer) *Controller {
 	return &Controller{
 		submissionRepo: guestsubmission.NewRepo(db),
@@ -207,9 +209,18 @@ func (controller *Controller) AdminListSubmissions(c *fiber.Ctx) error {
 	if err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, err.Error())
 	}
-	if filter.Limit == 0 {
-		filter.Limit = 100
+
+	page := 1
+	if p := c.Query("page"); p != "" {
+		n, err := strconv.Atoi(p)
+		if err != nil || n <= 0 {
+			return fiber.NewError(fiber.StatusBadRequest, "invalid page")
+		}
+		page = n
 	}
+
+	filter.Limit = adminGuestPageSize
+	filter.Offset = (page - 1) * adminGuestPageSize
 
 	submissions, err := controller.submissionRepo.ListSubmissions(c.Context(), filter)
 	if err != nil {
@@ -217,7 +228,19 @@ func (controller *Controller) AdminListSubmissions(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusInternalServerError, "internal error")
 	}
 
-	return c.JSON(submissionsToResponse(submissions))
+	total, err := controller.submissionRepo.CountSubmissions(c.Context(), filter)
+	if err != nil {
+		slog.Error("failed to count admin submissions", "error", err)
+		return fiber.NewError(fiber.StatusInternalServerError, "internal error")
+	}
+
+	return c.JSON(SubmissionPage{
+		Items:      submissionsToResponse(submissions),
+		Total:      total,
+		Page:       page,
+		PageSize:   adminGuestPageSize,
+		TotalPages: (total + adminGuestPageSize - 1) / adminGuestPageSize,
+	})
 }
 
 func (controller *Controller) PatchSubmissionStatus(c *fiber.Ctx) error {

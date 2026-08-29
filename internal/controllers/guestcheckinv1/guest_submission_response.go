@@ -46,6 +46,14 @@ type SubmissionSummary struct {
 	CreatedAt *time.Time     `json:"created_at"`
 }
 
+type SubmissionPage struct {
+	Items      []Submission `json:"items"`
+	Total      int          `json:"total"`
+	Page       int          `json:"page"`
+	PageSize   int          `json:"page_size"`
+	TotalPages int          `json:"total_pages"`
+}
+
 func timePtr(t time.Time) *time.Time {
 	if t.IsZero() {
 		return nil

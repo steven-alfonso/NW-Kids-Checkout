@@ -338,6 +338,12 @@ async function checkOutManualCheckin(publicId, checkedOut) {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+    if (typeof window.initKebabMenu === "function") {
+        window.initKebabMenu();
+    } else if (window.NWKidsKebabMenu && typeof window.NWKidsKebabMenu.initKebabMenu === "function") {
+        window.NWKidsKebabMenu.initKebabMenu();
+    }
+
     const openManualCheckinButton = document.getElementById('open-manual-checkin');
 
     if (openManualCheckinButton) {
