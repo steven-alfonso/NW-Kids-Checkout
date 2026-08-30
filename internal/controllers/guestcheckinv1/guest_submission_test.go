@@ -151,38 +151,38 @@ func TestController_CreateSubmissionValidation(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		payload map[string]interface{}
+		payload map[string]any
 	}{
-		{"empty children", map[string]interface{}{
-			"parent":   map[string]interface{}{"first_name": "A", "last_name": "B", "phone": "1234567", "email": "a@b.com"},
-			"children": []map[string]interface{}{},
+		{"empty children", map[string]any{
+			"parent":   map[string]any{"first_name": "A", "last_name": "B", "phone": "1234567", "email": "a@b.com"},
+			"children": []map[string]any{},
 		}},
-		{"missing phone and email", map[string]interface{}{
-			"parent":   map[string]interface{}{"first_name": "A", "last_name": "B", "phone": "", "email": ""},
-			"children": []map[string]interface{}{{"first_name": "C", "last_name": "D", "dob": "2020-01-01", "grade": "1st"}},
+		{"missing phone and email", map[string]any{
+			"parent":   map[string]any{"first_name": "A", "last_name": "B", "phone": "", "email": ""},
+			"children": []map[string]any{{"first_name": "C", "last_name": "D", "dob": "2020-01-01", "grade": "1st"}},
 		}},
-		{"future dob", map[string]interface{}{
-			"parent":   map[string]interface{}{"first_name": "A", "last_name": "B", "phone": "1234567", "email": "a@b.com"},
-			"children": []map[string]interface{}{{"first_name": "C", "last_name": "D", "dob": "2999-01-01", "grade": "1st"}},
+		{"future dob", map[string]any{
+			"parent":   map[string]any{"first_name": "A", "last_name": "B", "phone": "1234567", "email": "a@b.com"},
+			"children": []map[string]any{{"first_name": "C", "last_name": "D", "dob": "2999-01-01", "grade": "1st"}},
 		}},
-		{"bad phone", map[string]interface{}{
-			"parent":   map[string]interface{}{"first_name": "A", "last_name": "B", "phone": "12", "email": "a@b.com"},
-			"children": []map[string]interface{}{{"first_name": "C", "last_name": "D", "dob": "2020-01-01", "grade": "1st"}},
+		{"bad phone", map[string]any{
+			"parent":   map[string]any{"first_name": "A", "last_name": "B", "phone": "12", "email": "a@b.com"},
+			"children": []map[string]any{{"first_name": "C", "last_name": "D", "dob": "2020-01-01", "grade": "1st"}},
 		}},
-		{"whitespace-only parent names", map[string]interface{}{
-			"parent":   map[string]interface{}{"first_name": "   ", "last_name": "   ", "phone": "1234567", "email": "a@b.com"},
-			"children": []map[string]interface{}{{"first_name": "C", "last_name": "D", "dob": "2020-01-01", "grade": "1st"}},
+		{"whitespace-only parent names", map[string]any{
+			"parent":   map[string]any{"first_name": "   ", "last_name": "   ", "phone": "1234567", "email": "a@b.com"},
+			"children": []map[string]any{{"first_name": "C", "last_name": "D", "dob": "2020-01-01", "grade": "1st"}},
 		}},
-		{"whitespace-only child name", map[string]interface{}{
-			"parent":   map[string]interface{}{"first_name": "A", "last_name": "B", "phone": "1234567", "email": "a@b.com"},
-			"children": []map[string]interface{}{{"first_name": " ", "last_name": "\t", "dob": "2020-01-01", "grade": "1st"}},
+		{"whitespace-only child name", map[string]any{
+			"parent":   map[string]any{"first_name": "A", "last_name": "B", "phone": "1234567", "email": "a@b.com"},
+			"children": []map[string]any{{"first_name": " ", "last_name": "\t", "dob": "2020-01-01", "grade": "1st"}},
 		}},
-		{"more than 10 children", map[string]interface{}{
-			"parent": map[string]interface{}{"first_name": "A", "last_name": "B", "phone": "1234567", "email": "a@b.com"},
-			"children": func() []map[string]interface{} {
-				children := make([]map[string]interface{}, 0, 11)
-				for i := 0; i < 11; i++ {
-					children = append(children, map[string]interface{}{"first_name": "C", "last_name": "D", "dob": "2020-01-01", "grade": "1st"})
+		{"more than 10 children", map[string]any{
+			"parent": map[string]any{"first_name": "A", "last_name": "B", "phone": "1234567", "email": "a@b.com"},
+			"children": func() []map[string]any {
+				children := make([]map[string]any, 0, 11)
+				for range 11 {
+					children = append(children, map[string]any{"first_name": "C", "last_name": "D", "dob": "2020-01-01", "grade": "1st"})
 				}
 				return children
 			}(),
@@ -322,7 +322,7 @@ func TestController_StaffCannotMarkEntered(t *testing.T) {
 	}, []guestsubmission.Child{{FirstName: "C", LastName: "D", DOB: "2020-01-01", Grade: "1st"}})
 	require.NoError(t, err)
 
-	body, _ := json.Marshal(map[string]interface{}{"status": "entered"})
+	body, _ := json.Marshal(map[string]any{"status": "entered"})
 	req := httptest.NewRequest("PATCH", fmt.Sprintf("/v1/checkins/guest-submissions/%s/status", sub.PublicID), bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	resp, _ := app.Test(req)
@@ -339,13 +339,13 @@ func TestController_AdminCanMarkEntered(t *testing.T) {
 	}, []guestsubmission.Child{{FirstName: "C", LastName: "D", DOB: "2020-01-01", Grade: "1st"}})
 	require.NoError(t, err)
 
-	approveBody, _ := json.Marshal(map[string]interface{}{"status": "approved"})
+	approveBody, _ := json.Marshal(map[string]any{"status": "approved"})
 	approveReq := httptest.NewRequest("PATCH", fmt.Sprintf("/v1/checkins/guest-submissions/%s/status", sub.PublicID), bytes.NewReader(approveBody))
 	approveReq.Header.Set("Content-Type", "application/json")
 	approveResp, _ := app.Test(approveReq)
 	require.Equal(t, fiber.StatusOK, approveResp.StatusCode)
 
-	body, _ := json.Marshal(map[string]interface{}{"status": "entered"})
+	body, _ := json.Marshal(map[string]any{"status": "entered"})
 	req := httptest.NewRequest("PATCH", fmt.Sprintf("/v1/checkins/guest-submissions/%s/status", sub.PublicID), bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	resp, _ := app.Test(req)
@@ -362,7 +362,7 @@ func TestController_AdminCanEnterFromPending(t *testing.T) {
 	}, []guestsubmission.Child{{FirstName: "C", LastName: "D", DOB: "2020-01-01", Grade: "1st"}})
 	require.NoError(t, err)
 
-	body, _ := json.Marshal(map[string]interface{}{"status": "entered"})
+	body, _ := json.Marshal(map[string]any{"status": "entered"})
 	req := httptest.NewRequest("PATCH", fmt.Sprintf("/v1/checkins/guest-submissions/%s/status", sub.PublicID), bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	resp, _ := app.Test(req)
@@ -394,7 +394,7 @@ func TestController_ApproveCreatesManualCheckins(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	body, _ := json.Marshal(map[string]interface{}{"status": "approved"})
+	body, _ := json.Marshal(map[string]any{"status": "approved"})
 	req := httptest.NewRequest("PATCH", fmt.Sprintf("/v1/checkins/guest-submissions/%s/status", sub.PublicID), bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	resp, _ := app.Test(req)
@@ -416,7 +416,7 @@ func TestController_PatchSubmissionStatusNamesOnly(t *testing.T) {
 	}, []guestsubmission.Child{{FirstName: "Timmy", LastName: "Smith", DOB: "2020-01-01", Grade: "1st"}})
 	require.NoError(t, err)
 
-	body, _ := json.Marshal(map[string]interface{}{"status": "approved"})
+	body, _ := json.Marshal(map[string]any{"status": "approved"})
 	req := httptest.NewRequest("PATCH", fmt.Sprintf("/v1/checkins/guest-submissions/%s/status", sub.PublicID), bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	resp, _ := app.Test(req)
@@ -490,7 +490,7 @@ func TestController_PatchSubmissionNotFound(t *testing.T) {
 	app, _, testDB := setupAuthedApp(t, "")
 	wipeSubmissionTables(t, testDB)
 
-	body, _ := json.Marshal(map[string]interface{}{"status": "approved"})
+	body, _ := json.Marshal(map[string]any{"status": "approved"})
 	req := httptest.NewRequest("PATCH", "/v1/checkins/guest-submissions/does-not-exist/status", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	resp, _ := app.Test(req)
@@ -531,7 +531,7 @@ func TestController_ApproveConflictReturnsBadRequest(t *testing.T) {
 	}
 	ctrl.RegisterRoutes(app)
 
-	body, _ := json.Marshal(map[string]interface{}{"status": "approved"})
+	body, _ := json.Marshal(map[string]any{"status": "approved"})
 	req := httptest.NewRequest("PATCH", "/v1/checkins/guest-submissions/abc123/status", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	resp, _ := app.Test(req)
@@ -623,7 +623,7 @@ func TestController_RequiresAuth(t *testing.T) {
 	})
 
 	t.Run("unauthenticated PATCH guest-submissions redirects to login", func(t *testing.T) {
-		body, _ := json.Marshal(map[string]interface{}{"status": "approved"})
+		body, _ := json.Marshal(map[string]any{"status": "approved"})
 		req := httptest.NewRequest("PATCH", fmt.Sprintf("/v1/checkins/guest-submissions/%s/status", sub.PublicID), bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		resp, _ := app.Test(req)
@@ -720,7 +720,7 @@ func TestController_AdminRoutesRequireAdminRole(t *testing.T) {
 			FirstName: "A", LastName: "B", Phone: "1234567", Email: "a@b.com",
 		}, []guestsubmission.Child{{FirstName: "C", LastName: "D", DOB: "2020-01-01", Grade: "1st"}})
 		require.NoError(t, err)
-		body, _ := json.Marshal(map[string]interface{}{"status": "approved"})
+		body, _ := json.Marshal(map[string]any{"status": "approved"})
 		req := httptest.NewRequest("PATCH", fmt.Sprintf("/v1/checkins/guest-submissions/%s/status", sub.PublicID), bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		resp, _ := app.Test(req)

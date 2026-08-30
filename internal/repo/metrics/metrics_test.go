@@ -246,7 +246,7 @@ func (f fixture) insertGuestSubmission(t *testing.T, publicID string, createdAt 
 	parentID, err := res.LastInsertId()
 	require.NoError(t, err)
 
-	for i := 0; i < kids; i++ {
+	for range kids {
 		_, err := squirrel.Insert("children").
 			RunWith(f.testDB).
 			Columns("parent_id", "first_name", "last_name", "dob", "grade", "created_at").

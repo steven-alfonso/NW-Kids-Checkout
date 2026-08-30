@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"slices"
 	"sort"
 	"time"
 
@@ -115,10 +116,7 @@ func percentile(sorted []int64, p float64) float64 {
 	if len(sorted) == 0 {
 		return 0
 	}
-	rank := int((p / 100 * float64(len(sorted))) + 0.5)
-	if rank < 1 {
-		rank = 1
-	}
+	rank := max(int((p/100*float64(len(sorted)))+0.5), 1)
 	if rank > len(sorted) {
 		rank = len(sorted)
 	}
@@ -174,9 +172,7 @@ func (r *sqliteRepo) ListFetchLatency(ctx context.Context, filter Filter) ([]Fet
 		for _, d := range deltas {
 			sum += d
 		}
-		sort.Slice(deltas, func(i, j int) bool {
-			return deltas[i] < deltas[j]
-		})
+		slices.Sort(deltas)
 		metrics = append(metrics, FetchLatencyMetric{
 			Date:  day,
 			Count: len(deltas),

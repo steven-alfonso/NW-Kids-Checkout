@@ -176,7 +176,7 @@ func seedCheckins(ctx context.Context, database *sql.DB, count int) error {
 	}
 
 	repo := checkin.NewRepo(database)
-	for i := 0; i < count; i++ {
+	for i := range count {
 		loc := locations[rand.Intn(len(locations))]
 		var eventID int64
 		if len(eventIDs) > 0 && rand.Float32() < 0.8 {
@@ -219,7 +219,7 @@ func seedCheckins(ctx context.Context, database *sql.DB, count int) error {
 
 func seedManualCheckins(ctx context.Context, database *sql.DB, count int) error {
 	repo := manualcheckin.NewRepo(database)
-	for i := 0; i < count; i++ {
+	for i := range count {
 		first := randomFirstName()
 		last := randomLastName()
 
@@ -255,7 +255,7 @@ func seedManualCheckins(ctx context.Context, database *sql.DB, count int) error 
 
 func seedGuestSubmissions(ctx context.Context, database *sql.DB, count int) error {
 	repo := guestsubmission.NewRepo(database)
-	for i := 0; i < count; i++ {
+	for i := range count {
 		parentFirst := randomFirstName()
 		parentLast := randomLastName()
 		phone := ""
@@ -273,7 +273,7 @@ func seedGuestSubmissions(ctx context.Context, database *sql.DB, count int) erro
 
 		numChildren := rand.Intn(3) + 1 // 1-3
 		children := make([]guestsubmission.Child, 0, numChildren)
-		for c := 0; c < numChildren; c++ {
+		for range numChildren {
 			children = append(children, guestsubmission.Child{
 				FirstName: randomFirstName(),
 				LastName:  randomLastName(),

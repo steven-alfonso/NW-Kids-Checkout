@@ -1,7 +1,7 @@
 import {describe, it, expect} from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
-import {JSDOM} from 'jsdom';
+import {JSDOM, VirtualConsole} from 'jsdom';
 
 const scriptPath = path.resolve(process.cwd(), 'internal/web/static/pages/admin-guest-entries/admin-guest-entries.js');
 const apiScriptPath = path.resolve(process.cwd(), 'internal/web/static/js/api.js');
@@ -10,6 +10,11 @@ const apiScript = fs.readFileSync(apiScriptPath, 'utf8');
 const flush = () => new Promise(resolve => setTimeout(resolve, 0));
 
 function loadWindow({respond} = {}) {
+    const virtualConsole = new VirtualConsole();
+    virtualConsole.on('jsdomError', (e) => {
+        if (e.message.includes('Not implemented: navigation')) return;
+        console.error(e);
+    });
     const dom = new JSDOM(`<!doctype html>
         <html>
         <body>
@@ -36,7 +41,7 @@ function loadWindow({respond} = {}) {
                 </div>
             </div>
             <div id="page-status" class="hidden"></div>
-        </body></html>`, {runScripts: 'dangerously', url: 'http://localhost/'});
+        </body></html>`, {runScripts: 'dangerously', url: 'http://localhost/', virtualConsole});
     const calls = [];
     dom.window.fetch = async (url, opts) => {
         calls.push({url: String(url), opts: opts || {}});

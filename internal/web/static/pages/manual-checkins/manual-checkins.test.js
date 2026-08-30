@@ -1,7 +1,7 @@
 import {describe, it, expect} from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
-import {JSDOM} from 'jsdom';
+import {JSDOM, VirtualConsole} from 'jsdom';
 
 const scriptPath = path.resolve(process.cwd(), 'internal/web/static/pages/manual-checkins/manual-checkins.js');
 const apiScriptPath = path.resolve(process.cwd(), 'internal/web/static/js/api.js');
@@ -9,6 +9,11 @@ const script = fs.readFileSync(scriptPath, 'utf8');
 const apiScript = fs.readFileSync(apiScriptPath, 'utf8');
 
 function loadWindow({ url = 'http://localhost/' } = {}) {
+    const virtualConsole = new VirtualConsole();
+    virtualConsole.on('jsdomError', (e) => {
+        if (e.message.includes('Not implemented: navigation')) return;
+        console.error(e);
+    });
     const dom = new JSDOM(`<!doctype html>
         <html>
         <body>
@@ -25,7 +30,7 @@ function loadWindow({ url = 'http://localhost/' } = {}) {
                 <button data-modal-close></button>
                 <div id="manual-checkin-error" class="hidden"></div>
             </div>
-        </body></html>`, {runScripts: 'dangerously', url});
+        </body></html>`, {runScripts: 'dangerously', url, virtualConsole});
     dom.window.fetch = async (url, opts) => {
         return {ok: true, status: 200, json: async () => [], text: async () => ''};
     };

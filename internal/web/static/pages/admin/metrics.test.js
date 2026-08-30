@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
-import { JSDOM } from 'jsdom';
+import { JSDOM, VirtualConsole } from 'jsdom';
 
 const scriptPath = path.resolve(process.cwd(), 'internal/web/static/pages/admin/metrics.js');
 const apiScriptPath = path.resolve(process.cwd(), 'internal/web/static/js/api.js');
@@ -40,9 +40,15 @@ const defaultFetch = async () => ({
 });
 
 function loadWindow(fetchImpl = defaultFetch) {
+    const virtualConsole = new VirtualConsole();
+    virtualConsole.on('jsdomError', (e) => {
+        if (e.message.includes('Not implemented: navigation')) return;
+        console.error(e);
+    });
     const dom = new JSDOM(fixtureHtml, {
         runScripts: 'dangerously',
-        url: 'http://localhost/'
+        url: 'http://localhost/',
+        virtualConsole
     });
     dom.window.fetch = fetchImpl;
     dom.window.setInterval = () => 0;
