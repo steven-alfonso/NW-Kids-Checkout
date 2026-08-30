@@ -55,14 +55,72 @@ const STATUS_LEFT_BAR_CLASS = {
     rejected: 'border-l-red-400'
 };
 
+const TOAST_ANIM_MS = 300;
+let statusTimeoutId = null;
+let statusAnimTimeoutId = null;
+
+function clearStatusTimeouts() {
+    if (statusTimeoutId) {
+        clearTimeout(statusTimeoutId);
+        statusTimeoutId = null;
+    }
+    if (statusAnimTimeoutId) {
+        clearTimeout(statusAnimTimeoutId);
+        statusAnimTimeoutId = null;
+    }
+}
+
+function hideStatus() {
+    if (!pageStatus) return;
+    clearStatusTimeouts();
+    const isToast = pageStatus.classList.contains('toast-base');
+    if (isToast) {
+        // animate leaving to the bottom
+        pageStatus.classList.remove('toast-visible');
+        statusAnimTimeoutId = setTimeout(() => {
+            pageStatus.classList.add('hidden');
+            pageStatus.textContent = '';
+            pageStatus.classList.remove('border-red-200', 'bg-red-50', 'text-red-700');
+            pageStatus.classList.remove('border-emerald-200', 'bg-emerald-100', 'text-emerald-700');
+            pageStatus.classList.remove('toast-base', 'toast-visible');
+            pageStatus.classList.add('bg-white', 'border-slate-200');
+            if (!pageStatus.classList.contains('mb-4')) pageStatus.classList.add('mb-4');
+            statusAnimTimeoutId = null;
+        }, TOAST_ANIM_MS);
+    } else {
+        pageStatus.classList.add('hidden');
+        pageStatus.textContent = '';
+        pageStatus.classList.remove('border-red-200', 'bg-red-50', 'text-red-700');
+        pageStatus.classList.remove('border-emerald-200', 'bg-emerald-100', 'text-emerald-700');
+        pageStatus.classList.remove('toast-base', 'toast-visible');
+        pageStatus.classList.add('bg-white', 'border-slate-200');
+        if (!pageStatus.classList.contains('mb-4')) pageStatus.classList.add('mb-4');
+    }
+}
+
 function setStatus(message, tone = 'info') {
     if (!pageStatus) return;
+    clearStatusTimeouts();
     pageStatus.classList.remove('hidden');
     pageStatus.classList.remove('border-red-200', 'bg-red-50', 'text-red-700');
-    pageStatus.classList.remove('border-emerald-200', 'bg-emerald-50', 'text-emerald-700');
+    pageStatus.classList.remove('border-emerald-200', 'bg-emerald-100', 'text-emerald-700');
+    pageStatus.classList.remove('toast-base', 'toast-visible');
+    pageStatus.classList.remove('bg-white', 'border-slate-200');
     pageStatus.textContent = message;
-    if (tone === 'error') pageStatus.classList.add('border-red-200', 'bg-red-50', 'text-red-700');
-    else if (tone === 'success') pageStatus.classList.add('border-emerald-200', 'bg-emerald-50', 'text-emerald-700');
+    if (tone === 'error') {
+        pageStatus.classList.add('border-red-200', 'bg-red-50', 'text-red-700');
+        if (!pageStatus.classList.contains('mb-4')) pageStatus.classList.add('mb-4');
+    } else if (tone === 'success') {
+        pageStatus.classList.add('border-emerald-200', 'bg-emerald-100', 'text-emerald-700');
+        pageStatus.classList.remove('mb-4');
+        pageStatus.classList.add('toast-base');
+        void pageStatus.offsetHeight;
+        pageStatus.classList.add('toast-visible');
+        statusTimeoutId = setTimeout(hideStatus, 4000);
+    } else {
+        pageStatus.classList.add('bg-white', 'border-slate-200');
+        if (!pageStatus.classList.contains('mb-4')) pageStatus.classList.add('mb-4');
+    }
 }
 
 function formatDob(value) {
