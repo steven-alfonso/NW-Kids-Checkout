@@ -67,18 +67,6 @@ function escapeHtml(value) {
     return div.innerHTML;
 }
 
-async function fetchJson(path, options = {}) {
-    const response = await fetch(`${API_URL}${path}`, options);
-    if (!response.ok) {
-        const message = await response.text();
-        throw new Error(message || `Request failed with status ${response.status}`);
-    }
-    if (response.status === 204) {
-        return null;
-    }
-    return response.json();
-}
-
 function buildManualCheckinsQuery() {
     const params = new URLSearchParams(window.location.search);
     const query = new URLSearchParams();
@@ -189,17 +177,23 @@ async function loadManualCheckins() {
     manualCheckinsController = controller;
     try {
         const query = buildManualCheckinsQuery();
-        const checkins = await fetchJson(`/v1/checkins/manual-checkins?${query}`, {
+        const checkins = await globalThis.fetchJson(`${API_URL}/v1/checkins/manual-checkins?${query}`, {
             signal: controller.signal
         });
         renderManualCheckins(Array.isArray(checkins) ? checkins : []);
     } catch (error) {
         if (error?.name === 'AbortError') return;
+        if (error instanceof window.SessionExpiredError) {
+            window.location.href = '/login?next=' + encodeURIComponent(
+                window.location.pathname + window.location.search
+            );
+            return;
+        }
         setPageStatus(`Failed to load manual check-ins: ${error.message}`, 'error');
         if (manualCheckinsBody) {
             manualCheckinsBody.innerHTML = `
                 <tr>
-                    <td class="px-4 py-6 text-center text-slate-500" colspan="4">Unable to load manual check-ins.</td>
+                    <td class="px-4 py-6 text-center text-slate-500" colspan="5">Unable to load manual check-ins.</td>
                 </tr>
             `;
         }
@@ -249,20 +243,34 @@ async function loadPendingFamilies() {
     if (!pendingFamiliesContainer) return;
     try {
         const [pending, entered] = await Promise.all([
-            fetchJson('/v1/checkins/guest-submissions?status=pending'),
-            fetchJson('/v1/checkins/guest-submissions?status=entered&without_manual_checkins=true')
+            globalThis.fetchJson(`${API_URL}/v1/checkins/guest-submissions?status=pending&limit=200`),
+            globalThis.fetchJson(`${API_URL}/v1/checkins/guest-submissions?status=entered&without_manual_checkins=true&limit=200`)
         ]);
-        const merged = [...(Array.isArray(pending) ? pending : []), ...(Array.isArray(entered) ? entered : [])]
+        const pendingArr = Array.isArray(pending) ? pending : [];
+        const enteredArr = Array.isArray(entered) ? entered : [];
+        const merged = [...pendingArr, ...enteredArr]
             .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
         renderPendingFamilies(merged);
+        if (pendingArr.length === 200 || enteredArr.length === 200) {
+            const notice = document.createElement('p');
+            notice.className = 'text-xs text-amber-600 mt-2';
+            notice.textContent = 'Showing first 200 results — more may exist.';
+            pendingFamiliesContainer.appendChild(notice);
+        }
     } catch (error) {
         if (error?.name === 'AbortError') return;
+        if (error instanceof window.SessionExpiredError) {
+            window.location.href = '/login?next=' + encodeURIComponent(
+                window.location.pathname + window.location.search
+            );
+            return;
+        }
         pendingFamiliesContainer.innerHTML = '<p class="text-sm text-red-600">Failed to load pending families.</p>';
     }
 }
 
 async function setSubmissionStatus(publicId, status) {
-    await fetchJson(`/v1/checkins/guest-submissions/${publicId}/status`, {
+    await globalThis.fetchJson(`${API_URL}/v1/checkins/guest-submissions/${publicId}/status`, {
         method: 'PATCH',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({status})
@@ -281,7 +289,7 @@ async function rejectSubmission(publicId) {
 }
 
 async function createManualCheckins(publicId) {
-    await fetchJson(`/v1/checkins/guest-submissions/${publicId}/checkins`, {
+    await globalThis.fetchJson(`${API_URL}/v1/checkins/guest-submissions/${publicId}/checkins`, {
         method: 'POST'
     });
     await loadPendingFamilies();
@@ -305,6 +313,12 @@ if (pendingFamiliesContainer) {
                 await createManualCheckins(id);
             }
         } catch (error) {
+            if (error instanceof window.SessionExpiredError) {
+                window.location.href = '/login?next=' + encodeURIComponent(
+                    window.location.pathname + window.location.search
+                );
+                return;
+            }
             setPageStatus(`Failed to update: ${error.message}`, 'error');
             target.disabled = false;
         }
@@ -321,7 +335,7 @@ window.toggleManualCheckinModal = toggleManualCheckinModal;
 window.setManualCheckinError = setManualCheckinError;
 
 async function createManualCheckin(payload) {
-    return fetchJson('/v1/checkins/manual-checkins', {
+    return globalThis.fetchJson(`${API_URL}/v1/checkins/manual-checkins`, {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify(payload)
@@ -330,7 +344,7 @@ async function createManualCheckin(payload) {
 
 async function checkOutManualCheckin(publicId, checkedOut) {
     if (!publicId) return;
-    await fetchJson(`/v1/checkins/manual-checkins/${publicId}/checked_out`, {
+    await globalThis.fetchJson(`${API_URL}/v1/checkins/manual-checkins/${publicId}/checked_out`, {
         method: 'PATCH',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({checked_out: Boolean(checkedOut)})
@@ -383,6 +397,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 toggleManualCheckinModal(false);
                 await loadManualCheckins();
             } catch (error) {
+                if (error instanceof window.SessionExpiredError) {
+                    window.location.href = '/login?next=' + encodeURIComponent(
+                        window.location.pathname + window.location.search
+                    );
+                    return;
+                }
                 setManualCheckinError(error.message || 'Unable to save manual check-in.');
             } finally {
                 if (manualSubmitButton) {
@@ -416,6 +436,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 await checkOutManualCheckin(publicId, nextCheckedOut);
                 await loadManualCheckins();
             } catch (error) {
+                if (error instanceof window.SessionExpiredError) {
+                    window.location.href = '/login?next=' + encodeURIComponent(
+                        window.location.pathname + window.location.search
+                    );
+                    return;
+                }
                 setPageStatus(`Failed to check out: ${error.message}`, 'error');
                 target.disabled = false;
                 target.textContent = currentlyCheckedOut ? 'Undo Checkout' : 'Check Out';

@@ -4,7 +4,9 @@ import path from 'node:path';
 import { JSDOM } from 'jsdom';
 
 const scriptPath = path.resolve(process.cwd(), 'internal/web/static/pages/admin/metrics.js');
+const apiScriptPath = path.resolve(process.cwd(), 'internal/web/static/js/api.js');
 const script = fs.readFileSync(scriptPath, 'utf8');
+const apiScript = fs.readFileSync(apiScriptPath, 'utf8');
 const exposeInternals = `
 window.__test = { renderMetrics, renderFetchLatency, renderFetchLatencyRows, loadMetrics, loadFetchLatency, renderGuestMetrics, loadGuestMetrics };
 `;
@@ -44,6 +46,7 @@ function loadWindow(fetchImpl = defaultFetch) {
     });
     dom.window.fetch = fetchImpl;
     dom.window.setInterval = () => 0;
+    dom.window.eval(apiScript);
     dom.window.eval(script);
     dom.window.eval(exposeInternals);
     return dom.window;

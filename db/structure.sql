@@ -71,6 +71,7 @@ CREATE TABLE guest_submissions (
     approved_at DATETIME NULL,
     rejected_at DATETIME NULL,
     entered_at DATETIME NULL,
+    checkins_backfilled_at DATETIME NULL,
     created_at DATETIME NOT NULL
 );
 CREATE INDEX idx_children_parent_id ON children(parent_id);
@@ -85,6 +86,9 @@ CREATE TABLE "manual_checkins" (
     child_id INTEGER NULL REFERENCES children(id),
     -- Either child_id is set (linked to a child record) OR first_name and
     -- last_name must be non-empty (standalone guest checkin without a child record).
-    CHECK (child_id IS NOT NULL OR (first_name <> '' AND last_name <> ''))
+    CHECK (child_id IS NOT NULL OR (LENGTH(TRIM(first_name)) > 0 AND LENGTH(TRIM(last_name)) > 0))
 );
 CREATE INDEX idx_manual_checked_out_at ON manual_checkins (checked_out_at);
+CREATE INDEX idx_manual_checkins_child_id ON manual_checkins(child_id);
+CREATE INDEX idx_guest_submissions_created_at ON guest_submissions(created_at);
+CREATE INDEX idx_guest_submissions_parent_id ON guest_submissions(parent_id);

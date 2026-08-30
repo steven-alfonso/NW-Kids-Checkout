@@ -41,10 +41,13 @@ func noStoreCache(c *fiber.Ctx) error {
 }
 
 func (controller *Controller) RegisterRoutes(app *fiber.App) {
+	publicGroup := app.Group("/v1/checkins")
+	publicGroup.Use(noStoreCache)
+	publicGroup.Post("/guest-submissions", controller.CreateSubmission)
+
 	group := app.Group("/v1/checkins")
 	group.Use(middleware.AuthRequired(controller.sessionStore, ""))
 	group.Use(noStoreCache)
-	group.Post("/guest-submissions", controller.CreateSubmission)
 	group.Get("/guest-submissions", controller.ListSubmissions)
 	group.Patch("/guest-submissions/:public_id/status", controller.PatchSubmissionStatus)
 	group.Post("/guest-submissions/:public_id/checkins", controller.CreateSubmissionCheckins)
@@ -54,7 +57,7 @@ func (controller *Controller) RegisterRoutes(app *fiber.App) {
 	adminGroup.Use(noStoreCache)
 	adminGroup.Get("/guest-submissions", controller.AdminListSubmissions)
 
-	app.Get("/checkin", middleware.AuthRequired(controller.sessionStore, ""), controller.KioskPage)
+	app.Get("/checkin", controller.KioskPage)
 	app.Get("/admin/guest-entries", middleware.AuthRequired(controller.sessionStore, "admin"), controller.AdminPage)
 }
 
@@ -367,11 +370,14 @@ func buildFilter(c *fiber.Ctx) (guestsubmission.Filter, error) {
 		if err != nil || n <= 0 {
 			return guestsubmission.Filter{}, fiber.NewError(fiber.StatusBadRequest, "invalid limit")
 		}
-		// limit capped at 200, default 100
+		// limit capped at 200
 		if n > 200 {
 			n = 200
 		}
 		filter.Limit = n
+	} else {
+		// default 100 when unset
+		filter.Limit = 100
 	}
 	return filter, nil
 }

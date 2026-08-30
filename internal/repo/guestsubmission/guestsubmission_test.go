@@ -626,7 +626,7 @@ func Test_sqliteRepo_ListSubmissions_WithoutManualCheckins_PartialAfterCleanup(t
 	_, err = testDB.ExecContext(t.Context(), "DELETE FROM manual_checkins WHERE child_id = ?", sub.Children[0].ID)
 	require.NoError(t, err)
 
-	// Partially cleaned family should be visible.
+	// After backfill, deletion of a manual checkin should NOT resurrect the family.
 	res, err := s.ListSubmissions(t.Context(), Filter{Status: StatusEntered, WithoutManualCheckins: true})
 	require.NoError(t, err)
 	found := false
@@ -636,14 +636,19 @@ func Test_sqliteRepo_ListSubmissions_WithoutManualCheckins_PartialAfterCleanup(t
 			break
 		}
 	}
-	assert.True(t, found, "partially cleaned family should be visible after per-row delete")
+	assert.False(t, found, "cleaned family should stay hidden after per-row delete (checkins_backfilled_at prevents resurrection)")
 
-	// Backfill should restore missing child only.
+	// Backfill should restore missing child only and keep family hidden.
 	require.NoError(t, s.CreateManualCheckins(t.Context(), sub.PublicID))
 	for _, child := range sub.Children {
 		var count int
 		err := testDB.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM manual_checkins WHERE child_id = ?", child.ID).Scan(&count)
 		require.NoError(t, err)
 		assert.Equal(t, 1, count)
+	}
+	res, err = s.ListSubmissions(t.Context(), Filter{Status: StatusEntered, WithoutManualCheckins: true})
+	require.NoError(t, err)
+	for _, r := range res {
+		assert.NotEqual(t, sub.PublicID, r.PublicID, "family should remain hidden after backfill")
 	}
 }

@@ -4,7 +4,9 @@ import path from 'node:path';
 import {JSDOM} from 'jsdom';
 
 const scriptPath = path.resolve(process.cwd(), 'internal/web/static/pages/manual-checkins/manual-checkins.js');
+const apiScriptPath = path.resolve(process.cwd(), 'internal/web/static/js/api.js');
 const script = fs.readFileSync(scriptPath, 'utf8');
+const apiScript = fs.readFileSync(apiScriptPath, 'utf8');
 
 function loadWindow() {
     const dom = new JSDOM(`<!doctype html>
@@ -28,6 +30,7 @@ function loadWindow() {
         return {ok: true, status: 200, json: async () => []};
     };
     dom.window.setInterval = () => 0;
+    dom.window.eval(apiScript);
     dom.window.eval(script);
     return dom.window;
 }
@@ -185,5 +188,62 @@ describe('manual-checkins approvals', () => {
         expect(error.classList.contains('hidden')).toBe(false);
         expect(error.textContent).toContain('required');
         expect(modal.classList.contains('hidden')).toBe(false);
+    });
+
+    it('shows parsed sorry message when status update fails', async () => {
+        const window = loadWindow();
+        window.renderPendingFamilies([
+            {
+                public_id: 'sub-err',
+                status: 'pending',
+                parent: {first_name: 'Err', last_name: 'Case'},
+                children: [{first_name: 'Kid', last_name: 'Case'}]
+            }
+        ]);
+        window.fetch = async () => ({
+            ok: false,
+            status: 400,
+            redirected: false,
+            url: 'http://localhost/v1/checkins/guest-submissions/sub-err/status',
+            headers: {get: () => 'application/json'},
+            json: async () => ({sorry: 'invalid status transition'})
+        });
+        const btn = window.document.querySelector('[data-approve]');
+        expect(btn).not.toBeNull();
+        btn.click();
+        await new Promise(resolve => setTimeout(resolve, 0));
+        await new Promise(resolve => setTimeout(resolve, 0));
+        const statusEl = window.document.getElementById('page-status');
+        expect(statusEl.textContent).toContain('invalid status transition');
+        expect(statusEl.textContent).not.toContain('{"sorry"');
+        expect(statusEl.textContent).toContain('Failed to update');
+        expect(btn.disabled).toBe(false);
+    });
+
+    it('surfaces conflict retry message without raw JSON', async () => {
+        const window = loadWindow();
+        window.renderPendingFamilies([
+            {
+                public_id: 'sub-conflict',
+                status: 'pending',
+                parent: {first_name: 'Conflict', last_name: 'Case'},
+                children: [{first_name: 'Kid', last_name: 'Case'}]
+            }
+        ]);
+        window.fetch = async () => ({
+            ok: false,
+            status: 400,
+            redirected: false,
+            url: 'http://localhost/v1/checkins/guest-submissions/sub-conflict/status',
+            headers: {get: () => 'application/json'},
+            json: async () => ({sorry: 'submission status changed, please retry'})
+        });
+        const btn = window.document.querySelector('[data-approve]');
+        btn.click();
+        await new Promise(resolve => setTimeout(resolve, 0));
+        await new Promise(resolve => setTimeout(resolve, 0));
+        const statusEl = window.document.getElementById('page-status');
+        expect(statusEl.textContent).toBe('Failed to update: submission status changed, please retry');
+        expect(statusEl.textContent).not.toContain('{"sorry"');
     });
 });

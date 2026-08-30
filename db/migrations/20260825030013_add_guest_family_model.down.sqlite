@@ -17,6 +17,9 @@ ALTER TABLE manual_checkins_old RENAME TO manual_checkins;
 
 CREATE INDEX idx_manual_checked_out_at ON manual_checkins (checked_out_at);
 
+DROP INDEX IF EXISTS idx_manual_checkins_child_id;
+DROP INDEX IF EXISTS idx_guest_submissions_created_at;
+DROP INDEX IF EXISTS idx_guest_submissions_parent_id;
 DROP TABLE guest_submissions;
 DROP TABLE children;
 DROP TABLE parents;

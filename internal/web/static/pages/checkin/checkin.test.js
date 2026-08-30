@@ -4,7 +4,9 @@ import path from 'node:path';
 import {JSDOM} from 'jsdom';
 
 const scriptPath = path.resolve(process.cwd(), 'internal/web/static/pages/checkin/checkin.js');
+const apiScriptPath = path.resolve(process.cwd(), 'internal/web/static/js/api.js');
 const script = fs.readFileSync(scriptPath, 'utf8');
+const apiScript = fs.readFileSync(apiScriptPath, 'utf8');
 
 function loadWindow() {
     const html = `<!doctype html>
@@ -38,6 +40,7 @@ function loadWindow() {
     });
     // Sync JSDOM Date with Node's mocked Date (for fake timers).
     dom.window.Date = Date;
+    dom.window.eval(apiScript);
     dom.window.eval(script);
     return dom.window;
 }
@@ -405,5 +408,125 @@ describe('kiosk form', () => {
         // past date should pass (phone required, etc. already satisfied)
         window.document.querySelector('.child-dob').value = '2020-01-01';
         expect(window.validateForm()).toBe(true);
+    });
+
+    it('shows friendly sorry message on non-2xx and keeps form data', async () => {
+        const window = loadWindow();
+        window.document.getElementById('parent-first-name').value = 'John';
+        window.document.getElementById('parent-last-name').value = 'Smith';
+        window.document.getElementById('parent-phone').value = '5551234';
+        window.document.querySelector('.child-first-name').value = 'Timmy';
+        window.document.querySelector('.child-last-name').value = 'Smith';
+        window.document.querySelector('.child-dob').value = '2020-01-01';
+        window.fetch = vi.fn().mockResolvedValue({
+            ok: false,
+            status: 400,
+            redirected: false,
+            url: 'http://localhost/v1/checkins/guest-submissions',
+            headers: { get: () => 'application/json' },
+            json: async () => ({ sorry: 'invalid status transition' })
+        });
+        await window.submitKioskForm();
+        const errorEl = window.document.getElementById('kiosk-error');
+        expect(errorEl.textContent).toBe('invalid status transition');
+        expect(errorEl.classList.contains('hidden')).toBe(false);
+        // form data preserved, not reset, welcome panel stays hidden
+        expect(window.document.getElementById('parent-first-name').value).toBe('John');
+        expect(window.document.getElementById('welcome-panel').classList.contains('hidden')).toBe(true);
+        // button re-enabled
+        expect(window.document.getElementById('kiosk-submit').disabled).toBe(false);
+    });
+
+    it('shows session-expired message and preserves form on HTML redirect', async () => {
+        const window = loadWindow();
+        window.document.getElementById('parent-first-name').value = 'John';
+        window.document.getElementById('parent-last-name').value = 'Smith';
+        window.document.getElementById('parent-phone').value = '5551234';
+        window.document.querySelector('.child-first-name').value = 'Timmy';
+        window.document.querySelector('.child-last-name').value = 'Smith';
+        window.document.querySelector('.child-dob').value = '2020-01-01';
+        window.fetch = vi.fn().mockResolvedValue({
+            ok: true,
+            status: 200,
+            redirected: true,
+            url: 'http://localhost/login',
+            headers: { get: () => 'text/html' },
+            json: async () => ({})
+        });
+        await window.submitKioskForm();
+        const errorEl = window.document.getElementById('kiosk-error');
+        expect(errorEl.textContent).toBe('Please ask a staff member to sign in');
+        expect(window.document.getElementById('parent-first-name').value).toBe('John');
+        expect(window.document.getElementById('welcome-panel').classList.contains('hidden')).toBe(true);
+        expect(window.document.getElementById('kiosk-submit').disabled).toBe(false);
+    });
+
+    it('shows error on network rejection and re-enables button', async () => {
+        const window = loadWindow();
+        window.document.getElementById('parent-first-name').value = 'John';
+        window.document.getElementById('parent-last-name').value = 'Smith';
+        window.document.getElementById('parent-phone').value = '5551234';
+        window.document.querySelector('.child-first-name').value = 'Timmy';
+        window.document.querySelector('.child-last-name').value = 'Smith';
+        window.document.querySelector('.child-dob').value = '2020-01-01';
+        window.fetch = vi.fn().mockRejectedValue(new Error('Network error'));
+        await window.submitKioskForm();
+        const errorEl = window.document.getElementById('kiosk-error');
+        expect(errorEl.textContent).toBe('Network error');
+        expect(window.document.getElementById('kiosk-submit').disabled).toBe(false);
+        expect(window.document.getElementById('parent-first-name').value).toBe('John');
+    });
+
+    it('prevents double-submit while request is in flight', async () => {
+        const window = loadWindow();
+        window.document.getElementById('parent-first-name').value = 'John';
+        window.document.getElementById('parent-last-name').value = 'Smith';
+        window.document.getElementById('parent-phone').value = '5551234';
+        window.document.querySelector('.child-first-name').value = 'Timmy';
+        window.document.querySelector('.child-last-name').value = 'Smith';
+        window.document.querySelector('.child-dob').value = '2020-01-01';
+        let resolveFetch;
+        const fetchPromise = new Promise(resolve => { resolveFetch = resolve; });
+        window.fetch = vi.fn().mockReturnValue(fetchPromise);
+        const first = window.submitKioskForm();
+        // button should be disabled during flight
+        expect(window.document.getElementById('kiosk-submit').disabled).toBe(true);
+        // second submit should be no-op
+        const second = window.submitKioskForm();
+        expect(window.fetch).toHaveBeenCalledTimes(1);
+        await second;
+        // resolve first fetch as success
+        resolveFetch({
+            ok: true,
+            redirected: false,
+            url: 'http://localhost/v1/checkins/guest-submissions',
+            headers: { get: () => 'application/json' },
+            json: async () => ({ public_id: 'abc' })
+        });
+        await first;
+        expect(window.document.getElementById('welcome-panel').classList.contains('hidden')).toBe(false);
+        expect(window.document.getElementById('kiosk-submit').disabled).toBe(false);
+    });
+
+    it('re-enables button in finally after failure', async () => {
+        const window = loadWindow();
+        window.document.getElementById('parent-first-name').value = 'John';
+        window.document.getElementById('parent-last-name').value = 'Smith';
+        window.document.getElementById('parent-phone').value = '5551234';
+        window.document.querySelector('.child-first-name').value = 'Timmy';
+        window.document.querySelector('.child-last-name').value = 'Smith';
+        window.document.querySelector('.child-dob').value = '2020-01-01';
+        window.fetch = vi.fn().mockResolvedValue({
+            ok: false,
+            status: 500,
+            redirected: false,
+            url: 'http://localhost/v1/checkins/guest-submissions',
+            headers: { get: () => 'application/json' },
+            json: async () => ({ sorry: 'server error' })
+        });
+        expect(window.document.getElementById('kiosk-submit').disabled).toBe(false);
+        await window.submitKioskForm();
+        expect(window.document.getElementById('kiosk-submit').disabled).toBe(false);
+        expect(window.document.getElementById('kiosk-error').textContent).toBe('server error');
     });
 });

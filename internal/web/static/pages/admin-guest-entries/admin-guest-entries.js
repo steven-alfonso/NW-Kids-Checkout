@@ -241,12 +241,12 @@ function renderPagination(bucket, page, totalPages, total) {
 }
 
 async function markEntered(publicId) {
-    const response = await fetch(`/v1/checkins/guest-submissions/${publicId}/status`, {
+    const data = await fetchJson(`/v1/checkins/guest-submissions/${publicId}/status`, {
         method: 'PATCH',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({status: 'entered'})
     });
-    if (!response.ok) throw new Error('Failed to mark entered');
+    return data;
 }
 
 async function loadEntries(bucket, attempt = 0) {
@@ -256,10 +256,7 @@ async function loadEntries(bucket, attempt = 0) {
     const page = pageState[bucket] || 1;
     try {
         const fetches = BUCKET_FETCH_STATUSES[bucket].map(status =>
-            fetch(`/v1/admin/guest-submissions?status=${status}&page=${page}`).then(r => {
-                if (!r.ok) throw new Error('Failed to load');
-                return r.json();
-            })
+            fetchJson(`/v1/admin/guest-submissions?status=${status}&page=${page}`)
         );
         const results = await Promise.all(fetches);
         const pages = results.map(normalizePage);
@@ -279,6 +276,12 @@ async function loadEntries(bucket, attempt = 0) {
         entries.forEach(entry => renderEntry(container, entry));
         renderPagination(bucket, page, totalPages, total);
     } catch (error) {
+        if (error instanceof window.SessionExpiredError) {
+            window.location.href = '/login?next=' + encodeURIComponent(
+                window.location.pathname + window.location.search
+            );
+            return;
+        }
         container.innerHTML = '';
         setStatus(`Failed to load: ${error.message}`, 'error');
     }
@@ -326,6 +329,13 @@ if (entriesContainer) {
                 await loadEntries(activeBucket());
                 setStatus('Entry marked as entered.', 'success');
             } catch (error) {
+                if (error instanceof window.SessionExpiredError) {
+                    target.disabled = false;
+                    window.location.href = '/login?next=' + encodeURIComponent(
+                        window.location.pathname + window.location.search
+                    );
+                    return;
+                }
                 setStatus(error.message, 'error');
                 target.disabled = false;
             }

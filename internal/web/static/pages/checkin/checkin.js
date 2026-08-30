@@ -142,16 +142,19 @@ function startCountdown() {
 }
 
 async function postSubmission(payload) {
-    const response = await fetch('/v1/checkins/guest-submissions', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify(payload)
-    });
-    if (!response.ok) {
-        const text = await response.text();
-        throw new Error(text || `Request failed with status ${response.status}`);
+    try {
+        const data = await globalThis.fetchJson('/v1/checkins/guest-submissions', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(payload)
+        });
+        return data;
+    } catch (error) {
+        if (error instanceof window.SessionExpiredError) {
+            throw new Error('Please ask a staff member to sign in');
+        }
+        throw error;
     }
-    return response.json();
 }
 
 function showForm() {
@@ -220,6 +223,7 @@ function validateForm() {
 }
 
 async function submitKioskForm() {
+    if (submitButton && submitButton.disabled) return;
     setKioskError('');
     if (!validateForm()) {
         if (kioskForm.reportValidity) kioskForm.reportValidity();

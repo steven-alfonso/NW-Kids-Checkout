@@ -138,6 +138,12 @@ func TestMigration_GuestFamilyModel_BlankNameBackfill(t *testing.T) {
 	require.NoError(t, err)
 	_, err = db.Exec(`INSERT INTO manual_checkins (first_name, last_name) VALUES ('Alice', 'Smith')`)
 	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO manual_checkins (first_name, last_name) VALUES ('   ', 'Doe')`)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO manual_checkins (first_name, last_name) VALUES ('John', '   ')`)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO manual_checkins (first_name, last_name) VALUES ('   ', '   ')`)
+	require.NoError(t, err)
 
 	upSQL, err := os.ReadFile(targetMigration)
 	require.NoError(t, err)
@@ -147,7 +153,7 @@ func TestMigration_GuestFamilyModel_BlankNameBackfill(t *testing.T) {
 	var count int
 	err = db.QueryRow("SELECT COUNT(*) FROM manual_checkins").Scan(&count)
 	require.NoError(t, err)
-	assert.Equal(t, 4, count, "all rows should survive migration")
+	assert.Equal(t, 7, count, "all rows should survive migration")
 
 	rows, err := db.Query(`SELECT first_name, last_name FROM manual_checkins ORDER BY id`)
 	require.NoError(t, err)
@@ -161,20 +167,29 @@ func TestMigration_GuestFamilyModel_BlankNameBackfill(t *testing.T) {
 		got = append(got, pair{f, l})
 	}
 	require.NoError(t, rows.Err())
-	require.Len(t, got, 4)
+	require.Len(t, got, 7)
 
-	// Blank rows should be backfilled to Unknown/Guest.
+	// Blank rows should be backfilled per-column; surviving names preserved.
 	assert.Equal(t, "Unknown", got[0].first)
 	assert.Equal(t, "Guest", got[0].last)
 	assert.Equal(t, "Unknown", got[1].first)
-	assert.Equal(t, "Guest", got[1].last)
-	assert.Equal(t, "Unknown", got[2].first)
+	assert.Equal(t, "Doe", got[1].last)
+	assert.Equal(t, "John", got[2].first)
 	assert.Equal(t, "Guest", got[2].last)
 	// Normal row should be untouched.
 	assert.Equal(t, "Alice", got[3].first)
 	assert.Equal(t, "Smith", got[3].last)
+	// Whitespace-only names should be backfilled per-column as well.
+	assert.Equal(t, "Unknown", got[4].first)
+	assert.Equal(t, "Doe", got[4].last)
+	assert.Equal(t, "John", got[5].first)
+	assert.Equal(t, "Guest", got[5].last)
+	assert.Equal(t, "Unknown", got[6].first)
+	assert.Equal(t, "Guest", got[6].last)
 
 	// Verify CHECK constraint is enforced after migration.
 	_, err = db.Exec(`INSERT INTO manual_checkins (first_name, last_name) VALUES ('', 'Doe')`)
 	assert.Error(t, err, "blank names should be rejected after migration")
+	_, err = db.Exec(`INSERT INTO manual_checkins (first_name, last_name) VALUES ('   ', 'Doe')`)
+	assert.Error(t, err, "whitespace-only names should be rejected after migration")
 }

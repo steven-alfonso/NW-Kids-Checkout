@@ -40,16 +40,17 @@ type Child struct {
 }
 
 type Submission struct {
-	ID         int64
-	PublicID   string
-	ParentID   int64
-	Status     string
-	ApprovedAt time.Time
-	RejectedAt time.Time
-	EnteredAt  time.Time
-	CreatedAt  time.Time
-	Parent     Parent
-	Children   []Child
+	ID                   int64
+	PublicID             string
+	ParentID             int64
+	Status               string
+	ApprovedAt           time.Time
+	RejectedAt           time.Time
+	EnteredAt            time.Time
+	CheckinsBackfilledAt time.Time
+	CreatedAt            time.Time
+	Parent               Parent
+	Children             []Child
 }
 
 type Filter struct {
@@ -221,7 +222,7 @@ func (s *sqliteRepo) CreateSubmission(ctx context.Context, parent Parent, childr
 func (s *sqliteRepo) ListSubmissions(ctx context.Context, filter Filter) ([]Submission, error) {
 	builder := squirrel.Select(
 		"id", "public_id", "parent_id",
-		"approved_at", "rejected_at", "entered_at", "created_at",
+		"approved_at", "rejected_at", "entered_at", "checkins_backfilled_at", "created_at",
 	).From("guest_submissions")
 
 	builder, err := applyFilter(builder, filter)
@@ -246,10 +247,10 @@ func (s *sqliteRepo) ListSubmissions(ctx context.Context, filter Filter) ([]Subm
 	parentIDs := make([]int64, 0)
 	for rows.Next() {
 		var sub Submission
-		var approvedAt, rejectedAt, enteredAt sql.NullTime
+		var approvedAt, rejectedAt, enteredAt, checkinsBackfilledAt sql.NullTime
 		err := rows.Scan(
 			&sub.ID, &sub.PublicID, &sub.ParentID,
-			&approvedAt, &rejectedAt, &enteredAt, &sub.CreatedAt,
+			&approvedAt, &rejectedAt, &enteredAt, &checkinsBackfilledAt, &sub.CreatedAt,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("scanning guest submission: %w", err)
@@ -257,6 +258,7 @@ func (s *sqliteRepo) ListSubmissions(ctx context.Context, filter Filter) ([]Subm
 		sub.ApprovedAt = approvedAt.Time
 		sub.RejectedAt = rejectedAt.Time
 		sub.EnteredAt = enteredAt.Time
+		sub.CheckinsBackfilledAt = checkinsBackfilledAt.Time
 		sub.Status = statusFromTimestamps(approvedAt.Valid, rejectedAt.Valid, enteredAt.Valid)
 		submissions = append(submissions, sub)
 		parentIDs = append(parentIDs, sub.ParentID)
@@ -424,6 +426,7 @@ func (s *sqliteRepo) ApproveSubmission(ctx context.Context, publicID string, now
 		Set("approved_at", now.UTC()).
 		Set("rejected_at", nil).
 		Set("entered_at", nil).
+		Set("checkins_backfilled_at", now.UTC()).
 		Where(squirrel.Eq{"public_id": publicID}).
 		Where(squirrel.And{
 			squirrel.Eq{"approved_at": nil},
@@ -479,6 +482,23 @@ func (s *sqliteRepo) CreateManualCheckins(ctx context.Context, publicID string) 
 
 	if err := s.insertManualCheckins(ctx, tx, parentID); err != nil {
 		return err
+	}
+
+	var remaining int
+	if err := squirrel.Select("COUNT(*)").From("children").
+		Where(squirrel.Eq{"parent_id": parentID}).
+		Where(childWithoutManualCheckinExpr()).
+		RunWith(tx).QueryRowContext(ctx).Scan(&remaining); err != nil {
+		return fmt.Errorf("checking remaining children without checkins: %w", err)
+	}
+	if remaining == 0 {
+		if _, err := squirrel.Update("guest_submissions").
+			Set("checkins_backfilled_at", time.Now().UTC()).
+			Where(squirrel.Eq{"parent_id": parentID}).
+			Where(squirrel.Eq{"checkins_backfilled_at": nil}).
+			RunWith(tx).ExecContext(ctx); err != nil {
+			return fmt.Errorf("updating checkins_backfilled_at: %w", err)
+		}
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -542,12 +562,8 @@ func (s *sqliteRepo) insertManualCheckins(ctx context.Context, tx *sql.Tx, paren
 	return nil
 }
 
-// withoutManualCheckinsExpr returns a filter that keeps only submissions
-// where at least one child of the submission has no manual_checkins row.
-// Shared semantics with childWithoutManualCheckinExpr: both test for the
-// absence of a manual_checkins row for a child (NOT EXISTS on manual_checkins).
 func withoutManualCheckinsExpr() squirrel.Sqlizer {
-	return squirrel.Expr("EXISTS (SELECT 1 FROM children ch WHERE ch.parent_id = guest_submissions.parent_id AND NOT EXISTS (SELECT 1 FROM manual_checkins mc WHERE mc.child_id = ch.id))")
+	return squirrel.Eq{"checkins_backfilled_at": nil}
 }
 
 func childWithoutManualCheckinExpr() squirrel.Sqlizer {

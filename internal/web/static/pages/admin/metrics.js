@@ -1,30 +1,15 @@
 const API_URL = '';
 
 async function loadMetrics(days) {
-  const response = await fetch(`${API_URL}/v1/admin/metrics?days=${days}`);
-  if (!response.ok) {
-    const data = await response.json().catch(() => ({}));
-    throw new Error(data.message || `failed to load metrics (${response.status})`);
-  }
-  return response.json();
+  return fetchJson(`${API_URL}/v1/admin/metrics?days=${days}`);
 }
 
 async function loadFetchLatency(days) {
-  const response = await fetch(`${API_URL}/v1/admin/metrics/fetch-latency?days=${days}`);
-  if (!response.ok) {
-    const data = await response.json().catch(() => ({}));
-    throw new Error(data.message || `failed to load fetch latency (${response.status})`);
-  }
-  return response.json();
+  return fetchJson(`${API_URL}/v1/admin/metrics/fetch-latency?days=${days}`);
 }
 
 async function loadGuestMetrics(days) {
-  const response = await fetch(`${API_URL}/v1/admin/metrics/guest?days=${days}`);
-  if (!response.ok) {
-    const data = await response.json().catch(() => ({}));
-    throw new Error(data.message || `failed to load guest metrics (${response.status})`);
-  }
-  return response.json();
+  return fetchJson(`${API_URL}/v1/admin/metrics/guest?days=${days}`);
 }
 
 function escapeHtml(value) {
@@ -181,6 +166,12 @@ async function main() {
       }
       if (statusEl) statusEl.textContent = '';
     } catch (error) {
+      if (error instanceof window.SessionExpiredError) {
+        window.location.href = '/login?next=' + encodeURIComponent(
+          window.location.pathname + window.location.search
+        );
+        return;
+      }
       if (statusEl) statusEl.textContent = error.message;
     }
   };
