@@ -3,9 +3,14 @@ package static
 import (
 	"bytes"
 	"io"
+	"io/fs"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"testing"
 
+	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/filesystem"
 	"github.com/stretchr/testify/require"
 )
 
@@ -77,4 +82,61 @@ func TestCheckoutsHTMLDoesNotReferencePreview(t *testing.T) {
 	if bytes.Contains(content, []byte("preview.js")) {
 		t.Fatal("checkouts.html must not reference preview.js; the tag is injected only in dev")
 	}
+}
+
+func TestFilteredFSBlocksHTML(t *testing.T) {
+	fsys := NewFilteredFS()
+
+	t.Run("blocks pages html via filtered FS", func(t *testing.T) {
+		_, err := fsys.Open("pages/admin/index.html")
+		require.ErrorIs(t, err, fs.ErrNotExist)
+	})
+
+	t.Run("blocks admin-guest-entries html via filtered FS", func(t *testing.T) {
+		_, err := fsys.Open("pages/admin-guest-entries/index.html")
+		require.ErrorIs(t, err, fs.ErrNotExist)
+	})
+
+	t.Run("blocks with leading slash", func(t *testing.T) {
+		_, err := fsys.Open("/pages/admin/index.html")
+		require.ErrorIs(t, err, fs.ErrNotExist)
+	})
+
+	t.Run("still allows js", func(t *testing.T) {
+		f, err := fsys.Open("pages/checkin/checkin.js")
+		require.NoError(t, err)
+		_ = f.Close()
+	})
+
+	t.Run("still allows css", func(t *testing.T) {
+		f, err := fsys.Open("css/tailwind.css")
+		require.NoError(t, err)
+		_ = f.Close()
+	})
+
+	t.Run("GET /static/pages/admin/index.html returns 404", func(t *testing.T) {
+		app := fiber.New()
+		app.Use("/static", filesystem.New(filesystem.Config{
+			Root:       http.FS(NewFilteredFS()),
+			PathPrefix: "",
+			Browse:     true,
+		}))
+		req := httptest.NewRequest(http.MethodGet, "/static/pages/admin/index.html", nil)
+		resp, err := app.Test(req)
+		require.NoError(t, err)
+		require.Equal(t, fiber.StatusNotFound, resp.StatusCode)
+	})
+
+	t.Run("GET /static/pages/checkin/checkin.js still serves", func(t *testing.T) {
+		app := fiber.New()
+		app.Use("/static", filesystem.New(filesystem.Config{
+			Root:       http.FS(NewFilteredFS()),
+			PathPrefix: "",
+			Browse:     true,
+		}))
+		req := httptest.NewRequest(http.MethodGet, "/static/pages/checkin/checkin.js", nil)
+		resp, err := app.Test(req)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+	})
 }

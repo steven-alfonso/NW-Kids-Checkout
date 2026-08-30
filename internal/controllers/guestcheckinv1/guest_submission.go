@@ -352,12 +352,21 @@ func (controller *Controller) CreateSubmissionCheckins(c *fiber.Ctx) error {
 func buildFilter(c *fiber.Ctx) (guestsubmission.Filter, error) {
 	filter := guestsubmission.Filter{}
 	if status := c.Query("status"); status != "" {
-		switch status {
-		case guestsubmission.StatusPending, guestsubmission.StatusApproved, guestsubmission.StatusRejected, guestsubmission.StatusEntered:
-		default:
-			return guestsubmission.Filter{}, fiber.NewError(fiber.StatusBadRequest, "invalid status")
+		parts := strings.Split(status, ",")
+		normalized := make([]string, 0, len(parts))
+		for _, p := range parts {
+			p = strings.TrimSpace(p)
+			if p == "" {
+				return guestsubmission.Filter{}, fiber.NewError(fiber.StatusBadRequest, "invalid status")
+			}
+			switch p {
+			case guestsubmission.StatusPending, guestsubmission.StatusApproved, guestsubmission.StatusRejected, guestsubmission.StatusEntered:
+			default:
+				return guestsubmission.Filter{}, fiber.NewError(fiber.StatusBadRequest, "invalid status")
+			}
+			normalized = append(normalized, p)
 		}
-		filter.Status = status
+		filter.Status = strings.Join(normalized, ",")
 	}
 	if id := c.Query("public_id"); id != "" {
 		filter.PublicID = id

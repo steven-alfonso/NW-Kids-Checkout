@@ -138,24 +138,24 @@ These were explicitly verified during review; don't spend cycles here:
   - Fix: restore the old tests (retrieve from `main`: `git show main:internal/web/static/pages/manual-checkins/manual-checkins.test.js`) and merge them alongside the new approvals tests; they should pass as-is since the covered functions are still top-level declarations.
   - Verify: `npx vitest run internal/web/static/pages/manual-checkins/manual-checkins.test.js`.
 
-- [ ] **12. [medium] Merged "needs-entry" bucket breaks newest-first ordering and page-size invariants**
+- [x] **12. [medium] Merged "needs-entry" bucket breaks newest-first ordering and page-size invariants**
   - Where: `internal/web/static/pages/admin-guest-entries/admin-guest-entries.js:258-268` — fetches `pending&page=N` and `approved&page=N` independently and sorts only within the merged page; ordering holds per-status only and pages render 10-20 cards. Fold-in (grill): `totalPages` is `Math.max` of per-status page counts while `total` sums both statuses — 27 entries renders "Page 1 of 2" (no items are lost, but the pagination math is semantically inconsistent).
   - Fix options: (a) backend support for comma-separated `status=pending,approved` in `AdminListSubmissions`' filter so one paginated query serves the bucket. Corrected (grill): there is no `status` column and no `Eq`→`IN` — status is derived from timestamp nullity via `statusPredicate` (`guestsubmission.go:98-122`), so the change is a `squirrel.Or` of per-status predicates in `applyFilter` (shared by `ListSubmissions` and `CountSubmissions`, so counts stay consistent) plus Filter/controller validation/tests; then simplify the JS merge to a plain paginated list (which also fixes the `totalPages` math); or (b) document the limitation in the page (comment-free: a visible "newest first within each status" caption) and cap the merge. Prefer (a).
   - Verify: `go test ./internal/controllers/guestcheckinv1 ./internal/repo/guestsubmission`; `npx vitest run internal/web/static/pages/admin-guest-entries/admin-guest-entries.test.js`.
 
-- [ ] **13. [medium] Clipboard silently no-ops without a secure context (HTTP LAN)**
+- [x] **13. [medium] Clipboard silently no-ops without a secure context (HTTP LAN)**
   - Where: `internal/web/static/pages/admin-guest-entries/admin-guest-entries.js:166-171` (`copyValue`), `:305-315` (tooltip still says "Copied"). Repo has no TLS config; `navigator.clipboard` requires HTTPS/localhost.
   - Fix: if `!navigator.clipboard`, fall back to the hidden-textarea + `execCommand('copy')` pattern, else show an explicit "copy unavailable" state; only show "Copied" on actual success. Fold-in (grill): also handle `writeText` rejection — today a present-but-failing clipboard API skips the tooltip and leaves an unhandled promise rejection.
   - Verify: new vitest cases for both paths; `npx vitest run internal/web/static/pages/admin-guest-entries/admin-guest-entries.test.js`.
 
-- [ ] **14. [medium] `/static` serves raw `pages/*.html` to anonymous clients, contradicting menu.go's claim**
+- [x] **14. [medium] `/static` serves raw `pages/*.html` to anonymous clients, contradicting menu.go's claim**
   - Where: `internal/web/menu/menu.go:1-5` (package doc claims gated destinations "are never shipped to anonymous clients"), `internal/web/static/static.go:73-81` (`filteredFS` allows `.html`), `internal/controllers/server.go:171-175` (unauthenticated `/static`). Anyone can fetch `/static/pages/admin/index.html` and the new `/static/pages/admin-guest-entries/index.html` (route/UI disclosure only — APIs stay gated).
   - Fix: remove `.html` from the allowed extensions in `filteredFS`, or exclude the `pages/` prefix entirely (page shells are served by handlers with the menu placeholder substituted). Precondition verified (grill): no runtime JS references `/static/pages` (only test files resolve script paths via Node), and page handlers serve HTML via `EmbeddedFS` directly — the restriction is safe.
   - Verify: `go test ./internal/web/... ./internal/controllers`; add a test asserting `GET /static/pages/admin/index.html` 404s.
 
 ## Medium — repo interface
 
-- [ ] **15. [low — re-graded by grill; latent-only] `UpdateSubmissionStatus` can approve without creating manual checkins (latent bypass)**
+- [x] **15. [low — re-graded by grill; latent-only] `UpdateSubmissionStatus` can approve without creating manual checkins (latent bypass)**
   - Where: `internal/repo/guestsubmission/guestsubmission.go:339-347` — accepts `StatusApproved` and only flips `approved_at`; the controller routes `approved` → `ApproveSubmission` correctly today (verified at `guest_submission.go:291-295`), and the method is itself race-safe (guarded UPDATE + rows-affected check), so this is interface hygiene, not a live bug. The interface still permits the bypass and tests use it.
   - Fix: in `UpdateSubmissionStatus`, reject `StatusApproved` with a wrapped error pointing callers to `ApproveSubmission` (sentinel or `fmt.Errorf`; follow existing error conventions in the package). Corrected (grill): `UpdateSubmissionStatus(..., StatusApproved, ...)` is used at `guestsubmission_test.go:109, :291, :355, :407, :417` — update all five to `ApproveSubmission`, not just `:109`.
   - Verify: `go test ./internal/repo/guestsubmission ./internal/controllers/guestcheckinv1`.

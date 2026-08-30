@@ -77,10 +77,10 @@ describe('admin-guest-entries', () => {
             const window = loadWindow();
             await flush();
             const urls = window._fetchCalls.map(c => c.url);
-            expect(urls).toContain('/v1/admin/guest-submissions?status=pending&page=1');
-            expect(urls).toContain('/v1/admin/guest-submissions?status=approved&page=1');
+            expect(urls).toContain('/v1/admin/guest-submissions?status=pending,approved&page=1');
             expect(urls).not.toContain('/v1/admin/guest-submissions?status=entered');
             expect(urls).not.toContain('/v1/admin/guest-submissions?status=rejected');
+            expect(urls.filter(u => u.includes('pending,approved')).length).toBe(1);
         });
 
         it('fetches the entered tab only after it is clicked', async () => {
@@ -130,6 +130,7 @@ describe('admin-guest-entries', () => {
         it('renders entries into the active tab view', async () => {
             const window = loadWindow({
                 respond: (url) => {
+                    if (url.includes('pending,approved') || url.includes('pending%2Capproved')) return {ok: true, status: 200, json: async () => pageOf([entry('p-1', 'pending'), entry('a-1', 'approved')])};
                     if (url.includes('status=pending')) return {ok: true, status: 200, json: async () => pageOf([entry('p-1', 'pending')])};
                     return {ok: true, status: 200, json: async () => pageOf([entry('a-1', 'approved')])};
                 }
@@ -287,9 +288,12 @@ describe('admin-guest-entries', () => {
 
         it('renders page summary and navigation in both top and bottom bars', async () => {
             const window = loadWindow({
-                respond: (url) => url.includes('status=pending')
-                    ? {ok: true, status: 200, json: async () => pageOf([entry('p-1', 'pending'), entry('p-2', 'pending')], {total: 15, total_pages: 2})}
-                    : {ok: true, status: 200, json: async () => pageOf([], {total: 12, total_pages: 2})}
+                respond: (url) => {
+                    if (url.includes('pending,approved') || url.includes('pending%2Capproved')) return {ok: true, status: 200, json: async () => pageOf([entry('p-1', 'pending'), entry('p-2', 'pending')], {total: 27, total_pages: 2})};
+                    return url.includes('status=pending')
+                        ? {ok: true, status: 200, json: async () => pageOf([entry('p-1', 'pending'), entry('p-2', 'pending')], {total: 15, total_pages: 2})}
+                        : {ok: true, status: 200, json: async () => pageOf([], {total: 12, total_pages: 2})};
+                }
             });
             await window.loadEntries('needs-entry');
 
@@ -328,6 +332,22 @@ describe('admin-guest-entries', () => {
         it('sorts merged pending + approved entries newest first', async () => {
             const window = loadWindow({
                 respond: (url) => {
+                    if (url.includes('pending,approved') || url.includes('pending%2Capproved')) {
+                        return {ok: true, status: 200, json: async () => pageOf([
+                            entry('old-pending', 'pending', {
+                                created_at: '2026-01-01T10:00:00Z',
+                                parent: {first_name: 'Old', last_name: 'Pending', phone: '1', email: 'a@b.com'}
+                            }),
+                            entry('new-approved', 'approved', {
+                                created_at: '2026-02-01T10:00:00Z',
+                                parent: {first_name: 'New', last_name: 'Approved', phone: '1', email: 'a@b.com'}
+                            }),
+                            entry('no-date-approved', 'approved', {
+                                created_at: null,
+                                parent: {first_name: 'No', last_name: 'Date', phone: '1', email: 'a@b.com'}
+                            })
+                        ])};
+                    }
                     if (url.includes('status=pending')) {
                         return {ok: true, status: 200, json: async () => pageOf([entry('old-pending', 'pending', {
                             created_at: '2026-01-01T10:00:00Z',

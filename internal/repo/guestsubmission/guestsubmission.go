@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"kids-checkin/internal/repo"
@@ -124,11 +125,31 @@ func statusPredicate(status string) (squirrel.Sqlizer, error) {
 
 func applyFilter(builder squirrel.SelectBuilder, filter Filter) (squirrel.SelectBuilder, error) {
 	if filter.Status != "" {
-		statusFilter, err := statusPredicate(filter.Status)
-		if err != nil {
-			return builder, err
+		if strings.Contains(filter.Status, ",") {
+			parts := strings.Split(filter.Status, ",")
+			var ors squirrel.Or
+			for _, p := range parts {
+				p = strings.TrimSpace(p)
+				if p == "" {
+					continue
+				}
+				pred, err := statusPredicate(p)
+				if err != nil {
+					return builder, err
+				}
+				ors = append(ors, pred)
+			}
+			if len(ors) == 0 {
+				return builder, fmt.Errorf("unknown status: %s", filter.Status)
+			}
+			builder = builder.Where(ors)
+		} else {
+			statusFilter, err := statusPredicate(strings.TrimSpace(filter.Status))
+			if err != nil {
+				return builder, err
+			}
+			builder = builder.Where(statusFilter)
 		}
-		builder = builder.Where(statusFilter)
 	}
 	if filter.PublicID != "" {
 		builder = builder.Where(squirrel.Eq{"public_id": filter.PublicID})
@@ -336,17 +357,12 @@ func (s *sqliteRepo) CountSubmissions(ctx context.Context, filter Filter) (int, 
 }
 
 func (s *sqliteRepo) UpdateSubmissionStatus(ctx context.Context, publicID string, status string, now time.Time) error {
+	if status == StatusApproved {
+		return fmt.Errorf("%w: use ApproveSubmission to approve guest submissions", ErrInvalidStatus)
+	}
 	builder := squirrel.Update("guest_submissions").Where(squirrel.Eq{"public_id": publicID})
 
 	switch status {
-	case StatusApproved:
-		builder = builder.
-			Set("approved_at", now.UTC()).Set("rejected_at", nil).Set("entered_at", nil).
-			Where(squirrel.And{
-				squirrel.Eq{"approved_at": nil},
-				squirrel.Eq{"rejected_at": nil},
-				squirrel.Eq{"entered_at": nil},
-			})
 	case StatusRejected:
 		builder = builder.
 			Set("rejected_at", now.UTC()).Set("approved_at", nil).Set("entered_at", nil).

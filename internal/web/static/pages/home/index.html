@@ -48,8 +48,8 @@
     
     <!-- Main Content -->
     <div class="relative z-10 min-h-screen flex flex-col">
-        <div class="absolute top-6 right-6">
-            <div class="relative">
+        <div class="absolute top-6 right-6 z-50">
+            <div class="relative z-50">
                 <button id="menu-button" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="kebab-menu" class="inline-flex h-11 w-11 cursor-pointer items-center justify-center rounded-full border border-slate-200 bg-white text-slate-700 shadow-sm transition hover:border-slate-300 hover:text-slate-900">
                     <span class="sr-only">Open menu</span>
                     <svg aria-hidden="true" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
@@ -58,7 +58,7 @@
                         <rect x="3" y="14" width="14" height="2" rx="1"></rect>
                     </svg>
                 </button>
-                <div id="kebab-menu" class="absolute right-0 mt-2 hidden w-56 rounded-xl border border-slate-200 bg-white py-2 text-sm text-slate-700 shadow-lg">
+                <div id="kebab-menu" class="absolute right-0 mt-2 hidden w-56 rounded-md border border-slate-200 bg-white py-2 text-sm text-slate-700 shadow-lg z-50">
                     <!-- kebab-menu-links -->
                 </div>
             </div>

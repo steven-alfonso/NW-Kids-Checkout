@@ -95,17 +95,21 @@ function chip(value, label) {
 
 let activeTooltip = null;
 
-function showCopiedTooltip(field) {
+function showTooltip(field, text) {
     if (activeTooltip) activeTooltip.remove();
     const tip = document.createElement('span');
     tip.className = 'copy-tooltip';
-    tip.textContent = 'Copied';
+    tip.textContent = text;
     field.appendChild(tip);
     activeTooltip = tip;
     setTimeout(() => {
         if (activeTooltip === tip) activeTooltip = null;
         tip.remove();
     }, 1000);
+}
+
+function showCopiedTooltip(field) {
+    showTooltip(field, 'Copied');
 }
 
 function renderEntry(container, entry) {
@@ -174,10 +178,28 @@ function renderEntry(container, entry) {
 }
 
 async function copyValue(value) {
+    const text = value ?? '';
     if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(value ?? '');
+        try {
+            await navigator.clipboard.writeText(text);
+            return true;
+        } catch {
+        }
     }
-    return value;
+    try {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.setAttribute('readonly', '');
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        const copied = document.execCommand ? document.execCommand('copy') : false;
+        ta.remove();
+        return !!copied;
+    } catch {
+        return false;
+    }
 }
 
 function normalizePage(data) {
@@ -265,14 +287,13 @@ async function loadEntries(bucket, attempt = 0) {
     container.innerHTML = '<p class="text-sm text-slate-500">Loading...</p>';
     const page = pageState[bucket] || 1;
     try {
-        const fetches = BUCKET_FETCH_STATUSES[bucket].map(status =>
-            fetchJson(`/v1/admin/guest-submissions?status=${status}&page=${page}`)
-        );
-        const results = await Promise.all(fetches);
-        const pages = results.map(normalizePage);
-        const entries = pages.flatMap(p => p.items).sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
-        const total = pages.reduce((sum, p) => sum + p.total, 0);
-        const totalPages = Math.max(0, ...pages.map(p => p.totalPages));
+        const statuses = BUCKET_FETCH_STATUSES[bucket] || [];
+        const statusParam = statuses.join(',');
+        const data = await fetchJson(`/v1/admin/guest-submissions?status=${statusParam}&page=${page}`);
+        const normalized = normalizePage(data);
+        const entries = [...normalized.items].sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
+        const total = normalized.total;
+        const totalPages = normalized.totalPages;
         if (entries.length === 0 && page > 1 && attempt < 1) {
             pageState[bucket] = page - 1;
             return loadEntries(bucket, attempt + 1);
@@ -320,10 +341,14 @@ if (entriesContainer) {
         if (!(target instanceof HTMLElement)) return;
         if (target.dataset.copy !== undefined) {
             const field = target.closest('.relative') || target;
-            await copyValue(target.dataset.copy);
-            showCopiedTooltip(field);
-            target.classList.add('ring-2', 'ring-emerald-400');
-            setTimeout(() => target.classList.remove('ring-2', 'ring-emerald-400'), 300);
+            const ok = await copyValue(target.dataset.copy);
+            if (ok) {
+                showTooltip(field, 'Copied');
+                target.classList.add('ring-2', 'ring-emerald-400');
+                setTimeout(() => target.classList.remove('ring-2', 'ring-emerald-400'), 300);
+            } else {
+                showTooltip(field, 'Copy unavailable');
+            }
             return;
         }
         if (target.dataset.gotoPage) {
@@ -363,6 +388,7 @@ STATUS_ORDER.forEach(status => {
 
 window.renderEntry = renderEntry;
 window.copyValue = copyValue;
+window.showTooltip = showTooltip;
 window.showCopiedTooltip = showCopiedTooltip;
 window.loadEntries = loadEntries;
 window.setActiveTab = setActiveTab;

@@ -106,7 +106,7 @@ func Test_sqliteRepo_ListSubmissions(t *testing.T) {
 		require.Len(t, res, 2)
 
 		now := time.Now().UTC()
-		require.NoError(t, s.UpdateSubmissionStatus(t.Context(), a.PublicID, StatusApproved, now))
+		require.NoError(t, s.ApproveSubmission(t.Context(), a.PublicID, now))
 		require.NoError(t, s.UpdateSubmissionStatus(t.Context(), b.PublicID, StatusEntered, now))
 
 		approved, err := s.ListSubmissions(t.Context(), Filter{Status: StatusApproved})
@@ -288,7 +288,7 @@ func Test_sqliteRepo_CountSubmissions(t *testing.T) {
 		res, err := s.ListSubmissions(t.Context(), Filter{Status: StatusPending, Limit: 1})
 		require.NoError(t, err)
 		require.Len(t, res, 1)
-		require.NoError(t, s.UpdateSubmissionStatus(t.Context(), res[0].PublicID, StatusApproved, time.Now().UTC()))
+		require.NoError(t, s.ApproveSubmission(t.Context(), res[0].PublicID, time.Now().UTC()))
 
 		pending, err := s.CountSubmissions(t.Context(), Filter{Status: StatusPending})
 		require.NoError(t, err)
@@ -350,10 +350,13 @@ func Test_sqliteRepo_UpdateSubmissionStatus(t *testing.T) {
 	}, []Child{{FirstName: "Timmy", LastName: "Smith", DOB: "2020-01-01", Grade: "k"}})
 	require.NoError(t, err)
 
-	t.Run("approve sets status and timestamp", func(t *testing.T) {
+	t.Run("approve via UpdateSubmissionStatus is rejected", func(t *testing.T) {
 		now := time.Now().UTC()
 		err := s.UpdateSubmissionStatus(t.Context(), sub.PublicID, StatusApproved, now)
-		require.NoError(t, err)
+		require.Error(t, err)
+		require.ErrorIs(t, err, ErrInvalidStatus)
+
+		require.NoError(t, s.ApproveSubmission(t.Context(), sub.PublicID, now))
 
 		res, err := s.ListSubmissions(t.Context(), Filter{PublicID: sub.PublicID})
 		require.NoError(t, err)
@@ -404,7 +407,7 @@ func Test_sqliteRepo_UpdateSubmissionStatus(t *testing.T) {
 		err = s.UpdateSubmissionStatus(t.Context(), raceSub.PublicID, StatusRejected, now)
 		require.NoError(t, err)
 
-		err = s.UpdateSubmissionStatus(t.Context(), raceSub.PublicID, StatusApproved, now)
+		err = s.ApproveSubmission(t.Context(), raceSub.PublicID, now)
 		require.ErrorIs(t, err, ErrConflict)
 
 		res, err := s.ListSubmissions(t.Context(), Filter{PublicID: raceSub.PublicID})
@@ -414,7 +417,12 @@ func Test_sqliteRepo_UpdateSubmissionStatus(t *testing.T) {
 	})
 
 	t.Run("unknown public id returns repo.ErrNotFound", func(t *testing.T) {
-		err := s.UpdateSubmissionStatus(t.Context(), "does-not-exist", StatusApproved, time.Now().UTC())
+		err := s.ApproveSubmission(t.Context(), "does-not-exist", time.Now().UTC())
+		require.ErrorIs(t, err, repo.ErrNotFound)
+	})
+
+	t.Run("unknown public id via UpdateSubmissionStatus returns repo.ErrNotFound", func(t *testing.T) {
+		err := s.UpdateSubmissionStatus(t.Context(), "does-not-exist", StatusRejected, time.Now().UTC())
 		require.ErrorIs(t, err, repo.ErrNotFound)
 	})
 

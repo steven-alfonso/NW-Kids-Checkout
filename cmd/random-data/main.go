@@ -292,16 +292,12 @@ func seedGuestSubmissions(ctx context.Context, database *sql.DB, count int) erro
 			return fmt.Errorf("creating guest submission %d: %w", i, err)
 		}
 
-		// Distribute statuses: keep variety. Use UpdateSubmissionStatus for
-		// approved/entered so standalone manual_checkins count stays exactly 20
-		// (ApproveSubmission auto-creates linked manual_checkins which would
-		// push the total above 20). UpdateSubmissionStatus keeps counts independent.
 		r := rand.Float32()
 		switch {
 		case r < 0.4:
 			// leave pending
 		case r < 0.6:
-			if err := repo.UpdateSubmissionStatus(ctx, sub.PublicID, guestsubmission.StatusApproved, time.Now().UTC()); err != nil {
+			if err := repo.ApproveSubmission(ctx, sub.PublicID, time.Now().UTC()); err != nil {
 				slog.Warn("failed to approve guest submission", slog.String("public_id", sub.PublicID), slog.String("error", err.Error()))
 			}
 		case r < 0.8:
