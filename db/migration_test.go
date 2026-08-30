@@ -30,7 +30,7 @@ func applyMigrationsUpTo(t *testing.T, db *sql.DB, exclude string) {
 }
 
 func TestMigration_GuestFamilyModel_RoundTrip(t *testing.T) {
-	db, err := sql.Open("sqlite3", "file::memory:?cache=shared")
+	db, err := sql.Open("sqlite3", "file::memory:?cache=shared&_foreign_keys=on")
 	require.NoError(t, err)
 	defer db.Close()
 
@@ -68,6 +68,31 @@ func TestMigration_GuestFamilyModel_RoundTrip(t *testing.T) {
 	_, err = db.Exec("SELECT 1 FROM guest_submissions LIMIT 0")
 	require.NoError(t, err, "guest_submissions table should exist")
 
+	var fkOn int
+	err = db.QueryRow("PRAGMA foreign_keys").Scan(&fkOn)
+	require.NoError(t, err)
+	assert.Equal(t, 1, fkOn, "foreign_keys should be enabled via DSN")
+
+	// Verify indexes created after up and CHECK enforced.
+	_, err = db.Exec(`INSERT INTO manual_checkins (first_name, last_name) VALUES ('', 'Doe')`)
+	assert.Error(t, err, "blank names should be rejected after up migration")
+	var upIdxCount int
+	err = db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_manual_checked_out_at'").Scan(&upIdxCount)
+	require.NoError(t, err)
+	assert.Equal(t, 1, upIdxCount, "idx_manual_checked_out_at should exist after up")
+	err = db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_manual_checkins_child_id'").Scan(&upIdxCount)
+	require.NoError(t, err)
+	assert.Equal(t, 1, upIdxCount, "idx_manual_checkins_child_id should exist after up")
+	err = db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_guest_submissions_created_at'").Scan(&upIdxCount)
+	require.NoError(t, err)
+	assert.Equal(t, 1, upIdxCount, "idx_guest_submissions_created_at should exist after up")
+	err = db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_guest_submissions_parent_id'").Scan(&upIdxCount)
+	require.NoError(t, err)
+	assert.Equal(t, 1, upIdxCount, "idx_guest_submissions_parent_id should exist after up")
+	err = db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_children_parent_id'").Scan(&upIdxCount)
+	require.NoError(t, err)
+	assert.Equal(t, 1, upIdxCount, "idx_children_parent_id should exist after up")
+
 	downSQL, err := os.ReadFile("migrations/20260825030013_add_guest_family_model.down.sqlite")
 	require.NoError(t, err)
 	_, err = db.Exec(string(downSQL))
@@ -86,10 +111,38 @@ func TestMigration_GuestFamilyModel_RoundTrip(t *testing.T) {
 	assert.Error(t, err, "children table should not exist after down migration")
 	_, err = db.Exec("SELECT 1 FROM guest_submissions LIMIT 0")
 	assert.Error(t, err, "guest_submissions table should not exist after down migration")
+
+	// Verify CHECK constraint removed after down: blank-name inserts should succeed.
+	_, err = db.Exec(`INSERT INTO manual_checkins (first_name, last_name) VALUES ('', '')`)
+	require.NoError(t, err, "CHECK should be removed after down; blank names should be allowed")
+	_, err = db.Exec(`INSERT INTO manual_checkins (first_name, last_name) VALUES ('   ', '   ')`)
+	require.NoError(t, err, "whitespace-only names should be allowed after down")
+
+	// Verify index recreation/drop via sqlite_master.
+	var idxCount int
+	err = db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_manual_checked_out_at'").Scan(&idxCount)
+	require.NoError(t, err)
+	assert.Equal(t, 1, idxCount, "idx_manual_checked_out_at should be recreated after down")
+
+	err = db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_manual_checkins_child_id'").Scan(&idxCount)
+	require.NoError(t, err)
+	assert.Equal(t, 0, idxCount, "idx_manual_checkins_child_id should not exist after down")
+
+	err = db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_guest_submissions_created_at'").Scan(&idxCount)
+	require.NoError(t, err)
+	assert.Equal(t, 0, idxCount, "idx_guest_submissions_created_at should not exist after down")
+
+	err = db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_guest_submissions_parent_id'").Scan(&idxCount)
+	require.NoError(t, err)
+	assert.Equal(t, 0, idxCount, "idx_guest_submissions_parent_id should not exist after down")
+
+	err = db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_children_parent_id'").Scan(&idxCount)
+	require.NoError(t, err)
+	assert.Equal(t, 0, idxCount, "idx_children_parent_id should not exist after down")
 }
 
 func TestMigration_GuestFamilyModel_NoRedundantAlterTable(t *testing.T) {
-	db, err := sql.Open("sqlite3", "file::memory:?cache=shared")
+	db, err := sql.Open("sqlite3", "file::memory:?cache=shared&_foreign_keys=on")
 	require.NoError(t, err)
 	defer db.Close()
 
@@ -121,7 +174,7 @@ func TestMigration_GuestFamilyModel_NoRedundantAlterTable(t *testing.T) {
 }
 
 func TestMigration_GuestFamilyModel_BlankNameBackfill(t *testing.T) {
-	db, err := sql.Open("sqlite3", "file::memory:?cache=shared")
+	db, err := sql.Open("sqlite3", "file::memory:?cache=shared&_foreign_keys=on")
 	require.NoError(t, err)
 	defer db.Close()
 

@@ -199,4 +199,36 @@ describe('admin/metrics', () => {
         expect(calls[2]).toContain('/v1/admin/metrics/fetch-latency?days=14');
         expect(window.document.getElementById('view-guest').classList.contains('hidden')).toBe(true);
     });
+
+    it('does not show cryptic JSON error when metrics fetch is HTML login redirect', async () => {
+        const fetchImpl = async () => ({ ok: true, redirected: true, url: 'http://localhost/login', status: 200, headers: { get: () => 'text/html' }, json: async () => { throw new Error('Unexpected token <'); } });
+        const window = loadWindow(fetchImpl);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        const errEl = window.document.getElementById('metrics-error');
+        expect(errEl.textContent).not.toContain('Unexpected token');
+        expect(errEl.textContent).not.toContain('<');
+    });
+
+    it('loadMetrics throws SessionExpiredError on HTML response', async () => {
+        const fetchImpl = async () => ({ ok: false, redirected: false, url: 'http://localhost/v1/admin/metrics?days=14', status: 200, headers: { get: () => 'text/html; charset=utf-8' }, json: async () => { throw new Error('no json'); } });
+        const window = loadWindow(fetchImpl);
+        await expect(window.__test.loadMetrics(14)).rejects.toThrow('Session expired');
+        try {
+            await window.__test.loadMetrics(14);
+        } catch (e) {
+            expect(e.name).toBe('SessionExpiredError');
+        }
+    });
+
+    it('loadGuestMetrics throws SessionExpiredError on redirected login', async () => {
+        const fetchImpl = async () => ({ ok: true, redirected: true, url: 'http://localhost/login', status: 200, headers: { get: () => 'text/html' }, json: async () => ({}) });
+        const window = loadWindow(fetchImpl);
+        await expect(window.__test.loadGuestMetrics(14)).rejects.toThrow('Session expired');
+    });
+
+    it('loadFetchLatency throws SessionExpiredError on HTML content-type', async () => {
+        const fetchImpl = async () => ({ ok: true, redirected: false, url: 'http://localhost/v1/admin/metrics/fetch-latency?days=14', status: 200, headers: { get: () => 'text/html' }, json: async () => ({}) });
+        const window = loadWindow(fetchImpl);
+        await expect(window.__test.loadFetchLatency(14)).rejects.toThrow('Session expired');
+    });
 });

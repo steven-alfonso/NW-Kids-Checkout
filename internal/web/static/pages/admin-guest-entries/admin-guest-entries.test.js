@@ -488,5 +488,28 @@ describe('admin-guest-entries', () => {
             expect(statusEl.textContent).toContain('invalid status transition');
             expect(statusEl.textContent).not.toContain('{"sorry"');
         });
+
+        it('redirects to login when loadEntries session expires (HTML response)', async () => {
+            const window = loadWindow({
+                respond: () => ({ok: true, redirected: true, url: 'http://localhost/login', status: 200, headers: {get: () => 'text/html'}})
+            });
+            await window.loadEntries('needs-entry');
+            await flush();
+            const statusEl = window.document.getElementById('page-status');
+            expect(statusEl.textContent).not.toContain('Unexpected token');
+            expect(statusEl.textContent).not.toContain('<');
+            expect(statusEl.classList.contains('hidden')).toBe(true);
+        });
+
+        it('redirects to login when loadEntries returns HTML content-type', async () => {
+            const window = loadWindow({
+                respond: () => ({ok: false, redirected: false, url: 'http://localhost/v1/admin/guest-submissions?status=pending,approved&page=1', status: 200, headers: {get: () => 'text/html; charset=utf-8'}, json: async () => { throw new Error('should not parse'); }})
+            });
+            await window.loadEntries('entered');
+            await flush();
+            const statusEl = window.document.getElementById('page-status');
+            expect(statusEl.textContent).not.toContain('Unexpected token');
+            expect(statusEl.classList.contains('hidden')).toBe(true);
+        });
     });
 });

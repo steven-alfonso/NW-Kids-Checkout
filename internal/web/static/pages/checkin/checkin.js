@@ -22,10 +22,10 @@ function childRowTemplate() {
     row.innerHTML = `
         <div class="kiosk-field grid gap-3 sm:grid-cols-2">
             <label class="block text-sm font-semibold text-gray-700">First name
-                <input class="child-first-name ${inputClass}" name="child_first_name" type="text" autocomplete="off" required>
+                <input class="child-first-name ${inputClass}" name="child_first_name" type="text" autocomplete="off" required maxlength="100">
             </label>
             <label class="block text-sm font-semibold text-gray-700">Last name
-                <input class="child-last-name ${inputClass}" name="child_last_name" type="text" autocomplete="off" required>
+                <input class="child-last-name ${inputClass}" name="child_last_name" type="text" autocomplete="off" required maxlength="100">
             </label>
             <label class="block text-sm font-semibold text-gray-700">Birthdate
                 <input class="child-dob ${inputClass}" name="child_dob" type="date" autocomplete="off" max="${new Date().toLocaleDateString('en-CA')}" required>
@@ -191,6 +191,7 @@ function validateForm() {
         return false;
     }
 
+    const today = new Date().toLocaleDateString('en-CA');
     for (const row of childRows) {
         const firstName = row.querySelector('.child-first-name');
         const lastName = row.querySelector('.child-last-name');
@@ -198,6 +199,7 @@ function validateForm() {
         firstName?.setCustomValidity('');
         lastName?.setCustomValidity('');
         dob?.setCustomValidity('');
+        if (dob) dob.max = today;
         if (!firstName?.value.trim()) {
             firstName?.setCustomValidity('First name is required');
             setKioskError('');
@@ -209,7 +211,6 @@ function validateForm() {
             return false;
         }
         if (dob?.value) {
-            const today = new Date().toLocaleDateString('en-CA');
             if (dob.value > today) {
                 dob.setCustomValidity('Birthdate cannot be in the future');
                 setKioskError('');

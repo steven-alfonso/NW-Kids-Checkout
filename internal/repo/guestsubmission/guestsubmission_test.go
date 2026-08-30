@@ -660,3 +660,42 @@ func Test_sqliteRepo_ListSubmissions_WithoutManualCheckins_PartialAfterCleanup(t
 		assert.NotEqual(t, sub.PublicID, r.PublicID, "family should remain hidden after backfill")
 	}
 }
+
+func Test_sqliteRepo_CreateSubmission_ErrorBranches(t *testing.T) {
+	wipeAll(t)
+	s := NewRepo(testDB)
+
+	t.Run("zero children returns error", func(t *testing.T) {
+		_, err := s.CreateSubmission(t.Context(), Parent{
+			FirstName: "No", LastName: "Kids", Phone: "555-1234", Email: "nokids@test.com",
+		}, []Child{})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "at least one child")
+
+		var count int
+		require.NoError(t, testDB.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM parents").Scan(&count))
+		assert.Equal(t, 0, count)
+		var subCount int
+		require.NoError(t, testDB.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM guest_submissions").Scan(&subCount))
+		assert.Equal(t, 0, subCount)
+	})
+
+	t.Run("empty phone and email rolls back no orphan parent", func(t *testing.T) {
+		wipeAll(t)
+		_, err := s.CreateSubmission(t.Context(), Parent{
+			FirstName: "No", LastName: "Contact", Phone: "", Email: "",
+		}, []Child{{FirstName: "Kid", LastName: "Contact", DOB: "2020-01-01", Grade: "k"}})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "inserting parent")
+
+		var parentCount int
+		require.NoError(t, testDB.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM parents").Scan(&parentCount))
+		assert.Equal(t, 0, parentCount, "no orphan parent row should persist after CHECK failure")
+		var subCount int
+		require.NoError(t, testDB.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM guest_submissions").Scan(&subCount))
+		assert.Equal(t, 0, subCount)
+		var childCount int
+		require.NoError(t, testDB.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM children").Scan(&childCount))
+		assert.Equal(t, 0, childCount)
+	})
+}

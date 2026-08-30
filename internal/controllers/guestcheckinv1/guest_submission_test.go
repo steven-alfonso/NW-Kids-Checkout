@@ -59,7 +59,7 @@ func TestController_CreateSubmission(t *testing.T) {
 
 	payload := map[string]any{
 		"parent":   map[string]any{"first_name": "John", "last_name": "Smith", "phone": "555-1234", "email": "john@example.com"},
-		"children": []map[string]any{{"first_name": "Timmy", "last_name": "Smith", "dob": "2020-01-01", "grade": "1st Grade"}},
+		"children": []map[string]any{{"first_name": "Timmy", "last_name": "Smith", "dob": "2020-01-01", "grade": "1st"}},
 	}
 	body, _ := json.Marshal(payload)
 
@@ -74,7 +74,7 @@ func TestController_CreateSubmission(t *testing.T) {
 	assert.Equal(t, "pending", created.Status)
 	assert.Equal(t, "john@example.com", created.Parent.Email)
 	assert.Len(t, created.Children, 1)
-	assert.Equal(t, "1st Grade", created.Children[0].Grade)
+	assert.Equal(t, "1st", created.Children[0].Grade)
 
 	var parentCount int
 	require.NoError(t, testDB.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM parents").Scan(&parentCount))
@@ -87,7 +87,7 @@ func TestController_CreateSubmissionContentType(t *testing.T) {
 
 	payload := map[string]any{
 		"parent":   map[string]any{"first_name": "John", "last_name": "Smith", "phone": "555-1234", "email": "john@example.com"},
-		"children": []map[string]any{{"first_name": "Timmy", "last_name": "Smith", "dob": "2020-01-01", "grade": "1st Grade"}},
+		"children": []map[string]any{{"first_name": "Timmy", "last_name": "Smith", "dob": "2020-01-01", "grade": "1st"}},
 	}
 	body, _ := json.Marshal(payload)
 
@@ -129,7 +129,7 @@ func TestController_CreateSubmissionRequiresPhoneOrEmail(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			payload := map[string]any{
 				"parent":   map[string]any{"first_name": "A", "last_name": "B", "phone": tt.phone, "email": tt.email},
-				"children": []map[string]any{{"first_name": "C", "last_name": "D", "dob": "2020-01-01", "grade": "k"}},
+				"children": []map[string]any{{"first_name": "C", "last_name": "D", "dob": "2020-01-01", "grade": "1st"}},
 			}
 			body, _ := json.Marshal(payload)
 			req := httptest.NewRequest("POST", "/v1/checkins/guest-submissions", bytes.NewReader(body))
@@ -159,30 +159,30 @@ func TestController_CreateSubmissionValidation(t *testing.T) {
 		}},
 		{"missing phone and email", map[string]interface{}{
 			"parent":   map[string]interface{}{"first_name": "A", "last_name": "B", "phone": "", "email": ""},
-			"children": []map[string]interface{}{{"first_name": "C", "last_name": "D", "dob": "2020-01-01", "grade": "k"}},
+			"children": []map[string]interface{}{{"first_name": "C", "last_name": "D", "dob": "2020-01-01", "grade": "1st"}},
 		}},
 		{"future dob", map[string]interface{}{
 			"parent":   map[string]interface{}{"first_name": "A", "last_name": "B", "phone": "1234567", "email": "a@b.com"},
-			"children": []map[string]interface{}{{"first_name": "C", "last_name": "D", "dob": "2999-01-01", "grade": "k"}},
+			"children": []map[string]interface{}{{"first_name": "C", "last_name": "D", "dob": "2999-01-01", "grade": "1st"}},
 		}},
 		{"bad phone", map[string]interface{}{
 			"parent":   map[string]interface{}{"first_name": "A", "last_name": "B", "phone": "12", "email": "a@b.com"},
-			"children": []map[string]interface{}{{"first_name": "C", "last_name": "D", "dob": "2020-01-01", "grade": "k"}},
+			"children": []map[string]interface{}{{"first_name": "C", "last_name": "D", "dob": "2020-01-01", "grade": "1st"}},
 		}},
 		{"whitespace-only parent names", map[string]interface{}{
 			"parent":   map[string]interface{}{"first_name": "   ", "last_name": "   ", "phone": "1234567", "email": "a@b.com"},
-			"children": []map[string]interface{}{{"first_name": "C", "last_name": "D", "dob": "2020-01-01", "grade": "k"}},
+			"children": []map[string]interface{}{{"first_name": "C", "last_name": "D", "dob": "2020-01-01", "grade": "1st"}},
 		}},
 		{"whitespace-only child name", map[string]interface{}{
 			"parent":   map[string]interface{}{"first_name": "A", "last_name": "B", "phone": "1234567", "email": "a@b.com"},
-			"children": []map[string]interface{}{{"first_name": " ", "last_name": "\t", "dob": "2020-01-01", "grade": "k"}},
+			"children": []map[string]interface{}{{"first_name": " ", "last_name": "\t", "dob": "2020-01-01", "grade": "1st"}},
 		}},
 		{"more than 10 children", map[string]interface{}{
 			"parent": map[string]interface{}{"first_name": "A", "last_name": "B", "phone": "1234567", "email": "a@b.com"},
 			"children": func() []map[string]interface{} {
 				children := make([]map[string]interface{}, 0, 11)
 				for i := 0; i < 11; i++ {
-					children = append(children, map[string]interface{}{"first_name": "C", "last_name": "D", "dob": "2020-01-01", "grade": "k"})
+					children = append(children, map[string]interface{}{"first_name": "C", "last_name": "D", "dob": "2020-01-01", "grade": "1st"})
 				}
 				return children
 			}(),
@@ -206,7 +206,7 @@ func TestController_ListSubmissionsNamesOnly(t *testing.T) {
 	repo := guestsubmission.NewRepo(testDB)
 	_, err := repo.CreateSubmission(t.Context(), guestsubmission.Parent{
 		FirstName: "John", LastName: "Smith", Phone: "555-1234", Email: "john@example.com",
-	}, []guestsubmission.Child{{FirstName: "Timmy", LastName: "Smith", DOB: "2020-01-01", Grade: "1st Grade"}})
+	}, []guestsubmission.Child{{FirstName: "Timmy", LastName: "Smith", DOB: "2020-01-01", Grade: "1st"}})
 	require.NoError(t, err)
 
 	req := httptest.NewRequest("GET", "/v1/checkins/guest-submissions", nil)
@@ -231,7 +231,7 @@ func TestController_AdminListFullDetail(t *testing.T) {
 	repo := guestsubmission.NewRepo(testDB)
 	_, err := repo.CreateSubmission(t.Context(), guestsubmission.Parent{
 		FirstName: "John", LastName: "Smith", Phone: "555", Email: "j@e.com",
-	}, []guestsubmission.Child{{FirstName: "Timmy", LastName: "Smith", DOB: "2020-01-01", Grade: "1st Grade"}})
+	}, []guestsubmission.Child{{FirstName: "Timmy", LastName: "Smith", DOB: "2020-01-01", Grade: "1st"}})
 	require.NoError(t, err)
 
 	req := httptest.NewRequest("GET", "/v1/admin/guest-submissions", nil)
@@ -246,7 +246,7 @@ func TestController_AdminListFullDetail(t *testing.T) {
 	assert.Equal(t, 1, page.Total)
 	assert.Equal(t, 1, page.TotalPages)
 	assert.Equal(t, "555", page.Items[0].Parent.Phone)
-	assert.Equal(t, "1st Grade", page.Items[0].Children[0].Grade)
+	assert.Equal(t, "1st", page.Items[0].Children[0].Grade)
 }
 
 func TestController_AdminListPaginated(t *testing.T) {
@@ -259,7 +259,7 @@ func TestController_AdminListPaginated(t *testing.T) {
 	for i := range 11 {
 		sub, err := repo.CreateSubmission(t.Context(), guestsubmission.Parent{
 			FirstName: "Page", LastName: fmt.Sprintf("P%d", i), Phone: "555", Email: "p@test.com",
-		}, []guestsubmission.Child{{FirstName: "Kid", LastName: fmt.Sprintf("P%d", i), DOB: "2020-01-01", Grade: "k"}})
+		}, []guestsubmission.Child{{FirstName: "Kid", LastName: fmt.Sprintf("P%d", i), DOB: "2020-01-01", Grade: "1st"}})
 		require.NoError(t, err)
 		publicIDs = append(publicIDs, sub.PublicID)
 		createdAt := now.Add(time.Duration(i) * time.Minute)
@@ -319,7 +319,7 @@ func TestController_StaffCannotMarkEntered(t *testing.T) {
 	repo := guestsubmission.NewRepo(testDB)
 	sub, err := repo.CreateSubmission(t.Context(), guestsubmission.Parent{
 		FirstName: "A", LastName: "B", Phone: "1234567", Email: "a@b.com",
-	}, []guestsubmission.Child{{FirstName: "C", LastName: "D", DOB: "2020-01-01", Grade: "k"}})
+	}, []guestsubmission.Child{{FirstName: "C", LastName: "D", DOB: "2020-01-01", Grade: "1st"}})
 	require.NoError(t, err)
 
 	body, _ := json.Marshal(map[string]interface{}{"status": "entered"})
@@ -336,7 +336,7 @@ func TestController_AdminCanMarkEntered(t *testing.T) {
 	repo := guestsubmission.NewRepo(testDB)
 	sub, err := repo.CreateSubmission(t.Context(), guestsubmission.Parent{
 		FirstName: "A", LastName: "B", Phone: "1234567", Email: "a@b.com",
-	}, []guestsubmission.Child{{FirstName: "C", LastName: "D", DOB: "2020-01-01", Grade: "k"}})
+	}, []guestsubmission.Child{{FirstName: "C", LastName: "D", DOB: "2020-01-01", Grade: "1st"}})
 	require.NoError(t, err)
 
 	approveBody, _ := json.Marshal(map[string]interface{}{"status": "approved"})
@@ -359,7 +359,7 @@ func TestController_AdminCanEnterFromPending(t *testing.T) {
 	repo := guestsubmission.NewRepo(testDB)
 	sub, err := repo.CreateSubmission(t.Context(), guestsubmission.Parent{
 		FirstName: "A", LastName: "B", Phone: "1234567", Email: "a@b.com",
-	}, []guestsubmission.Child{{FirstName: "C", LastName: "D", DOB: "2020-01-01", Grade: "k"}})
+	}, []guestsubmission.Child{{FirstName: "C", LastName: "D", DOB: "2020-01-01", Grade: "1st"}})
 	require.NoError(t, err)
 
 	body, _ := json.Marshal(map[string]interface{}{"status": "entered"})
@@ -389,8 +389,8 @@ func TestController_ApproveCreatesManualCheckins(t *testing.T) {
 	sub, err := repo.CreateSubmission(t.Context(), guestsubmission.Parent{
 		FirstName: "A", LastName: "B", Phone: "1234567", Email: "a@b.com",
 	}, []guestsubmission.Child{
-		{FirstName: "C", LastName: "D", DOB: "2020-01-01", Grade: "k"},
-		{FirstName: "E", LastName: "F", DOB: "2021-02-02", Grade: "1"},
+		{FirstName: "C", LastName: "D", DOB: "2020-01-01", Grade: "1st"},
+		{FirstName: "E", LastName: "F", DOB: "2021-02-02", Grade: "1st"},
 	})
 	require.NoError(t, err)
 
@@ -413,7 +413,7 @@ func TestController_PatchSubmissionStatusNamesOnly(t *testing.T) {
 	repo := guestsubmission.NewRepo(testDB)
 	sub, err := repo.CreateSubmission(t.Context(), guestsubmission.Parent{
 		FirstName: "John", LastName: "Smith", Phone: "555-1234", Email: "john@example.com",
-	}, []guestsubmission.Child{{FirstName: "Timmy", LastName: "Smith", DOB: "2020-01-01", Grade: "1st Grade"}})
+	}, []guestsubmission.Child{{FirstName: "Timmy", LastName: "Smith", DOB: "2020-01-01", Grade: "1st"}})
 	require.NoError(t, err)
 
 	body, _ := json.Marshal(map[string]interface{}{"status": "approved"})
@@ -437,7 +437,7 @@ func TestController_CreateCheckinsFromEntered(t *testing.T) {
 	repo := guestsubmission.NewRepo(testDB)
 	sub, err := repo.CreateSubmission(t.Context(), guestsubmission.Parent{
 		FirstName: "A", LastName: "B", Phone: "1234567", Email: "a@b.com",
-	}, []guestsubmission.Child{{FirstName: "C", LastName: "D", DOB: "2020-01-01", Grade: "k"}})
+	}, []guestsubmission.Child{{FirstName: "C", LastName: "D", DOB: "2020-01-01", Grade: "1st"}})
 	require.NoError(t, err)
 	require.NoError(t, repo.UpdateSubmissionStatus(t.Context(), sub.PublicID, guestsubmission.StatusEntered, time.Now().UTC()))
 
@@ -463,7 +463,7 @@ func TestController_CreateCheckinsAlreadyExist(t *testing.T) {
 	repo := guestsubmission.NewRepo(testDB)
 	sub, err := repo.CreateSubmission(t.Context(), guestsubmission.Parent{
 		FirstName: "A", LastName: "B", Phone: "1234567", Email: "a@b.com",
-	}, []guestsubmission.Child{{FirstName: "C", LastName: "D", DOB: "2020-01-01", Grade: "k"}})
+	}, []guestsubmission.Child{{FirstName: "C", LastName: "D", DOB: "2020-01-01", Grade: "1st"}})
 	require.NoError(t, err)
 	require.NoError(t, repo.UpdateSubmissionStatus(t.Context(), sub.PublicID, guestsubmission.StatusEntered, time.Now().UTC()))
 	require.NoError(t, repo.CreateManualCheckins(t.Context(), sub.PublicID))
@@ -547,7 +547,7 @@ func TestController_CreateCheckinsInvalidStatusReturnsBadRequest(t *testing.T) {
 	t.Run("pending returns 400 not 500", func(t *testing.T) {
 		sub, err := repo.CreateSubmission(t.Context(), guestsubmission.Parent{
 			FirstName: "A", LastName: "B", Phone: "1234567", Email: "a@b.com",
-		}, []guestsubmission.Child{{FirstName: "C", LastName: "D", DOB: "2020-01-01", Grade: "k"}})
+		}, []guestsubmission.Child{{FirstName: "C", LastName: "D", DOB: "2020-01-01", Grade: "1st"}})
 		require.NoError(t, err)
 
 		req := httptest.NewRequest("POST", fmt.Sprintf("/v1/checkins/guest-submissions/%s/checkins", sub.PublicID), nil)
@@ -560,7 +560,7 @@ func TestController_CreateCheckinsInvalidStatusReturnsBadRequest(t *testing.T) {
 		wipeSubmissionTables(t, testDB)
 		sub, err := repo.CreateSubmission(t.Context(), guestsubmission.Parent{
 			FirstName: "E", LastName: "F", Phone: "1234567", Email: "e@f.com",
-		}, []guestsubmission.Child{{FirstName: "G", LastName: "H", DOB: "2020-01-01", Grade: "k"}})
+		}, []guestsubmission.Child{{FirstName: "G", LastName: "H", DOB: "2020-01-01", Grade: "1st"}})
 		require.NoError(t, err)
 		require.NoError(t, repo.UpdateSubmissionStatus(t.Context(), sub.PublicID, guestsubmission.StatusRejected, time.Now().UTC()))
 
@@ -612,7 +612,7 @@ func TestController_RequiresAuth(t *testing.T) {
 	repo := guestsubmission.NewRepo(testDB)
 	sub, err := repo.CreateSubmission(t.Context(), guestsubmission.Parent{
 		FirstName: "A", LastName: "B", Phone: "1234567", Email: "a@b.com",
-	}, []guestsubmission.Child{{FirstName: "C", LastName: "D", DOB: "2020-01-01", Grade: "k"}})
+	}, []guestsubmission.Child{{FirstName: "C", LastName: "D", DOB: "2020-01-01", Grade: "1st"}})
 	require.NoError(t, err)
 
 	t.Run("unauthenticated GET guest-submissions redirects to login", func(t *testing.T) {
@@ -655,7 +655,7 @@ func TestController_RequiresAuth(t *testing.T) {
 	t.Run("unauthenticated POST guest-submissions is public 201", func(t *testing.T) {
 		payload := map[string]any{
 			"parent":   map[string]any{"first_name": "John", "last_name": "Smith", "phone": "555-1234", "email": "john@example.com"},
-			"children": []map[string]any{{"first_name": "Timmy", "last_name": "Smith", "dob": "2020-01-01", "grade": "1st Grade"}},
+			"children": []map[string]any{{"first_name": "Timmy", "last_name": "Smith", "dob": "2020-01-01", "grade": "1st"}},
 		}
 		body, _ := json.Marshal(payload)
 		req := httptest.NewRequest("POST", "/v1/checkins/guest-submissions", bytes.NewReader(body))
@@ -682,7 +682,7 @@ func TestController_UnauthenticatedPostIsPublic(t *testing.T) {
 
 	payload := map[string]any{
 		"parent":   map[string]any{"first_name": "John", "last_name": "Smith", "phone": "555-1234", "email": "john@example.com"},
-		"children": []map[string]any{{"first_name": "Timmy", "last_name": "Smith", "dob": "2020-01-01", "grade": "1st Grade"}},
+		"children": []map[string]any{{"first_name": "Timmy", "last_name": "Smith", "dob": "2020-01-01", "grade": "1st"}},
 	}
 	body, _ := json.Marshal(payload)
 
@@ -718,7 +718,7 @@ func TestController_AdminRoutesRequireAdminRole(t *testing.T) {
 		repo := guestsubmission.NewRepo(testDB)
 		sub, err := repo.CreateSubmission(t.Context(), guestsubmission.Parent{
 			FirstName: "A", LastName: "B", Phone: "1234567", Email: "a@b.com",
-		}, []guestsubmission.Child{{FirstName: "C", LastName: "D", DOB: "2020-01-01", Grade: "k"}})
+		}, []guestsubmission.Child{{FirstName: "C", LastName: "D", DOB: "2020-01-01", Grade: "1st"}})
 		require.NoError(t, err)
 		body, _ := json.Marshal(map[string]interface{}{"status": "approved"})
 		req := httptest.NewRequest("PATCH", fmt.Sprintf("/v1/checkins/guest-submissions/%s/status", sub.PublicID), bytes.NewReader(body))
@@ -731,7 +731,7 @@ func TestController_AdminRoutesRequireAdminRole(t *testing.T) {
 		repo := guestsubmission.NewRepo(testDB)
 		sub, err := repo.CreateSubmission(t.Context(), guestsubmission.Parent{
 			FirstName: "A", LastName: "B", Phone: "1234567", Email: "a@b.com",
-		}, []guestsubmission.Child{{FirstName: "C", LastName: "D", DOB: "2020-01-01", Grade: "k"}})
+		}, []guestsubmission.Child{{FirstName: "C", LastName: "D", DOB: "2020-01-01", Grade: "1st"}})
 		require.NoError(t, err)
 		require.NoError(t, repo.UpdateSubmissionStatus(t.Context(), sub.PublicID, guestsubmission.StatusEntered, time.Now().UTC()))
 		req := httptest.NewRequest("POST", fmt.Sprintf("/v1/checkins/guest-submissions/%s/checkins", sub.PublicID), nil)
@@ -749,7 +749,7 @@ func TestController_AuthEnforcementTableDriven(t *testing.T) {
 	repo := guestsubmission.NewRepo(testDB)
 	sub, err := repo.CreateSubmission(t.Context(), guestsubmission.Parent{
 		FirstName: "Auth", LastName: "Test", Phone: "1234567", Email: "auth@test.com",
-	}, []guestsubmission.Child{{FirstName: "Kid", LastName: "Auth", DOB: "2020-01-01", Grade: "k"}})
+	}, []guestsubmission.Child{{FirstName: "Kid", LastName: "Auth", DOB: "2020-01-01", Grade: "1st"}})
 	require.NoError(t, err)
 
 	unauthApp := fiber.New()
@@ -800,7 +800,7 @@ func TestController_AuthEnforcementTableDriven(t *testing.T) {
 	t.Run("unauth public POST still 201", func(t *testing.T) {
 		payload := map[string]any{
 			"parent":   map[string]any{"first_name": "John", "last_name": "Smith", "phone": "555-1234", "email": "john@example.com"},
-			"children": []map[string]any{{"first_name": "Timmy", "last_name": "Smith", "dob": "2020-01-01", "grade": "1st Grade"}},
+			"children": []map[string]any{{"first_name": "Timmy", "last_name": "Smith", "dob": "2020-01-01", "grade": "1st"}},
 		}
 		body, _ := json.Marshal(payload)
 		req := httptest.NewRequest("POST", "/v1/checkins/guest-submissions", bytes.NewReader(body))

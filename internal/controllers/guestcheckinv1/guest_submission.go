@@ -102,6 +102,24 @@ type childPayload struct {
 	Grade     string `json:"grade"`
 }
 
+var allowedGrades = map[string]struct{}{
+	"None":         {},
+	"Pre-K":        {},
+	"Kindergarten": {},
+	"1st":          {},
+	"2nd":          {},
+	"3rd":          {},
+	"4th":          {},
+	"5th":          {},
+	"6th":          {},
+	"7th":          {},
+	"8th":          {},
+	"9th":          {},
+	"10th":         {},
+	"11th":         {},
+	"12th":         {},
+}
+
 func validateCreateSubmissionPayload(p createSubmissionPayload) error {
 	if strings.TrimSpace(p.Parent.FirstName) == "" || strings.TrimSpace(p.Parent.LastName) == "" {
 		return errors.New("parent first_name and last_name are required")
@@ -114,6 +132,18 @@ func validateCreateSubmissionPayload(p createSubmissionPayload) error {
 	}
 	if len(p.Children) > 10 {
 		return errors.New("at most 10 children are allowed per submission")
+	}
+	if len(p.Parent.FirstName) > 100 {
+		return errors.New("parent first_name must be at most 100 characters")
+	}
+	if len(p.Parent.LastName) > 100 {
+		return errors.New("parent last_name must be at most 100 characters")
+	}
+	if len(p.Parent.Phone) > 30 {
+		return errors.New("phone must be at most 30 characters")
+	}
+	if len(p.Parent.Email) > 254 {
+		return errors.New("email must be at most 254 characters")
 	}
 
 	if p.Parent.Phone != "" {
@@ -135,7 +165,19 @@ func validateCreateSubmissionPayload(p createSubmissionPayload) error {
 		if strings.TrimSpace(child.FirstName) == "" || strings.TrimSpace(child.LastName) == "" || strings.TrimSpace(child.DOB) == "" || strings.TrimSpace(child.Grade) == "" {
 			return fmt.Errorf("child %d: first_name, last_name, dob, and grade are required", i+1)
 		}
-		dob, err := time.Parse("2006-01-02", child.DOB)
+		if len(child.FirstName) > 100 {
+			return fmt.Errorf("child %d: first_name must be at most 100 characters", i+1)
+		}
+		if len(child.LastName) > 100 {
+			return fmt.Errorf("child %d: last_name must be at most 100 characters", i+1)
+		}
+		if len(child.DOB) != 10 {
+			return fmt.Errorf("child %d: dob must be YYYY-MM-DD", i+1)
+		}
+		if _, ok := allowedGrades[child.Grade]; !ok {
+			return fmt.Errorf("child %d: grade must be one of None, Pre-K, Kindergarten, 1st, 2nd, 3rd, 4th, 5th, 6th, 7th, 8th, 9th, 10th, 11th, 12th", i+1)
+		}
+		dob, err := time.ParseInLocation("2006-01-02", child.DOB, time.Local)
 		if err != nil {
 			return fmt.Errorf("child %d: dob must be YYYY-MM-DD", i+1)
 		}

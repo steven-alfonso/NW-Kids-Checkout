@@ -14,6 +14,7 @@ const PENDING_FAMILIES_REFRESH_INTERVAL_MS = 5000;
 const DEFAULT_CHECKED_OUT_AFTER = '-12h';
 const MANUAL_CHECKINS_REFRESH_INTERVAL_MS = 5000;
 let manualCheckinsController = null;
+let pendingFamiliesController = null;
 
 function setPageStatus(message, tone = 'info') {
     pageStatus.classList.remove('hidden');
@@ -241,11 +242,18 @@ function renderPendingFamilies(submissions) {
 
 async function loadPendingFamilies() {
     if (!pendingFamiliesContainer) return;
+    if (pendingFamiliesController) {
+        pendingFamiliesController.abort();
+    }
+    const controller = new AbortController();
+    pendingFamiliesController = controller;
     try {
         const [pending, entered] = await Promise.all([
-            globalThis.fetchJson(`${API_URL}/v1/checkins/guest-submissions?status=pending&limit=200`),
-            globalThis.fetchJson(`${API_URL}/v1/checkins/guest-submissions?status=entered&without_manual_checkins=true&limit=200`)
+            globalThis.fetchJson(`${API_URL}/v1/checkins/guest-submissions?status=pending&limit=200`, {signal: controller.signal}),
+            globalThis.fetchJson(`${API_URL}/v1/checkins/guest-submissions?status=entered&without_manual_checkins=true&limit=200`, {signal: controller.signal})
         ]);
+        if (controller.signal.aborted) return;
+        if (pendingFamiliesController !== controller) return;
         const pendingArr = Array.isArray(pending) ? pending : [];
         const enteredArr = Array.isArray(entered) ? entered : [];
         const merged = [...pendingArr, ...enteredArr]
@@ -266,6 +274,10 @@ async function loadPendingFamilies() {
             return;
         }
         pendingFamiliesContainer.innerHTML = '<p class="text-sm text-red-600">Failed to load pending families.</p>';
+    } finally {
+        if (pendingFamiliesController === controller) {
+            pendingFamiliesController = null;
+        }
     }
 }
 

@@ -16,6 +16,8 @@ import (
 	"strings"
 	"time"
 
+	fibersession "github.com/gofiber/fiber/v2/middleware/session"
+
 	"kids-checkin/internal/controllers/middleware"
 	"kids-checkin/internal/controllers/session"
 	"kids-checkin/internal/repo"
@@ -64,9 +66,17 @@ func (controller *Controller) RegisterRoutes(app *fiber.App) {
 }
 
 func (controller *Controller) Checkouts(c *fiber.Ctx) error {
-	sess, err := controller.sessionStore.Get(c)
-	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "could not fetch session")
+	var sess *fibersession.Session
+	var err error
+	if v := c.Locals("session"); v != nil {
+		sess, _ = v.(*fibersession.Session)
+	}
+	if sess == nil {
+		sess, err = controller.sessionStore.Get(c)
+		if err != nil {
+			return fiber.NewError(fiber.StatusInternalServerError, "could not fetch session")
+		}
+		c.Locals("session", sess)
 	}
 
 	c.Locals("allowed", sess.Get("allowed"))
@@ -96,9 +106,16 @@ func (controller *Controller) checkoutsWeb(c *fiber.Ctx) error {
 		}
 
 		html := string(content)
-		sess, err := controller.sessionStore.Get(c)
-		if err != nil {
-			return fiber.NewError(fiber.StatusInternalServerError, "could not fetch session")
+		var sess *fibersession.Session
+		if v := c.Locals("session"); v != nil {
+			sess, _ = v.(*fibersession.Session)
+		}
+		if sess == nil {
+			var fetchErr error
+			sess, fetchErr = controller.sessionStore.Get(c)
+			if fetchErr != nil {
+				return fiber.NewError(fiber.StatusInternalServerError, "could not fetch session")
+			}
 		}
 		authenticated, _ := sess.Get("authenticated").(bool)
 		role, _ := sess.Get("role").(string)

@@ -25,17 +25,33 @@ func InitDB(dataSourceName string) (*sql.DB, error) {
 			dsn += "?_foreign_keys=on"
 		}
 	}
+	if !strings.Contains(dsn, "_busy_timeout") {
+		if strings.Contains(dsn, "?") {
+			dsn += "&_busy_timeout=5000"
+		} else {
+			dsn += "?_busy_timeout=5000"
+		}
+	}
+	if !strings.Contains(dsn, "_txlock") {
+		if strings.Contains(dsn, "?") {
+			dsn += "&_txlock=immediate"
+		} else {
+			dsn += "?_txlock=immediate"
+		}
+	}
 
 	db, err := sql.Open("sqlite3", dsn)
 	if err != nil {
 		return nil, err
 	}
 
+	// DSN params _foreign_keys, _busy_timeout, _txlock are the load-bearing
+	// per-connection settings (they apply to every pooled connection). The
+	// Exec below only affects one connection and must not be relied on for
+	// per-connection correctness — keep DSN params as the source of truth.
 	_, err = db.Exec(`
-  		PRAGMA foreign_keys = ON;
   		PRAGMA synchronous = NORMAL;
-  		PRAGMA temp_store = MEMORY;
-  		PRAGMA busy_timeout = 5000;`)
+  		PRAGMA temp_store = MEMORY;`)
 	if err != nil {
 		return nil, err
 	}

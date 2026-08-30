@@ -58,9 +58,11 @@ const STATUS_LEFT_BAR_CLASS = {
 function setStatus(message, tone = 'info') {
     if (!pageStatus) return;
     pageStatus.classList.remove('hidden');
+    pageStatus.classList.remove('border-red-200', 'bg-red-50', 'text-red-700');
+    pageStatus.classList.remove('border-emerald-200', 'bg-emerald-50', 'text-emerald-700');
     pageStatus.textContent = message;
-    if (tone === 'error') pageStatus.classList.add('text-red-700');
-    else if (tone === 'success') pageStatus.classList.add('text-emerald-700');
+    if (tone === 'error') pageStatus.classList.add('border-red-200', 'bg-red-50', 'text-red-700');
+    else if (tone === 'success') pageStatus.classList.add('border-emerald-200', 'bg-emerald-50', 'text-emerald-700');
 }
 
 function formatDob(value) {

@@ -12,9 +12,10 @@ import (
 
 	"github.com/Masterminds/squirrel"
 	"github.com/google/uuid"
+	"github.com/mattn/go-sqlite3"
 )
 
-var ErrInvalidManualCheckin = errors.New("manual checkin must provide first and last name")
+var ErrInvalidManualCheckin = errors.New("invalid manual checkin")
 
 type Filter struct {
 	ID                 int64
@@ -197,10 +198,11 @@ func (s *sqliteRepo) CreateManualCheckin(ctx context.Context, manualCheckin Manu
 
 	res, err := builder.ExecContext(ctx)
 	if err != nil {
-		if strings.Contains(err.Error(), "FOREIGN KEY") {
-			return ManualCheckin{}, fmt.Errorf("%w: %v", ErrInvalidManualCheckin, err)
+		var sqliteErr sqlite3.Error
+		if errors.As(err, &sqliteErr) && sqliteErr.ExtendedCode == sqlite3.ErrConstraintForeignKey {
+			return ManualCheckin{}, fmt.Errorf("%w: %w", ErrInvalidManualCheckin, err)
 		}
-		return ManualCheckin{}, err
+		return ManualCheckin{}, fmt.Errorf("creating manual checkin: %w", err)
 	}
 
 	id, err := res.LastInsertId()

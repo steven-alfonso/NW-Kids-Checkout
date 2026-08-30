@@ -14,6 +14,9 @@ import (
 func AuthRequired(sessionStore session.Storer, allowedRoles ...string) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		sess, _ := sessionStore.Get(c)
+		if sess != nil {
+			c.Locals("session", sess)
+		}
 
 		// Check if logged in
 		if sess.Get("authenticated") != true {

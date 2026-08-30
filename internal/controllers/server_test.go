@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"errors"
 	"io"
 	"net/http/httptest"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"kids-checkin/internal/web/menu"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/recover"
 	"github.com/gofiber/fiber/v2/middleware/session"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -66,4 +68,24 @@ func TestHomePageMenu(t *testing.T) {
 		assert.False(t, strings.Contains(html, `href="/admin"`), "home HTML must not expose /admin href")
 		assert.False(t, strings.Contains(html, `href="/logout"`), "home HTML must not expose /logout href")
 	})
+}
+
+type errSessionStore struct{}
+
+func (e *errSessionStore) RegisterType(i any) {}
+func (e *errSessionStore) Get(c *fiber.Ctx) (*session.Session, error) {
+	return nil, errors.New("session error")
+}
+func (e *errSessionStore) Reset() error           { return nil }
+func (e *errSessionStore) Delete(id string) error { return nil }
+
+func TestHomePage_SessionErrorReturns500(t *testing.T) {
+	app := fiber.New()
+	app.Use(recover.New())
+	app.Get("/", homePageHandler(&errSessionStore{}))
+
+	req := httptest.NewRequest("GET", "/", nil)
+	resp, err := app.Test(req)
+	require.NoError(t, err)
+	assert.Equal(t, fiber.StatusInternalServerError, resp.StatusCode)
 }

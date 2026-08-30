@@ -2,6 +2,7 @@ package manualcheckin
 
 import (
 	"database/sql"
+	"errors"
 	"log"
 	"os"
 	"testing"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/Masterminds/squirrel"
 	"github.com/google/uuid"
+	"github.com/mattn/go-sqlite3"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -463,4 +465,44 @@ func Test_sqliteRepo_CreateManualCheckinWithChildID(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
 	assert.Equal(t, childID, rows[0].ChildID)
+}
+
+func Test_sqliteRepo_CreateManualCheckin_GarbageChildID(t *testing.T) {
+	_, err := squirrel.Delete("manual_checkins").RunWith(testDB).ExecContext(t.Context())
+	require.NoError(t, err)
+	_, err = squirrel.Delete("children").RunWith(testDB).ExecContext(t.Context())
+	require.NoError(t, err)
+	_, err = squirrel.Delete("parents").RunWith(testDB).ExecContext(t.Context())
+	require.NoError(t, err)
+
+	s := NewRepo(testDB)
+
+	t.Run("garbage child id pre-check returns ErrInvalidManualCheckin", func(t *testing.T) {
+		_, err := s.CreateManualCheckin(t.Context(), ManualCheckin{
+			ChildID:   999999,
+			FirstName: "ghost",
+			LastName:  "kid",
+		})
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrInvalidManualCheckin)
+		assert.Contains(t, err.Error(), "999999")
+	})
+
+	t.Run("fk fallback also maps to ErrInvalidManualCheckin", func(t *testing.T) {
+		_, err := testDB.ExecContext(t.Context(),
+			`INSERT INTO manual_checkins (public_id, child_id, first_name, last_name) VALUES (?, ?, ?, ?)`,
+			uuid.NewString(), int64(999999), "ghost", "kid")
+		require.Error(t, err)
+		var sqliteErr sqlite3.Error
+		require.True(t, errors.As(err, &sqliteErr))
+		assert.Equal(t, sqlite3.ErrConstraintForeignKey, sqliteErr.ExtendedCode)
+
+		_, err = s.CreateManualCheckin(t.Context(), ManualCheckin{
+			ChildID:   999999,
+			FirstName: "ghost",
+			LastName:  "kid",
+		})
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrInvalidManualCheckin)
+	})
 }
