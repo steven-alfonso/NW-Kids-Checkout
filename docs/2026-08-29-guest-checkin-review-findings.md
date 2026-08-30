@@ -123,12 +123,12 @@ These were explicitly verified during review; don't spend cycles here:
   - Fix: adopt S1 wrapper (or parse `data.sorry` locally). The conflict message "submission status changed, please retry" must reach the user as-is.
   - Verify: `npx vitest run internal/web/static/pages/manual-checkins/manual-checkins.test.js internal/web/static/pages/admin-guest-entries/admin-guest-entries.test.js` with new failure-path cases.
 
-- [ ] **9. [medium] Auth enforcement tests cover 1 of 7 routes; no admin-role 403 test**
+- [x] **9. [medium] Auth enforcement tests cover 1 of 7 routes; no admin-role 403 test**
   - Where: `internal/controllers/guestcheckinv1/guest_submission_test.go:603-615` — only asserts unauthenticated GET of the staff list redirects to `/login`. Corrected (grill): there are 7 routes, not 6 (5 JSON APIs + 2 HTML pages, `guest_submission.go:43-59`); unauthenticated non-HTML requests get a 302 (`middleware/auth.go:24`), wrong-role gets a 403 (`:38-50`). Runtime auth is correctly enforced (verified); the gap is regression protection.
   - Fix: table-driven test hitting each staff/admin route unauthenticated (302 to `/login`) and with a non-admin session against the admin routes (`/v1/admin/guest-submissions`, `/admin/guest-entries` → 403), and non-admin staff against `/v1/checkins/guest-submissions*` staff routes per the chosen D1 model (Option A makes the POST + `/checkin` page public — those two become the asserted exceptions).
   - Verify: `go test ./internal/controllers/guestcheckinv1`.
 
-- [ ] **10. [medium] Kiosk fetch failure paths and double-submit prevention untested**
+- [x] **10. [medium] Kiosk fetch failure paths and double-submit prevention untested**
   - Where: `internal/web/static/pages/checkin/checkin.test.js:33-38` — the mocked fetch always returns `ok: true` with valid JSON.
   - Fix: add the cases listed in #7 (a)-(e). If D1 = Option A also test the public POST succeeds unauthenticated end-to-end.
   - Verify: `npx vitest run internal/web/static/pages/checkin/checkin.test.js`.

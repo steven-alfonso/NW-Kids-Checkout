@@ -608,6 +608,13 @@ func TestController_RequiresAuth(t *testing.T) {
 	t.Cleanup(cleanup)
 	NewController(testDB, store).RegisterRoutes(app)
 
+	// Create a submission for routes that need a public_id; unauthenticated should 302 before checking existence
+	repo := guestsubmission.NewRepo(testDB)
+	sub, err := repo.CreateSubmission(t.Context(), guestsubmission.Parent{
+		FirstName: "A", LastName: "B", Phone: "1234567", Email: "a@b.com",
+	}, []guestsubmission.Child{{FirstName: "C", LastName: "D", DOB: "2020-01-01", Grade: "k"}})
+	require.NoError(t, err)
+
 	t.Run("unauthenticated GET guest-submissions redirects to login", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/v1/checkins/guest-submissions", nil)
 		resp, _ := app.Test(req)
@@ -616,12 +623,6 @@ func TestController_RequiresAuth(t *testing.T) {
 	})
 
 	t.Run("unauthenticated PATCH guest-submissions redirects to login", func(t *testing.T) {
-		repo := guestsubmission.NewRepo(testDB)
-		sub, err := repo.CreateSubmission(t.Context(), guestsubmission.Parent{
-			FirstName: "A", LastName: "B", Phone: "1234567", Email: "a@b.com",
-		}, []guestsubmission.Child{{FirstName: "C", LastName: "D", DOB: "2020-01-01", Grade: "k"}})
-		require.NoError(t, err)
-
 		body, _ := json.Marshal(map[string]interface{}{"status": "approved"})
 		req := httptest.NewRequest("PATCH", fmt.Sprintf("/v1/checkins/guest-submissions/%s/status", sub.PublicID), bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
@@ -631,16 +632,43 @@ func TestController_RequiresAuth(t *testing.T) {
 	})
 
 	t.Run("unauthenticated POST checkins redirects to login", func(t *testing.T) {
-		repo := guestsubmission.NewRepo(testDB)
-		sub, err := repo.CreateSubmission(t.Context(), guestsubmission.Parent{
-			FirstName: "A", LastName: "B", Phone: "1234567", Email: "a@b.com",
-		}, []guestsubmission.Child{{FirstName: "C", LastName: "D", DOB: "2020-01-01", Grade: "k"}})
-		require.NoError(t, err)
-
 		req := httptest.NewRequest("POST", fmt.Sprintf("/v1/checkins/guest-submissions/%s/checkins", sub.PublicID), nil)
 		resp, _ := app.Test(req)
 		require.Equal(t, fiber.StatusFound, resp.StatusCode)
 		require.Contains(t, resp.Header.Get("Location"), "/login")
+	})
+
+	t.Run("unauthenticated GET admin guest-submissions redirects to login", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/v1/admin/guest-submissions", nil)
+		resp, _ := app.Test(req)
+		require.Equal(t, fiber.StatusFound, resp.StatusCode)
+		require.Contains(t, resp.Header.Get("Location"), "/login")
+	})
+
+	t.Run("unauthenticated GET admin guest-entries redirects to login", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/admin/guest-entries", nil)
+		resp, _ := app.Test(req)
+		require.Equal(t, fiber.StatusFound, resp.StatusCode)
+		require.Contains(t, resp.Header.Get("Location"), "/login")
+	})
+
+	t.Run("unauthenticated POST guest-submissions is public 201", func(t *testing.T) {
+		payload := map[string]any{
+			"parent":   map[string]any{"first_name": "John", "last_name": "Smith", "phone": "555-1234", "email": "john@example.com"},
+			"children": []map[string]any{{"first_name": "Timmy", "last_name": "Smith", "dob": "2020-01-01", "grade": "1st Grade"}},
+		}
+		body, _ := json.Marshal(payload)
+		req := httptest.NewRequest("POST", "/v1/checkins/guest-submissions", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		resp, _ := app.Test(req)
+		require.Equal(t, fiber.StatusCreated, resp.StatusCode)
+	})
+
+	t.Run("unauthenticated GET checkin is public 200", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/checkin", nil)
+		resp, _ := app.Test(req)
+		require.Equal(t, fiber.StatusOK, resp.StatusCode)
+		assert.Contains(t, resp.Header.Get("Content-Type"), "text/html")
 	})
 }
 
@@ -673,4 +701,129 @@ func TestController_AdminRoutesRequireAdminRole(t *testing.T) {
 		resp, _ := app.Test(req)
 		require.Equal(t, fiber.StatusForbidden, resp.StatusCode)
 	})
+
+	t.Run("non-admin GET admin guest-entries returns 403", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/admin/guest-entries", nil)
+		resp, _ := app.Test(req)
+		require.Equal(t, fiber.StatusForbidden, resp.StatusCode)
+	})
+
+	t.Run("non-admin GET guest-submissions allowed", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/v1/checkins/guest-submissions", nil)
+		resp, _ := app.Test(req)
+		require.Equal(t, fiber.StatusOK, resp.StatusCode)
+	})
+
+	t.Run("non-admin PATCH guest-submissions allowed for staff transition", func(t *testing.T) {
+		repo := guestsubmission.NewRepo(testDB)
+		sub, err := repo.CreateSubmission(t.Context(), guestsubmission.Parent{
+			FirstName: "A", LastName: "B", Phone: "1234567", Email: "a@b.com",
+		}, []guestsubmission.Child{{FirstName: "C", LastName: "D", DOB: "2020-01-01", Grade: "k"}})
+		require.NoError(t, err)
+		body, _ := json.Marshal(map[string]interface{}{"status": "approved"})
+		req := httptest.NewRequest("PATCH", fmt.Sprintf("/v1/checkins/guest-submissions/%s/status", sub.PublicID), bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		resp, _ := app.Test(req)
+		require.Equal(t, fiber.StatusOK, resp.StatusCode)
+	})
+
+	t.Run("non-admin POST checkins allowed when entered", func(t *testing.T) {
+		repo := guestsubmission.NewRepo(testDB)
+		sub, err := repo.CreateSubmission(t.Context(), guestsubmission.Parent{
+			FirstName: "A", LastName: "B", Phone: "1234567", Email: "a@b.com",
+		}, []guestsubmission.Child{{FirstName: "C", LastName: "D", DOB: "2020-01-01", Grade: "k"}})
+		require.NoError(t, err)
+		require.NoError(t, repo.UpdateSubmissionStatus(t.Context(), sub.PublicID, guestsubmission.StatusEntered, time.Now().UTC()))
+		req := httptest.NewRequest("POST", fmt.Sprintf("/v1/checkins/guest-submissions/%s/checkins", sub.PublicID), nil)
+		resp, _ := app.Test(req)
+		require.Equal(t, fiber.StatusOK, resp.StatusCode)
+	})
+}
+
+func TestController_AuthEnforcementTableDriven(t *testing.T) {
+	testDB, cleanup, err := db.PrepareTestDB()
+	require.NoError(t, err)
+	t.Cleanup(cleanup)
+
+	// Create a submission for ID-dependent routes
+	repo := guestsubmission.NewRepo(testDB)
+	sub, err := repo.CreateSubmission(t.Context(), guestsubmission.Parent{
+		FirstName: "Auth", LastName: "Test", Phone: "1234567", Email: "auth@test.com",
+	}, []guestsubmission.Child{{FirstName: "Kid", LastName: "Auth", DOB: "2020-01-01", Grade: "k"}})
+	require.NoError(t, err)
+
+	unauthApp := fiber.New()
+	unauthStore := session.New()
+	NewController(testDB, unauthStore).RegisterRoutes(unauthApp)
+
+	staffApp2 := fiber.New()
+	staffStore := session.New()
+	staffApp2.Use(func(c *fiber.Ctx) error {
+		sess, _ := staffStore.Get(c)
+		sess.Set("authenticated", true)
+		sess.Set("role", "")
+		if err := sess.Save(); err != nil {
+			return err
+		}
+		return c.Next()
+	})
+	NewController(testDB, staffStore).RegisterRoutes(staffApp2)
+
+	type routeCase struct {
+		name           string
+		method         string
+		path           string
+		body           []byte
+		contentType    string
+		expectedStatus int
+	}
+
+	unauthCases := []routeCase{
+		{"GET staff list", "GET", "/v1/checkins/guest-submissions", nil, "", fiber.StatusFound},
+		{"PATCH staff status", "PATCH", fmt.Sprintf("/v1/checkins/guest-submissions/%s/status", sub.PublicID), []byte(`{"status":"approved"}`), "application/json", fiber.StatusFound},
+		{"POST staff checkins", "POST", fmt.Sprintf("/v1/checkins/guest-submissions/%s/checkins", sub.PublicID), nil, "", fiber.StatusFound},
+		{"GET admin list", "GET", "/v1/admin/guest-submissions", nil, "", fiber.StatusFound},
+		{"GET admin page", "GET", "/admin/guest-entries", nil, "", fiber.StatusFound},
+	}
+	for _, tc := range unauthCases {
+		t.Run("unauth "+tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(tc.method, tc.path, bytes.NewReader(tc.body))
+			if tc.contentType != "" {
+				req.Header.Set("Content-Type", tc.contentType)
+			}
+			resp, _ := unauthApp.Test(req)
+			require.Equal(t, tc.expectedStatus, resp.StatusCode, tc.name)
+			require.Contains(t, resp.Header.Get("Location"), "/login")
+		})
+	}
+
+	t.Run("unauth public POST still 201", func(t *testing.T) {
+		payload := map[string]any{
+			"parent":   map[string]any{"first_name": "John", "last_name": "Smith", "phone": "555-1234", "email": "john@example.com"},
+			"children": []map[string]any{{"first_name": "Timmy", "last_name": "Smith", "dob": "2020-01-01", "grade": "1st Grade"}},
+		}
+		body, _ := json.Marshal(payload)
+		req := httptest.NewRequest("POST", "/v1/checkins/guest-submissions", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		resp, _ := unauthApp.Test(req)
+		require.Equal(t, fiber.StatusCreated, resp.StatusCode)
+	})
+
+	t.Run("unauth public GET checkin still 200", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/checkin", nil)
+		resp, _ := unauthApp.Test(req)
+		require.Equal(t, fiber.StatusOK, resp.StatusCode)
+	})
+
+	nonAdminCases := []routeCase{
+		{"GET admin list", "GET", "/v1/admin/guest-submissions", nil, "", fiber.StatusForbidden},
+		{"GET admin page", "GET", "/admin/guest-entries", nil, "", fiber.StatusForbidden},
+	}
+	for _, tc := range nonAdminCases {
+		t.Run("non-admin "+tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(tc.method, tc.path, nil)
+			resp, _ := staffApp2.Test(req)
+			require.Equal(t, tc.expectedStatus, resp.StatusCode, tc.name)
+		})
+	}
 }

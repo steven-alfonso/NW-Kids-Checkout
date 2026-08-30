@@ -72,3 +72,7 @@ test:
 .PHONY: db-seed
 db-seed:
 	godotenv ./bin/db-seed
+
+.PHONY: random-data
+random-data:
+	godotenv go run ./cmd/random-data --db-file $(KIDS_CHECKIN_DB_FILE)
