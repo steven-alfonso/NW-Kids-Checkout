@@ -8,7 +8,7 @@ const apiScriptPath = path.resolve(process.cwd(), 'internal/web/static/js/api.js
 const script = fs.readFileSync(scriptPath, 'utf8');
 const apiScript = fs.readFileSync(apiScriptPath, 'utf8');
 
-function loadWindow() {
+function loadWindow({ url = 'http://localhost/' } = {}) {
     const dom = new JSDOM(`<!doctype html>
         <html>
         <body>
@@ -25,15 +25,104 @@ function loadWindow() {
                 <button data-modal-close></button>
                 <div id="manual-checkin-error" class="hidden"></div>
             </div>
-        </body></html>`, {runScripts: 'dangerously', url: 'http://localhost/'});
+        </body></html>`, {runScripts: 'dangerously', url});
     dom.window.fetch = async (url, opts) => {
-        return {ok: true, status: 200, json: async () => []};
+        return {ok: true, status: 200, json: async () => [], text: async () => ''};
     };
     dom.window.setInterval = () => 0;
+    if (!dom.window.AbortController) {
+        dom.window.AbortController = class {
+            constructor() {
+                this.signal = {};
+            }
+            abort() {
+                this.signal.aborted = true;
+            }
+        };
+    }
     dom.window.eval(apiScript);
     dom.window.eval(script);
     return dom.window;
 }
+
+describe('manual-checkins', () => {
+    it('builds query params with defaults', () => {
+        const window = loadWindow();
+        const query = window.buildManualCheckinsQuery();
+        const params = new URLSearchParams(query);
+        expect(params.get('checked_out_after')).toBe('-12h');
+        expect(params.get('include_unchecked')).toBe('true');
+        expect(params.get('sort')).toBe('created');
+        expect(params.get('limit')).toBe(null);
+    });
+
+    it('builds query params from search string', () => {
+        const window = loadWindow({
+            url: 'http://localhost/?checked_out_after=-2h&limit=50&include_unchecked=false'
+        });
+        const query = window.buildManualCheckinsQuery();
+        const params = new URLSearchParams(query);
+        expect(params.get('checked_out_after')).toBe('-2h');
+        expect(params.get('include_unchecked')).toBe('false');
+        expect(params.get('sort')).toBe('created');
+        expect(params.get('limit')).toBe('50');
+    });
+
+    it('formats checked out timestamps', () => {
+        const window = loadWindow();
+        expect(window.formatCheckedOutAt('')).toBe('—');
+        expect(window.formatCheckedOutAt('not-a-date')).toBe('—');
+        const value = '2024-01-01T00:00:00Z';
+        const expected = new window.Date(value).toLocaleString();
+        expect(window.formatCheckedOutAt(value)).toBe(expected);
+    });
+
+    it('renders a zero-state message', () => {
+        const window = loadWindow();
+        window.renderManualCheckins([]);
+        const body = window.document.getElementById('manual-checkins-body');
+        expect(body.innerHTML).toContain('No manual check-ins found.');
+    });
+
+    it('renders manual check-in rows with status and actions', () => {
+        const window = loadWindow();
+        window.renderManualCheckins([
+            {
+                first_name: 'Ada',
+                last_name: 'Lovelace',
+                public_id: 'a1',
+                checked_out_at: '2024-01-01T00:00:00Z'
+            },
+            {
+                first_name: 'Grace',
+                last_name: 'Hopper',
+                public_id: 'b2',
+                checked_out_at: ''
+            }
+        ]);
+
+        const rows = window.document.querySelectorAll('#manual-checkins-body tr');
+        expect(rows.length).toBe(2);
+
+        const firstStatus = rows[0].querySelector('td[data-label="Status"] span');
+        expect(firstStatus.textContent).toBe('Checked out');
+        expect(firstStatus.className).toContain('bg-emerald-100');
+
+        const firstButton = rows[0].querySelector('button');
+        expect(firstButton.textContent).toBe('Undo Checkout');
+        expect(firstButton.dataset.publicId).toBe('a1');
+        expect(firstButton.dataset.checkedOut).toBe('true');
+
+        const secondStatus = rows[1].querySelector('td[data-label="Status"] span');
+        expect(secondStatus.textContent).toBe('Pending');
+        expect(secondStatus.className).toContain('bg-amber-100');
+
+        const secondButton = rows[1].querySelector('button');
+        expect(secondButton.textContent).toBe('Check Out');
+        expect(secondButton.dataset.publicId).toBe('b2');
+        expect(secondButton.dataset.checkedOut).toBe('false');
+    });
+})
 
 describe('manual-checkins approvals', () => {
     it('renders pending family cards with buttons', () => {

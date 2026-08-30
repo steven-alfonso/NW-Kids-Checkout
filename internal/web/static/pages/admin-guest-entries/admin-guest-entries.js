@@ -63,6 +63,14 @@ function setStatus(message, tone = 'info') {
     else if (tone === 'success') pageStatus.classList.add('text-emerald-700');
 }
 
+function formatDob(value) {
+    if (!value) return value;
+    const str = String(value).slice(0, 10);
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(str);
+    if (m) return `${m[2]}/${m[3]}/${m[1]}`;
+    return value;
+}
+
 function chip(value, label) {
     const labelText = label.replace(/_/g, ' ');
 
@@ -144,7 +152,9 @@ function renderEntry(container, entry) {
         const row = document.createElement('div');
         row.className = 'mb-4 flex flex-wrap gap-x-6 gap-y-4 items-end';
         ['first_name', 'last_name', 'dob', 'grade'].forEach(field => {
-            row.appendChild(chip(child[field], field));
+            const raw = child[field];
+            const display = field === 'dob' ? formatDob(raw) : raw;
+            row.appendChild(chip(display, field));
         });
         childrenBlock.appendChild(row);
     });
@@ -359,5 +369,6 @@ window.setActiveTab = setActiveTab;
 window.activeBucket = activeBucket;
 window.renderPagination = renderPagination;
 window.pageRange = pageRange;
+window.formatDob = formatDob;
 
 loadEntries('needs-entry');

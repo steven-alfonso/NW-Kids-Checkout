@@ -133,7 +133,7 @@ These were explicitly verified during review; don't spend cycles here:
   - Fix: add the cases listed in #7 (a)-(e). If D1 = Option A also test the public POST succeeds unauthenticated end-to-end.
   - Verify: `npx vitest run internal/web/static/pages/checkin/checkin.test.js`.
 
-- [ ] **11. [medium] `manual-checkins.test.js` rewrite dropped 5 previously-passing tests**
+- [x] **11. [medium] `manual-checkins.test.js` rewrite dropped 5 previously-passing tests**
   - Where: whole-file rewrite on this branch removed exactly 5 previously-passing tests: `builds query params with defaults`, `builds query params from search string`, `formats checked out timestamps`, `renders a zero-state message`, `renders manual check-in rows with status and actions` (the 6th main test, the modal toggle, was kept). The covered code is still live (`manual-checkins.js:82-181, 331-338, 402-424`); the checkout/undo flow now has zero coverage. Corrected (grill): `window.*` exposures were never the issue — `main` had none either; the vitest harness evals the script, so top-level function declarations are reachable as `window.*` either way.
   - Fix: restore the old tests (retrieve from `main`: `git show main:internal/web/static/pages/manual-checkins/manual-checkins.test.js`) and merge them alongside the new approvals tests; they should pass as-is since the covered functions are still top-level declarations.
   - Verify: `npx vitest run internal/web/static/pages/manual-checkins/manual-checkins.test.js`.
