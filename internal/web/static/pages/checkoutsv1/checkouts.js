@@ -10,6 +10,7 @@ let lastListSignature = null;
 let searchQuery = '';
 let hideConfirmed = false;
 let knownChildIds = new Set();
+let lastFetchParams = null;
 let flashChildIds = new Set();
 let flashTimeoutId = null;
 const CONFIRM_OVERRIDE_TTL_MS = 15000;
@@ -145,7 +146,8 @@ function getChildSignature(child) {
         child.checked_out_at || '',
         child.first_name || '',
         child.last_name || '',
-        child.security_code || ''
+        child.security_code || '',
+        child.location_group_id != null ? String(child.location_group_id) : ''
     ].join('|');
 }
 
@@ -160,6 +162,22 @@ function getVisibleChildren() {
             const name = `${child.first_name || ''} ${child.last_name || ''}`.toLowerCase();
             const code = (child.security_code || '').toLowerCase();
             return name.includes(q) || code.includes(q);
+        });
+    }
+    const { ids, includeUnassigned, names, isEmpty } = getSelectedFromURL();
+    if (isEmpty) return [];
+    const hasFilter = ids.size > 0 || names.size > 0 || includeUnassigned;
+    if (hasFilter) {
+        // Build name->id map if filtering by name (requires groups fetched, fallback to no map)
+        // For client filtering, check both id and name (name via container text map not available here, so use ids only; name case handled by server, but client fallback checks ids)
+        children = children.filter((child) => {
+            const lgId = child.location_group_id;
+            if (lgId == null) return includeUnassigned;
+            const num = Number(lgId);
+            if (ids.has(num)) return true;
+            // if filtering by name but ids empty, we don't have mapping here; keep visible to avoid hiding due to missing map (server already filtered)
+            if (names.size > 0 && ids.size === 0) return true;
+            return false;
         });
     }
     return children;
@@ -270,6 +288,172 @@ async function confirmCheckedOut(source, planningCenterId, publicId, checkbox, c
     }
 }
 
+const GRAY_UNASSIGNED = '#9CA3AF';
+const PAUL_TOL_MUTED = ['#332288', '#117733', '#44AA99', '#88CCEE', '#DDCC77', '#CC6677', '#AA4499', '#882255'];
+
+function getLocationGroupColor(locationGroupId) {
+    if (locationGroupId == null) return GRAY_UNASSIGNED;
+    const id = Number(locationGroupId);
+    if (!Number.isFinite(id)) return GRAY_UNASSIGNED;
+    const idx = Math.abs(id - 1) % PAUL_TOL_MUTED.length;
+    return PAUL_TOL_MUTED[idx];
+}
+
+if (typeof window !== 'undefined') {
+    window.GRAY_UNASSIGNED = GRAY_UNASSIGNED;
+    window.PAUL_TOL_MUTED = PAUL_TOL_MUTED;
+    window.getLocationGroupColor = getLocationGroupColor;
+}
+
+function getSelectedFromURL() {
+    const params = new URLSearchParams(window.location.search);
+    const ids = new Set();
+    const rawValues = params.getAll('location_group_id');
+    rawValues.forEach((v) => {
+        v.split(',').forEach((part) => {
+            const trimmed = part.trim();
+            if (!trimmed) return;
+            const n = Number(trimmed);
+            if (Number.isFinite(n) && n > 0) ids.add(n);
+        });
+    });
+    const inc = params.get('include_unassigned');
+    const includeUnassigned = inc === '1' || inc === 'true';
+    const nameValues = params.getAll('location_group_name');
+    const names = new Set();
+    nameValues.forEach((v) => {
+        v.split(',').forEach((part) => {
+            const trimmed = part.trim();
+            if (trimmed) names.add(trimmed);
+        });
+    });
+    const hasLocationGroupParam = params.has('location_group_id') || params.has('location_group_name') || params.has('include_unassigned');
+    const isEmpty = hasLocationGroupParam && ids.size === 0 && names.size === 0 && !includeUnassigned;
+    return { ids, includeUnassigned, names, isEmpty };
+}
+
+function pushURLFromSelection(idsSet, includeUnassigned) {
+    const params = new URLSearchParams(window.location.search);
+    params.delete('location_group_id');
+    params.delete('location_group_name');
+    params.delete('include_unassigned');
+    if (idsSet && idsSet.size) {
+        idsSet.forEach((id) => params.append('location_group_id', String(id)));
+    }
+    if (includeUnassigned) {
+        params.append('include_unassigned', '1');
+    }
+    const newSearch = params.toString();
+    const newUrl = newSearch ? '?' + newSearch : window.location.pathname;
+    history.replaceState(null, '', newUrl);
+    syncLocationGroupUIFromURL();
+    updateUI();
+    fetchChildrenData();
+}
+
+function renderLocationGroupSettings(groups) {
+    const container = document.getElementById('location-group-checkboxes');
+    if (!container) return;
+    const parts = [];
+    (groups || []).forEach((g) => {
+        const color = getLocationGroupColor(g.id);
+        const name = escapeHtml(g.name || '');
+        parts.push(`<label class="inline-flex items-center gap-1.5 text-sm cursor-pointer"><input type="checkbox" data-lg-id="${g.id}" class="h-4 w-4 rounded border-slate-300 cursor-pointer"> <span style="background-color:${color}" class="inline-block h-3 w-3 rounded-sm border border-black/10 shrink-0"></span> ${name}</label>`);
+    });
+    const unassignedColor = GRAY_UNASSIGNED;
+    parts.push(`<label class="inline-flex items-center gap-1.5 text-sm cursor-pointer"><input type="checkbox" data-lg-id="unassigned" class="h-4 w-4 rounded border-slate-300 cursor-pointer"> <span style="background-color:${unassignedColor}" class="inline-block h-3 w-3 rounded-sm border border-black/10 shrink-0"></span> Unassigned</label>`);
+    container.innerHTML = parts.join('');
+    syncLocationGroupUIFromURL();
+}
+
+function syncLocationGroupUIFromURL() {
+    const container = document.getElementById('location-group-checkboxes');
+    const selectAll = document.getElementById('location-group-select-all');
+    if (!container) return;
+    const { ids, includeUnassigned, names, isEmpty } = getSelectedFromURL();
+    const hasIdFilter = ids.size > 0;
+    const hasNameFilter = names.size > 0;
+    const hasFilter = hasIdFilter || hasNameFilter || includeUnassigned;
+    const checkboxes = container.querySelectorAll('input[type="checkbox"][data-lg-id]');
+    if (isEmpty) {
+        checkboxes.forEach((cb) => { cb.checked = false; });
+        if (selectAll) {
+            selectAll.textContent = 'Select all';
+            selectAll.disabled = false;
+        }
+        return;
+    }
+    if (!hasFilter) {
+        checkboxes.forEach((cb) => { cb.checked = true; });
+        if (selectAll) {
+            selectAll.textContent = 'Deselect all';
+            selectAll.disabled = false;
+        }
+        return;
+    }
+    // If filtering by name, map names to ids via rendered labels (fallback to id check)
+    const nameToId = new Map();
+    checkboxes.forEach((cb) => {
+        const label = cb.closest('label');
+        const text = label ? label.textContent.trim() : '';
+        const idVal = cb.getAttribute('data-lg-id');
+        if (idVal !== 'unassigned' && text) nameToId.set(text, Number(idVal));
+    });
+    const effectiveIds = new Set(ids);
+    if (hasNameFilter) {
+        names.forEach((n) => {
+            const mapped = nameToId.get(n);
+            if (mapped) effectiveIds.add(mapped);
+        });
+        // if names didn't map (unknown), fallback to treat name filter as ids filter
+        if (effectiveIds.size === 0) {
+            // keep original names as ids fallback not possible, so treat as hasFilter
+        }
+    }
+    checkboxes.forEach((cb) => {
+        const val = cb.getAttribute('data-lg-id');
+        if (val === 'unassigned') {
+            cb.checked = includeUnassigned;
+        } else {
+            const num = Number(val);
+            if (hasNameFilter || hasIdFilter) {
+                cb.checked = effectiveIds.has(num);
+            } else {
+                cb.checked = false;
+            }
+        }
+    });
+    if (selectAll) {
+        const allChecked = checkboxes.length > 0 && [...checkboxes].every((cb) => cb.checked);
+        selectAll.textContent = allChecked ? 'Deselect all' : 'Select all';
+        selectAll.disabled = false;
+    }
+}
+
+async function fetchLocationGroups() {
+    try {
+        const response = await fetch(`${API_URL}/v1/location_groups`, { credentials: 'same-origin' });
+        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+        const data = await response.json();
+        let groups = [];
+        if (Array.isArray(data)) groups = data;
+        else if (Array.isArray(data.location_groups)) groups = data.location_groups;
+        else if (Array.isArray(data.checkins)) groups = [];
+        renderLocationGroupSettings(groups);
+        syncLocationGroupUIFromURL();
+    } catch (error) {
+        console.error('Error fetching location groups:', error);
+    }
+}
+
+if (typeof window !== 'undefined') {
+    window.getSelectedFromURL = getSelectedFromURL;
+    window.pushURLFromSelection = pushURLFromSelection;
+    window.renderLocationGroupSettings = renderLocationGroupSettings;
+    window.syncLocationGroupUIFromURL = syncLocationGroupUIFromURL;
+    window.fetchLocationGroups = fetchLocationGroups;
+}
+
 const PILL_BG_CLASSES = ['bg-gray-400', 'bg-green-500', 'bg-yellow-500', 'bg-red-500'];
 
 function getTimePillClass(checkedOutAtMs, confirmed, nowMs) {
@@ -370,11 +554,17 @@ async function fetchChildrenData() {
         const locationGroupName = params.get('location_group_name')
         if (locationGroupName) outParams.append('location_group_name', locationGroupName);
 
-        const locationGroupId = params.get('location_group_id')
-        if (locationGroupId) outParams.append('location_group_id', locationGroupId);
+        const locationGroupIds = params.getAll('location_group_id')
+        locationGroupIds.forEach((v) => outParams.append('location_group_id', v));
+
+        const includeUnassigned = params.get('include_unassigned')
+        if (includeUnassigned) outParams.append('include_unassigned', includeUnassigned);
 
         const checkedOutAfter = params.get('checked_out_after')
         if (checkedOutAfter) outParams.append('checked_out_after', checkedOutAfter);
+
+        const fetchSignature = outParams.toString();
+        const filterChanged = fetchSignature !== lastFetchParams;
 
         const response = await fetch(`${API_URL}/v1/checkins/checkouts/?${outParams.toString()}`, {
             signal: controller.signal
@@ -398,11 +588,19 @@ async function fetchChildrenData() {
             .sort((a, b) => b.checked_out_at_ms - a.checked_out_at_ms);
 
         childrenData = sortedData;
-        const newIds = computeNewChildIds(childrenData);
-        if (newIds.size > 0) {
-            flashChildIds = newIds;
-            clearTimeout(flashTimeoutId);
-            flashTimeoutId = setTimeout(clearFlashStyles, FLASH_RESET_DELAY_MS);
+        if (filterChanged) {
+            // Filter changed: treat this response as the new baseline rather
+            // than a set of arrivals, so existing children don't flash.
+            knownChildIds = new Set(childrenData.map(getChildId).filter(Boolean));
+            clearFlashStyles();
+            lastFetchParams = fetchSignature;
+        } else {
+            const newIds = computeNewChildIds(childrenData);
+            if (newIds.size > 0) {
+                flashChildIds = newIds;
+                clearTimeout(flashTimeoutId);
+                flashTimeoutId = setTimeout(clearFlashStyles, FLASH_RESET_DELAY_MS);
+            }
         }
         const confirmedById = new Map();
         childrenData.forEach((child) => {
@@ -451,7 +649,7 @@ function updateUI() {
 
     const nowMs = Date.now();
     const visibleChildren = getVisibleChildren();
-    const listSignature = hideConfirmed + '||' + searchQuery + '||' + visibleChildren.slice(0, 100).map(getChildSignature).join('||');
+    const listSignature = hideConfirmed + '||' + searchQuery + '||' + window.location.search + '||' + visibleChildren.slice(0, 100).map(getChildSignature).join('||');
     if (dom.childrenList && listSignature !== lastListSignature) {
         const previousScrollTop = dom.childrenList.scrollTop;
         resetFlashClasses(dom.childrenList);
@@ -490,25 +688,29 @@ function renderChildren(children, nowMs, searchActive) {
         const childId = escapeHtml(getChildId(child));
         const checkedOutAtMs = child.checked_out_at_ms ?? getCheckedOutTimestamp(child.checked_out_at);
         const flashClass = flashChildIds.has(childId) ? ' child-card-flash' : '';
+        const barColor = getLocationGroupColor(child.location_group_id);
 
         return `
-            <div class="bg-white rounded-lg py-2.5 px-4 shadow-[0_0_10px_rgba(0,0,0,0.25)] flex flex-col justify-center${flashClass}">
-                <div class="font-bold text-gray-800 text-2xl mb-0">
-                    ${name}${starMarkup}
-                </div>
-                <div class="flex justify-between items-center">
-                    <div class="text-black text-xl">
-                        ${code}
+            <div class="bg-white rounded-lg shadow-[0_0_10px_rgba(0,0,0,0.25)] flex${flashClass}">
+                <div class="rounded-l-lg" style="background-color:${barColor}; width:6px; flex-shrink:0" aria-hidden="true"></div>
+                <div class="flex-1 py-2.5 px-4 flex flex-col justify-center">
+                    <div class="font-bold text-gray-800 text-2xl mb-0">
+                        ${name}${starMarkup}
                     </div>
-                    <div class="flex items-center gap-3">
-                        <div class="text-white transition-colors duration-1000 px-1.5 py-0 rounded-md text-base child-time ${getTimePillClass(checkedOutAtMs, confirmed, nowMs)}" data-child-id="${childId}">
-                            ${calculateMinutesAgoFromTimestamp(checkedOutAtMs, nowMs)}
+                    <div class="flex justify-between items-center">
+                        <div class="text-black text-xl">
+                            ${code}
                         </div>
-                        <label class="relative flex items-center text-xs text-gray-600 cursor-pointer leading-none" data-confirmed-label data-confirmed-state="${confirmed ? 'confirmed' : 'unconfirmed'}">
-                            <input type="checkbox" class="sr-only child-confirmed-checkbox" aria-label="Mark ${name} as confirmed"
-                                data-child-id="${childId}" data-planning-center-id="${planningCenterId}" data-public-id="${publicId}" data-source="${source}" ${confirmed ? 'checked' : ''}>
-                            <img src="${CONFIRMED_ICON_SRC}" alt="" class="h-10 w-10 block" data-confirmed-icon>
-                        </label>
+                        <div class="flex items-center gap-3">
+                            <div class="text-white transition-colors duration-1000 px-1.5 py-0 rounded-md text-base child-time ${getTimePillClass(checkedOutAtMs, confirmed, nowMs)}" data-child-id="${childId}">
+                                ${calculateMinutesAgoFromTimestamp(checkedOutAtMs, nowMs)}
+                            </div>
+                            <label class="relative flex items-center text-xs text-gray-600 cursor-pointer leading-none" data-confirmed-label data-confirmed-state="${confirmed ? 'confirmed' : 'unconfirmed'}">
+                                <input type="checkbox" class="sr-only child-confirmed-checkbox" aria-label="Mark ${name} as confirmed"
+                                    data-child-id="${childId}" data-planning-center-id="${planningCenterId}" data-public-id="${publicId}" data-source="${source}" ${confirmed ? 'checked' : ''}>
+                                <img src="${CONFIRMED_ICON_SRC}" alt="" class="h-10 w-10 block" data-confirmed-icon>
+                            </label>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -617,6 +819,8 @@ async function revealAdminLink() {
 
 // Initialize and start periodic updates
 document.addEventListener('DOMContentLoaded', function () {
+    if (window.__checkoutsInitialized) return;
+    window.__checkoutsInitialized = true;
     dom.childrenList = document.getElementById('children-list');
     dom.currentTime = document.getElementById('current-time');
 
@@ -665,6 +869,59 @@ document.addEventListener('DOMContentLoaded', function () {
         });
     }
 
+    const locationGroupCheckboxes = document.getElementById('location-group-checkboxes');
+    if (locationGroupCheckboxes) {
+        locationGroupCheckboxes.addEventListener('change', function (event) {
+            const target = event.target;
+            if (!target.matches('input[type="checkbox"][data-lg-id]')) return;
+            const ids = new Set();
+            let includeUnassigned = false;
+            locationGroupCheckboxes.querySelectorAll('input[type="checkbox"][data-lg-id]').forEach((cb) => {
+                if (!cb.checked) return;
+                const val = cb.getAttribute('data-lg-id');
+                if (val === 'unassigned') includeUnassigned = true;
+                else {
+                    const n = Number(val);
+                    if (Number.isFinite(n) && n > 0) ids.add(n);
+                }
+            });
+            if (ids.size === 0 && !includeUnassigned) {
+                const params = new URLSearchParams(window.location.search);
+                params.delete('location_group_id');
+                params.delete('location_group_name');
+                params.delete('include_unassigned');
+                params.append('location_group_id', '');
+                const newSearch = params.toString();
+                const newUrl = newSearch ? '?' + newSearch : window.location.pathname;
+                history.replaceState(null, '', newUrl);
+                syncLocationGroupUIFromURL();
+                updateUI();
+                fetchChildrenData();
+                return;
+            }
+            pushURLFromSelection(ids, includeUnassigned);
+        });
+    }
+
+    const locationGroupSelectAll = document.getElementById('location-group-select-all');
+    if (locationGroupSelectAll) {
+        locationGroupSelectAll.addEventListener('click', function () {
+            const isDeselect = locationGroupSelectAll.textContent.trim() === 'Deselect all';
+            const params = new URLSearchParams(window.location.search);
+            params.delete('location_group_id');
+            params.delete('location_group_name');
+            params.delete('include_unassigned');
+            if (isDeselect) {
+                params.append('location_group_id', '');
+            }
+            const newSearch = params.toString();
+            const newUrl = newSearch ? '?' + newSearch : window.location.pathname;
+            history.replaceState(null, '', newUrl);
+            syncLocationGroupUIFromURL();
+            fetchChildrenData();
+        });
+    }
+
     document.addEventListener('change', function (event) {
         const checkbox = event.target;
         if (!checkbox.classList.contains('child-confirmed-checkbox')) return;
@@ -682,6 +939,7 @@ document.addEventListener('DOMContentLoaded', function () {
     });
 
     // Initial fetch
+    fetchLocationGroups();
     fetchChildrenData();
 
     // Fetch new data from API every 3 seconds

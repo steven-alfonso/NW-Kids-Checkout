@@ -137,6 +137,148 @@ func TestController_CheckoutsWeb_PreviewTag(t *testing.T) {
 	})
 }
 
+func Test_buildFilter_location_group_id(t *testing.T) {
+	cases := []struct {
+		name   string
+		url    string
+		assert func(t *testing.T, f checkin.Filter, err error)
+	}{
+		{
+			name: "single id",
+			url:  "/test?location_group_id=5",
+			assert: func(t *testing.T, f checkin.Filter, err error) {
+				require.NoError(t, err)
+				require.Len(t, f.LocationGroupIDs, 1)
+				assert.Equal(t, int64(5), f.LocationGroupIDs[0])
+				assert.Equal(t, int64(5), f.LocationGroupID)
+			},
+		},
+		{
+			name: "repeated",
+			url:  "/test?location_group_id=1&location_group_id=2",
+			assert: func(t *testing.T, f checkin.Filter, err error) {
+				require.NoError(t, err)
+				assert.ElementsMatch(t, []int64{1, 2}, f.LocationGroupIDs)
+			},
+		},
+		{
+			name: "comma",
+			url:  "/test?location_group_id=1,2",
+			assert: func(t *testing.T, f checkin.Filter, err error) {
+				require.NoError(t, err)
+				assert.ElementsMatch(t, []int64{1, 2}, f.LocationGroupIDs)
+			},
+		},
+		{
+			name: "comma with spaces",
+			url:  "/test?location_group_id=1,%202",
+			assert: func(t *testing.T, f checkin.Filter, err error) {
+				require.NoError(t, err)
+				assert.ElementsMatch(t, []int64{1, 2}, f.LocationGroupIDs)
+			},
+		},
+		{
+			name: "mixed repeated and comma",
+			url:  "/test?location_group_id=1,2&location_group_id=3",
+			assert: func(t *testing.T, f checkin.Filter, err error) {
+				require.NoError(t, err)
+				assert.ElementsMatch(t, []int64{1, 2, 3}, f.LocationGroupIDs)
+			},
+		},
+		{
+			name: "include_unassigned=1",
+			url:  "/test?include_unassigned=1",
+			assert: func(t *testing.T, f checkin.Filter, err error) {
+				require.NoError(t, err)
+				assert.True(t, f.IncludeUnassigned)
+			},
+		},
+		{
+			name: "include_unassigned=true",
+			url:  "/test?include_unassigned=true",
+			assert: func(t *testing.T, f checkin.Filter, err error) {
+				require.NoError(t, err)
+				assert.True(t, f.IncludeUnassigned)
+			},
+		},
+		{
+			name: "include_unassigned with filter",
+			url:  "/test?location_group_id=10&include_unassigned=1",
+			assert: func(t *testing.T, f checkin.Filter, err error) {
+				require.NoError(t, err)
+				assert.True(t, f.IncludeUnassigned)
+				assert.ElementsMatch(t, []int64{10}, f.LocationGroupIDs)
+				assert.Equal(t, int64(10), f.LocationGroupID)
+			},
+		},
+		{
+			name: "parse error non-numeric",
+			url:  "/test?location_group_id=abc",
+			assert: func(t *testing.T, f checkin.Filter, err error) {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), "cannot parse location_group_id")
+			},
+		},
+		{
+			name: "parse error in comma list",
+			url:  "/test?location_group_id=1,abc",
+			assert: func(t *testing.T, f checkin.Filter, err error) {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), "cannot parse location_group_id")
+			},
+		},
+		{
+			name: "negative id",
+			url:  "/test?location_group_id=-1",
+			assert: func(t *testing.T, f checkin.Filter, err error) {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), "location_group_id must be positive")
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			app := fiber.New()
+			var got checkin.Filter
+			var gotErr error
+			app.Get("/test", func(c *fiber.Ctx) error {
+				got, gotErr = buildFilter(c)
+				return c.SendStatus(fiber.StatusOK)
+			})
+			req := httptest.NewRequest("GET", tc.url, nil)
+			_, err := app.Test(req)
+			require.NoError(t, err)
+			tc.assert(t, got, gotErr)
+		})
+	}
+}
+
+func TestController_Checkouts_filter_validation(t *testing.T) {
+	app, store := setupAuthedApp()
+	testDB, cleanup, err := db.PrepareTestDB()
+	require.NoError(t, err)
+	t.Cleanup(cleanup)
+	c := NewController(testDB, store)
+	c.RegisterRoutes(app)
+
+	t.Run("invalid location_group_id returns 400", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/v1/checkins/checkouts?location_group_id=abc", nil)
+		req.Header.Set("Accept", "application/json")
+		resp, err := app.Test(req)
+		require.NoError(t, err)
+		assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
+	})
+
+	t.Run("negative location_group_id returns 400", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/v1/checkins/checkouts?location_group_id=-1", nil)
+		req.Header.Set("Accept", "application/json")
+		resp, err := app.Test(req)
+		require.NoError(t, err)
+		assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
+	})
+}
+
 func setupAuthedApp() (*fiber.App, *session.Store) {
 	app := fiber.New()
 	store := session.New()

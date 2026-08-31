@@ -276,7 +276,7 @@ func buildFilter(c *fiber.Ctx) (checkin.Filter, error) {
 	if locationGroupName != "" {
 		locationGroupName, err = url.QueryUnescape(locationGroupName)
 		if err != nil {
-			return checkin.Filter{}, errors.New("cannot parse location_group_id")
+			return checkin.Filter{}, errors.New("cannot parse location_group_name")
 		}
 	}
 
@@ -305,20 +305,55 @@ func buildFilter(c *fiber.Ctx) (checkin.Filter, error) {
 		filter.Limit = limitInt
 	}
 
-	if lgIDStr := c.Query("location_group_id"); lgIDStr != "" {
-		lgID, err := strconv.ParseInt(lgIDStr, 10, 64)
-		if err != nil {
-			return checkin.Filter{}, errors.New("cannot parse location_group_id")
-		}
-		if lgID < 0 {
-			return checkin.Filter{}, errors.New("location_group_id must be positive")
-		}
-		filter.LocationGroupID = lgID
+	if inc := c.Query("include_unassigned"); inc == "1" || inc == "true" {
+		filter.IncludeUnassigned = true
 	}
 
-	if lgName := c.Query("location_group_name"); lgName != "" {
-		filter.LocationGroupName = lgName
+	// parse repeated/comma location_group_id
+	var ids []int64
+	rawQS := string(c.Request().URI().QueryString())
+	if rawQS != "" {
+		if parsedQS, err := url.ParseQuery(rawQS); err == nil {
+			for _, v := range parsedQS["location_group_id"] {
+				for _, part := range strings.Split(v, ",") {
+					part = strings.TrimSpace(part)
+					if part == "" {
+						continue
+					}
+					parsed, perr := strconv.ParseInt(part, 10, 64)
+					if perr != nil {
+						return checkin.Filter{}, errors.New("cannot parse location_group_id")
+					}
+					if parsed <= 0 {
+						return checkin.Filter{}, errors.New("location_group_id must be positive")
+					}
+					ids = append(ids, parsed)
+				}
+			}
+		} else {
+			// fallback to single query param
+			if lgIDStr := c.Query("location_group_id"); lgIDStr != "" {
+				for _, part := range strings.Split(lgIDStr, ",") {
+					part = strings.TrimSpace(part)
+					if part == "" {
+						continue
+					}
+					parsed, perr := strconv.ParseInt(part, 10, 64)
+					if perr != nil {
+						return checkin.Filter{}, errors.New("cannot parse location_group_id")
+					}
+					if parsed <= 0 {
+						return checkin.Filter{}, errors.New("location_group_id must be positive")
+					}
+					ids = append(ids, parsed)
+				}
+			}
+		}
 	}
+	if len(ids) == 1 {
+		filter.LocationGroupID = ids[0]
+	}
+	filter.LocationGroupIDs = ids
 
 	if cobStr := c.Query("checked_out_before"); cobStr != "" {
 		// try time.ParseDuration
@@ -364,6 +399,7 @@ func repoCheckinToOutput(checkin checkin.Checkin) Checkin {
 	return Checkin{
 		PlanningCenterID:      checkin.PlanningCenterID,
 		LocationID:            checkin.LocationID,
+		LocationGroupID:       checkin.LocationGroupID,
 		FirstName:             checkin.FirstName,
 		LastName:              checkin.LastName,
 		SecurityCode:          checkin.SecurityCode,
@@ -451,6 +487,7 @@ func manualFilterFromCheckinFilter(filter checkin.Filter) manualcheckin.Filter {
 type Checkin struct {
 	PlanningCenterID      string     `json:"planning_center_id"`
 	LocationID            int64      `json:"location_id"`
+	LocationGroupID       *int64     `json:"location_group_id"`
 	PublicID              string     `json:"public_id"`
 	FirstName             string     `json:"first_name"`
 	LastName              string     `json:"last_name"`

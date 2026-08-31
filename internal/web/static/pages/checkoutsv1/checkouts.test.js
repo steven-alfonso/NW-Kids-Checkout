@@ -59,6 +59,19 @@ function childrenListWindow() {
     return loadWindow({ html: '<!doctype html><html><body><div id="children-list"></div></body></html>' });
 }
 
+function locationGroupWindow() {
+    return loadWindow({ html: `<!doctype html><html><body>
+        <div id="children-list"></div>
+        <div id="location-group-filter">
+            <div class="flex items-center justify-between mb-2">
+                <span class="text-sm font-medium text-slate-700">Location groups</span>
+                <button id="location-group-select-all" type="button">Select all</button>
+            </div>
+            <div id="location-group-checkboxes"></div>
+        </div>
+    </body></html>` });
+}
+
 function cardFor(window, id) {
     return window.document.querySelector(`.child-time[data-child-id="${id}"]`).closest('.bg-white.rounded-lg');
 }
@@ -218,7 +231,9 @@ describe('checkoutsv1/checkouts', () => {
         expect(html).toContain('bg-gray-400');
         expect(html).toContain('bg-yellow-500');
         expect(html).toContain('transition-colors');
-        expect(html).not.toContain('background-color:');
+        // bar uses inline background-color; pill still uses bg-* classes
+        expect(html).toContain('background-color:');
+        expect(html).toContain('aria-hidden="true"');
     });
 
     it('renders empty state when no checkouts are active', () => {
@@ -433,6 +448,62 @@ describe('checkoutsv1/checkouts', () => {
         expect(Array.from(second)).toEqual(['pc:pc2']);
     });
 
+    it('does not flash children when the location group filter changes', async () => {
+        const w = loadWindow({
+            html: '<!doctype html><html><body><div id="children-list"></div></body></html>',
+            url: 'http://localhost/?location_group_id=1',
+            fetchImpl: async (url) => {
+                if (String(url).includes('location_group_id=1')) {
+                    return { ok: true, json: async () => [pcChild('a')] };
+                }
+                if (String(url).includes('location_group_id=2')) {
+                    return { ok: true, json: async () => [pcChild('b'), pcChild('c')] };
+                }
+                return { ok: true, json: async () => [] };
+            }
+        });
+        await w.fetchChildrenData();
+        expect(w.__test.getFlashChildIds().size).toBe(0);
+
+        w.history.replaceState(null, '', '?location_group_id=2');
+        await w.fetchChildrenData();
+
+        expect(w.__test.getFlashChildIds().size).toBe(0);
+        expect(w.document.querySelectorAll('.child-card-flash').length).toBe(0);
+    });
+
+    it('still flashes net-new children when the filter is unchanged', async () => {
+        const children = [pcChild('a'), pcChild('b')];
+        const w = loadWindow({
+            url: 'http://localhost/?location_group_id=1',
+            fetchImpl: async () => ({ ok: true, json: async () => children.slice() })
+        });
+        await w.fetchChildrenData();
+        expect(w.__test.getFlashChildIds().size).toBe(0);
+
+        children.push(pcChild('c'));
+        await w.fetchChildrenData();
+
+        expect(Array.from(w.__test.getFlashChildIds())).toEqual(['pc:c']);
+    });
+
+    it('clears an in-flight flash when the filter changes', async () => {
+        const children = [pcChild('a'), pcChild('b')];
+        const w = loadWindow({
+            html: '<!doctype html><html><body><div id="children-list"></div></body></html>',
+            url: 'http://localhost/?location_group_id=1',
+            fetchImpl: async () => ({ ok: true, json: async () => children.slice() })
+        });
+        await w.fetchChildrenData();
+        children.push(pcChild('d'));
+        await w.fetchChildrenData();
+        expect(Array.from(w.__test.getFlashChildIds())).toEqual(['pc:d']);
+
+        w.history.replaceState(null, '', '?location_group_id=2');
+        await w.fetchChildrenData();
+        expect(w.__test.getFlashChildIds().size).toBe(0);
+    });
+
     it('renders child-card-flash class for flashing ids', () => {
         const window = loadWindow();
         const child = pcChild('pc1');
@@ -490,5 +561,112 @@ describe('checkoutsv1/checkouts', () => {
         window.__test.setFlashChildIds(new Set(['pc:e']));
         window.__test.updateUI();
         expect(reflowCount).toBeGreaterThan(0);
+    });
+
+    it('maps location_group_id deterministically to Paul Tol muted, gray for null', () => {
+        const w = loadWindow();
+        expect(w.getLocationGroupColor(null)).toBe('#9CA3AF');
+        expect(w.getLocationGroupColor(undefined)).toBe('#9CA3AF');
+        const c1 = w.getLocationGroupColor(1);
+        expect(c1).toBe(w.getLocationGroupColor(1));
+        expect(w.PAUL_TOL_MUTED).not.toContain('#9CA3AF');
+        expect(w.getLocationGroupColor(2)).not.toBe(c1);
+    });
+
+    it('renders color bar matching location_group_id', () => {
+        const w = loadWindow();
+        const html = w.renderChildren([{ first_name: 'A', last_name: 'B', location_group_id: 1, planning_center_id: '1', checked_out_at_ms: Date.now() }], Date.now());
+        expect(html).toContain('background-color:' + w.getLocationGroupColor(1));
+        expect(html).toContain('width:6px');
+        expect(html).toContain('flex-shrink:0');
+        expect(html).toContain('aria-hidden="true"');
+        expect(html).toContain('rounded-l-lg');
+        expect(html).not.toContain('overflow-hidden');
+        expect(html).toContain('flex-1');
+        const htmlNull = w.renderChildren([{ first_name: 'C', last_name: 'D', location_group_id: null, planning_center_id: '2', checked_out_at_ms: Date.now() }], Date.now());
+        expect(htmlNull).toContain('#9CA3AF');
+        expect(htmlNull).toContain('background-color:#9CA3AF');
+    });
+
+    it('renders color bar with flash class on outer container', () => {
+        const w = loadWindow();
+        w.__test.setFlashChildIds(new Set(['pc:1']));
+        const html = w.renderChildren([{ first_name: 'A', last_name: 'B', location_group_id: 1, planning_center_id: '1', checked_out_at_ms: Date.now() }], Date.now());
+        expect(html).toContain('child-card-flash');
+        expect(html).toContain('flex child-card-flash');
+    });
+
+    it('syncLocationGroupUIFromURL Select All toggles text and hides/shows children', async () => {
+        const w = locationGroupWindow();
+        w.fetchChildrenData = async () => {};
+        w.__test.setChildrenData([
+            { source: 'planning_center', planning_center_id: '1', first_name: 'A', last_name: 'B', location_group_id: 1 },
+            { source: 'planning_center', planning_center_id: '2', first_name: 'C', last_name: 'D', location_group_id: 2 }
+        ]);
+        w.document.dispatchEvent(new w.Event('DOMContentLoaded'));
+        await new Promise(r=>setTimeout(r,10));
+
+        let btn = w.document.getElementById('location-group-select-all');
+        let checks = w.document.querySelectorAll('#location-group-checkboxes input');
+        // Initially all checked (no filter params) => text should be Deselect all
+        expect(btn.textContent.trim()).toBe('Deselect all');
+        expect([...checks].every(c=>c.checked)).toBe(true);
+        // isEmpty should be false when no params
+        expect(w.getSelectedFromURL().isEmpty).toBe(false);
+        // visible should show all children
+        expect(w.__test.getVisibleChildren().length).toBe(2);
+
+        // Click Deselect all
+        btn.click();
+        expect(btn.textContent.trim()).toBe('Select all');
+        expect(w.getSelectedFromURL().isEmpty).toBe(true);
+        expect(w.__test.getVisibleChildren().length).toBe(0);
+
+        // Click Select all
+        btn.click();
+        expect(btn.textContent.trim()).toBe('Deselect all');
+        expect(w.getSelectedFromURL().isEmpty).toBe(false);
+        expect(w.__test.getVisibleChildren().length).toBe(2);
+    });
+
+    it('manual checkbox uncheck all hides all children via sentinel URL', async () => {
+        const w = locationGroupWindow();
+        w.fetchChildrenData = async () => {};
+        w.__test.setChildrenData([
+            { source: 'planning_center', planning_center_id: '1', first_name: 'A', last_name: 'B', location_group_id: 1 },
+            { source: 'planning_center', planning_center_id: '2', first_name: 'C', last_name: 'D', location_group_id: 2 }
+        ]);
+        w.document.dispatchEvent(new w.Event('DOMContentLoaded'));
+        await new Promise(r=>setTimeout(r,10));
+
+        let btn = w.document.getElementById('location-group-select-all');
+        let checks = w.document.querySelectorAll('#location-group-checkboxes input');
+
+        // Uncheck all checkboxes manually
+        checks.forEach(c => { c.checked = false; c.dispatchEvent(new w.Event('change', {bubbles:true})); });
+        await new Promise(r=>setTimeout(r,10));
+
+        expect(btn.textContent.trim()).toBe('Select all');
+        expect(w.getSelectedFromURL().isEmpty).toBe(true);
+        expect(w.__test.getVisibleChildren().length).toBe(0);
+    });
+
+    it('select all when URL has empty location_group_id param shows Select all and hides all children', async () => {
+        const w = locationGroupWindow();
+        w.fetchChildrenData = async () => {};
+        w.window.history.replaceState(null, '', '?location_group_id=');
+        w.__test.setChildrenData([
+            { source: 'planning_center', planning_center_id: '1', first_name: 'A', last_name: 'B', location_group_id: 1 },
+            { source: 'planning_center', planning_center_id: '2', first_name: 'C', last_name: 'D', location_group_id: 2 }
+        ]);
+        w.document.dispatchEvent(new w.Event('DOMContentLoaded'));
+        await new Promise(r=>setTimeout(r,10));
+
+        let btn = w.document.getElementById('location-group-select-all');
+        let checks = w.document.querySelectorAll('#location-group-checkboxes input');
+        expect(btn.textContent.trim()).toBe('Select all');
+        expect([...checks].every(c=>c.checked)).toBe(false);
+        expect(w.getSelectedFromURL().isEmpty).toBe(true);
+        expect(w.__test.getVisibleChildren().length).toBe(0);
     });
 });

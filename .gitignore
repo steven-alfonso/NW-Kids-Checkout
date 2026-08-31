@@ -7,3 +7,4 @@ bin/kids-checkin
 tmp/*
 
 fiber.sqlite3
+.worktrees/
