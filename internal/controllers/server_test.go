@@ -62,7 +62,7 @@ func TestHomePageMenu(t *testing.T) {
 
 		html := getHomeHTML(t, app)
 		assert.Contains(t, html, `id="login-link"`)
-		assert.Contains(t, html, `href="/checkin"`)
+		assert.Contains(t, html, `href="/guest-checkin"`)
 		assert.NotContains(t, html, "id=\"admin-link\"")
 		assert.NotContains(t, html, "id=\"logout-link\"")
 		assert.False(t, strings.Contains(html, `href="/admin"`), "home HTML must not expose /admin href")

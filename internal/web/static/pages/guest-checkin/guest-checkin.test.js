@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {JSDOM} from 'jsdom';
 
-const scriptPath = path.resolve(process.cwd(), 'internal/web/static/pages/checkin/checkin.js');
+const scriptPath = path.resolve(process.cwd(), 'internal/web/static/pages/guest-checkin/guest-checkin.js');
 const apiScriptPath = path.resolve(process.cwd(), 'internal/web/static/js/api.js');
 const script = fs.readFileSync(scriptPath, 'utf8');
 const apiScript = fs.readFileSync(apiScriptPath, 'utf8');

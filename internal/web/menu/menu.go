@@ -25,7 +25,7 @@ type Item struct {
 // users.
 func For(authenticated bool, role string) []Item {
 	items := []Item{
-		{ID: "guest-checkin-link", Label: "Guest Check-In", Href: "/checkin"},
+		{ID: "guest-checkin-link", Label: "Guest Check-In", Href: "/guest-checkin"},
 		{ID: "manual-checkins-link", Label: "Manual Check-Ins", Href: "/manual-checkins"},
 	}
 	if !authenticated {

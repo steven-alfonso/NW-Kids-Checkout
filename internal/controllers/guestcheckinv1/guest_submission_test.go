@@ -746,8 +746,8 @@ func TestController_RequiresAuth(t *testing.T) {
 		require.Equal(t, fiber.StatusCreated, resp.StatusCode)
 	})
 
-	t.Run("unauthenticated GET checkin is public 200", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/checkin", nil)
+	t.Run("unauthenticated GET guest-checkin is public 200", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/guest-checkin", nil)
 		resp, _ := app.Test(req)
 		require.Equal(t, fiber.StatusOK, resp.StatusCode)
 		assert.Contains(t, resp.Header.Get("Content-Type"), "text/html")
@@ -909,8 +909,8 @@ func TestController_AuthEnforcementTableDriven(t *testing.T) {
 		require.Equal(t, fiber.StatusCreated, resp.StatusCode)
 	})
 
-	t.Run("unauth public GET checkin still 200", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/checkin", nil)
+	t.Run("unauth public GET guest-checkin still 200", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/guest-checkin", nil)
 		resp, _ := unauthApp.Test(req)
 		require.Equal(t, fiber.StatusOK, resp.StatusCode)
 	})

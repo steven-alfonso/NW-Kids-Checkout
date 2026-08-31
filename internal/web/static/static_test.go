@@ -103,7 +103,7 @@ func TestFilteredFSBlocksHTML(t *testing.T) {
 	})
 
 	t.Run("still allows js", func(t *testing.T) {
-		f, err := fsys.Open("pages/checkin/checkin.js")
+		f, err := fsys.Open("pages/guest-checkin/guest-checkin.js")
 		require.NoError(t, err)
 		_ = f.Close()
 	})
@@ -127,14 +127,14 @@ func TestFilteredFSBlocksHTML(t *testing.T) {
 		require.Equal(t, fiber.StatusNotFound, resp.StatusCode)
 	})
 
-	t.Run("GET /static/pages/checkin/checkin.js still serves", func(t *testing.T) {
+	t.Run("GET /static/pages/guest-checkin/guest-checkin.js still serves", func(t *testing.T) {
 		app := fiber.New()
 		app.Use("/static", filesystem.New(filesystem.Config{
 			Root:       http.FS(NewFilteredFS()),
 			PathPrefix: "",
 			Browse:     true,
 		}))
-		req := httptest.NewRequest(http.MethodGet, "/static/pages/checkin/checkin.js", nil)
+		req := httptest.NewRequest(http.MethodGet, "/static/pages/guest-checkin/guest-checkin.js", nil)
 		resp, err := app.Test(req)
 		require.NoError(t, err)
 		require.Equal(t, http.StatusOK, resp.StatusCode)

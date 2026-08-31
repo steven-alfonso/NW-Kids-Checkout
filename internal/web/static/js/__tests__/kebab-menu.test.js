@@ -12,7 +12,7 @@ function menuHtml() {
         <body>
             <button id="menu-button" type="button" aria-expanded="false" aria-controls="kebab-menu"></button>
             <div id="kebab-menu" class="hidden">
-                <a id="guest-checkin-link" href="/checkin">Guest Check-In</a>
+                <a id="guest-checkin-link" href="/guest-checkin">Guest Check-In</a>
                 <a id="login-link" href="/login?next=/">Log In</a>
             </div>
         </body></html>`;

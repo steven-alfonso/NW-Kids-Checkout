@@ -58,13 +58,13 @@ func (controller *Controller) RegisterRoutes(app *fiber.App) {
 	adminGroup.Use(noStoreCache)
 	adminGroup.Get("/guest-submissions", controller.AdminListSubmissions)
 
-	app.Get("/checkin", controller.KioskPage)
+	app.Get("/guest-checkin", controller.KioskPage)
 	app.Get("/admin/guest-entries", middleware.AuthRequired(controller.sessionStore, "admin"), controller.AdminPage)
 }
 
 func (controller *Controller) KioskPage(c *fiber.Ctx) error {
 	c.Set("Cache-Control", "no-store")
-	f, err := static.EmbeddedFS.Open("pages/checkin/index.html")
+	f, err := static.EmbeddedFS.Open("pages/guest-checkin/index.html")
 	if err != nil {
 		return fiber.ErrInternalServerError
 	}
