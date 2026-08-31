@@ -11,6 +11,7 @@ let searchQuery = '';
 let hideConfirmed = false;
 let knownChildIds = new Set();
 let lastFetchParams = null;
+let locationGroups = [];
 let flashChildIds = new Set();
 let flashTimeoutId = null;
 const CONFIRM_OVERRIDE_TTL_MS = 15000;
@@ -164,20 +165,13 @@ function getVisibleChildren() {
             return name.includes(q) || code.includes(q);
         });
     }
-    const { ids, includeUnassigned, names, isEmpty } = getSelectedFromURL();
+    const { ids, includeUnassigned, isEmpty } = getSelectedFromURL();
     if (isEmpty) return [];
-    const hasFilter = ids.size > 0 || names.size > 0 || includeUnassigned;
-    if (hasFilter) {
-        // Build name->id map if filtering by name (requires groups fetched, fallback to no map)
-        // For client filtering, check both id and name (name via container text map not available here, so use ids only; name case handled by server, but client fallback checks ids)
+    if (ids.size > 0 || includeUnassigned) {
         children = children.filter((child) => {
             const lgId = child.location_group_id;
             if (lgId == null) return includeUnassigned;
-            const num = Number(lgId);
-            if (ids.has(num)) return true;
-            // if filtering by name but ids empty, we don't have mapping here; keep visible to avoid hiding due to missing map (server already filtered)
-            if (names.size > 0 && ids.size === 0) return true;
-            return false;
+            return ids.has(Number(lgId));
         });
     }
     return children;
@@ -329,6 +323,12 @@ function getSelectedFromURL() {
     });
     const hasLocationGroupParam = params.has('location_group_id') || params.has('location_group_name') || params.has('include_unassigned');
     const isEmpty = hasLocationGroupParam && ids.size === 0 && names.size === 0 && !includeUnassigned;
+    if (names.size > 0 && locationGroups.length > 0) {
+        locationGroups.forEach((g) => {
+            const gid = Number(g.id);
+            if (names.has(g.name) && Number.isFinite(gid) && gid > 0) ids.add(gid);
+        });
+    }
     return { ids, includeUnassigned, names, isEmpty };
 }
 
@@ -354,11 +354,12 @@ function pushURLFromSelection(idsSet, includeUnassigned) {
 function renderLocationGroupSettings(groups) {
     const container = document.getElementById('location-group-checkboxes');
     if (!container) return;
+    locationGroups = groups || [];
     const parts = [];
     (groups || []).forEach((g) => {
         const color = getLocationGroupColor(g.id);
         const name = escapeHtml(g.name || '');
-        parts.push(`<label class="inline-flex items-center gap-1.5 text-sm cursor-pointer"><input type="checkbox" data-lg-id="${g.id}" class="h-4 w-4 rounded border-slate-300 cursor-pointer"> <span style="background-color:${color}" class="inline-block h-3 w-3 rounded-sm border border-black/10 shrink-0"></span> ${name}</label>`);
+        parts.push(`<label class="inline-flex items-center gap-1.5 text-sm cursor-pointer"><input type="checkbox" data-lg-id="${escapeHtml(String(g.id))}" class="h-4 w-4 rounded border-slate-300 cursor-pointer"> <span style="background-color:${color}" class="inline-block h-3 w-3 rounded-sm border border-black/10 shrink-0"></span> ${name}</label>`);
     });
     const unassignedColor = GRAY_UNASSIGNED;
     parts.push(`<label class="inline-flex items-center gap-1.5 text-sm cursor-pointer"><input type="checkbox" data-lg-id="unassigned" class="h-4 w-4 rounded border-slate-300 cursor-pointer"> <span style="background-color:${unassignedColor}" class="inline-block h-3 w-3 rounded-sm border border-black/10 shrink-0"></span> Unassigned</label>`);
@@ -371,9 +372,7 @@ function syncLocationGroupUIFromURL() {
     const selectAll = document.getElementById('location-group-select-all');
     if (!container) return;
     const { ids, includeUnassigned, names, isEmpty } = getSelectedFromURL();
-    const hasIdFilter = ids.size > 0;
-    const hasNameFilter = names.size > 0;
-    const hasFilter = hasIdFilter || hasNameFilter || includeUnassigned;
+    const hasFilter = ids.size > 0 || names.size > 0 || includeUnassigned;
     const checkboxes = container.querySelectorAll('input[type="checkbox"][data-lg-id]');
     if (isEmpty) {
         checkboxes.forEach((cb) => { cb.checked = false; });
@@ -391,36 +390,12 @@ function syncLocationGroupUIFromURL() {
         }
         return;
     }
-    // If filtering by name, map names to ids via rendered labels (fallback to id check)
-    const nameToId = new Map();
-    checkboxes.forEach((cb) => {
-        const label = cb.closest('label');
-        const text = label ? label.textContent.trim() : '';
-        const idVal = cb.getAttribute('data-lg-id');
-        if (idVal !== 'unassigned' && text) nameToId.set(text, Number(idVal));
-    });
-    const effectiveIds = new Set(ids);
-    if (hasNameFilter) {
-        names.forEach((n) => {
-            const mapped = nameToId.get(n);
-            if (mapped) effectiveIds.add(mapped);
-        });
-        // if names didn't map (unknown), fallback to treat name filter as ids filter
-        if (effectiveIds.size === 0) {
-            // keep original names as ids fallback not possible, so treat as hasFilter
-        }
-    }
     checkboxes.forEach((cb) => {
         const val = cb.getAttribute('data-lg-id');
         if (val === 'unassigned') {
             cb.checked = includeUnassigned;
         } else {
-            const num = Number(val);
-            if (hasNameFilter || hasIdFilter) {
-                cb.checked = effectiveIds.has(num);
-            } else {
-                cb.checked = false;
-            }
+            cb.checked = ids.has(Number(val));
         }
     });
     if (selectAll) {
@@ -532,6 +507,14 @@ function updateTimes() {
 // Function to fetch data from API
 async function fetchChildrenData() {
     if (isApiCallBlocked('fetchChildrenData')) return;
+
+    // Nothing selected: nothing is displayed, so skip the server pull entirely
+    // (the empty selection is signaled by the ?location_group_id= sentinel).
+    if (getSelectedFromURL().isEmpty) {
+        childrenData = [];
+        updateUI();
+        return;
+    }
 
     let controller = null;
     try {

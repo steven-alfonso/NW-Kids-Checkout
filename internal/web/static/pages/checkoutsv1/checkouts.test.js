@@ -51,6 +51,7 @@ function pcChild(id) {
         first_name: id,
         last_name: 'X',
         security_code: id,
+        location_group_id: 1,
         checked_out_at: new Date().toISOString()
     };
 }
@@ -668,5 +669,111 @@ describe('checkoutsv1/checkouts', () => {
         expect([...checks].every(c=>c.checked)).toBe(false);
         expect(w.getSelectedFromURL().isEmpty).toBe(true);
         expect(w.__test.getVisibleChildren().length).toBe(0);
+    });
+
+    it('skips the server fetch while the location group selection is empty', async () => {
+        let checkoutsFetchCount = 0;
+        const w = loadWindow({
+            html: '<!doctype html><html><body><div id="children-list"></div></body></html>',
+            url: 'http://localhost/?location_group_id=',
+            fetchImpl: async (url) => {
+                if (String(url).includes('/v1/checkins/checkouts')) checkoutsFetchCount++;
+                return { ok: true, json: async () => [pcChild('a')] };
+            }
+        });
+        await w.fetchChildrenData();
+        expect(checkoutsFetchCount).toBe(0);
+        expect(w.document.getElementById('children-list').textContent).toContain('No children called yet');
+
+        // Interval tick while still empty must not hit the API either
+        await w.fetchChildrenData();
+        expect(checkoutsFetchCount).toBe(0);
+    });
+
+    it('refetches and reseeds the flash baseline after re-selecting a group', async () => {
+        const w = loadWindow({
+            html: '<!doctype html><html><body><div id="children-list"></div></body></html>',
+            url: 'http://localhost/?location_group_id=',
+            fetchImpl: async () => ({ ok: true, json: async () => [pcChild('a')] })
+        });
+        await w.fetchChildrenData();
+        expect(w.__test.getFlashChildIds().size).toBe(0);
+
+        w.history.replaceState(null, '', '?location_group_id=1');
+        await w.fetchChildrenData();
+
+        expect(Array.from(w.__test.getFlashChildIds())).toEqual([]);
+        expect(w.document.querySelectorAll('.child-time').length).toBe(1);
+    });
+
+    it('unchecking all groups via the UI stops future server polls', async () => {
+        let checkoutsFetchCount = 0;
+        const w = locationGroupWindow();
+        w.window.fetch = async (url) => {
+            if (String(url).includes('/v1/checkins/checkouts')) checkoutsFetchCount++;
+            return { ok: true, json: async () => [] };
+        };
+        w.document.dispatchEvent(new w.Event('DOMContentLoaded'));
+        await new Promise(r=>setTimeout(r,10));
+
+        expect(checkoutsFetchCount).toBe(1); // initial children fetch
+        w.renderLocationGroupSettings([{ id: 1, name: 'A' }, { id: 2, name: 'B' }]);
+
+        const checks = w.document.querySelectorAll('#location-group-checkboxes input');
+        checks.forEach(c => { c.checked = false; c.dispatchEvent(new w.Event('change', {bubbles:true})); });
+        await new Promise(r=>setTimeout(r,10));
+
+        expect(w.getSelectedFromURL().isEmpty).toBe(true);
+        expect(w.__test.getVisibleChildren().length).toBe(0);
+
+        // While empty, scheduled polls must not hit the API
+        const before = checkoutsFetchCount;
+        await w.fetchChildrenData();
+        await w.fetchChildrenData();
+        expect(checkoutsFetchCount).toBe(before);
+
+        // Re-selecting a group resumes polling
+        w.document.querySelector('#location-group-checkboxes input[data-lg-id="1"]').checked = true;
+        w.document.querySelector('#location-group-checkboxes input[data-lg-id="1"]').dispatchEvent(new w.Event('change', {bubbles:true}));
+        await new Promise(r=>setTimeout(r,10));
+        expect(checkoutsFetchCount).toBe(before + 1);
+    });
+
+    it('resolves location_group_name filters to ids once groups are known', () => {
+        const w = loadWindow({
+            html: '<!doctype html><html><body><div id="location-group-checkboxes"></div></body></html>',
+            url: 'http://localhost/?location_group_name=Grace'
+        });
+        const sel = w.getSelectedFromURL();
+        expect(sel.names.has('Grace')).toBe(true);
+        expect(sel.ids.size).toBe(0);
+
+        w.renderLocationGroupSettings([{ id: 1, name: 'Grace' }, { id: 2, name: 'Ada' }]);
+
+        const resolved = w.getSelectedFromURL();
+        expect(resolved.ids.has(1)).toBe(true);
+        expect(resolved.ids.has(2)).toBe(false);
+    });
+
+    it('keeps name-filtered children visible when ids are also selected', () => {
+        const w = loadWindow({
+            html: '<!doctype html><html><body><div id="location-group-checkboxes"></div></body></html>',
+            url: 'http://localhost/?location_group_id=2&location_group_name=Grace'
+        });
+        w.renderLocationGroupSettings([{ id: 1, name: 'Grace' }, { id: 2, name: 'Ada' }]);
+        w.__test.setChildrenData([
+            { source: 'planning_center', planning_center_id: '1', location_group_id: 1 },
+            { source: 'planning_center', planning_center_id: '2', location_group_id: 2 }
+        ]);
+        const visible = w.__test.getVisibleChildren().map((c) => c.planning_center_id);
+        expect(visible).toEqual(['1', '2']);
+    });
+
+    it('escapes location group ids in the settings markup', () => {
+        const w = locationGroupWindow();
+        w.renderLocationGroupSettings([{ id: '1" onmouseover="alert(1)', name: 'Sneaky' }]);
+        const html = w.document.getElementById('location-group-checkboxes').innerHTML;
+        expect(html).not.toContain('data-lg-id="1" onmouseover=');
+        expect(html).toContain('&quot;');
     });
 });
