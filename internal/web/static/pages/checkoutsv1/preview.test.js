@@ -46,4 +46,10 @@ describe('checkoutsv1/preview', () => {
         expect(data[3].checked_out_confirmed_at).toBe('2024-01-01T00:00:00Z');
         expect(data[7].checked_out_confirmed_at).toBe('2024-01-01T00:00:00Z');
     });
+
+    it('preview seeds location_group_id', () => {
+        const w = loadWindow(); w.loadPreviewData(); expect(w.__test.getChildrenData()[0].location_group_id).toBeDefined();
+        const data = w.__test.getChildrenData();
+        expect(data.map((c) => c.location_group_id)).toEqual([1, 2, 1, null, 1, 2, 1, null]);
+    });
 });
