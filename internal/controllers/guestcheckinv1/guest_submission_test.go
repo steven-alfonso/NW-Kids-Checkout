@@ -58,9 +58,9 @@ func TestController_CreateSubmission(t *testing.T) {
 	wipeSubmissionTables(t, testDB)
 
 	payload := map[string]any{
-		"parent":   map[string]any{"first_name": "John", "last_name": "Smith", "phone": "555-1234", "email": "john@example.com"},
-		"children": []map[string]any{{"first_name": "Timmy", "last_name": "Smith", "dob": "2020-01-01", "grade": "1st"}},
-	}
+		"parent":     map[string]any{"first_name": "John", "last_name": "Smith", "phone": "555-1234", "email": "john@example.com", "address1": "123 Main St", "address2": "", "city": "Seattle", "state": "WA", "zip": "98101"},
+		"children":   []map[string]any{{"first_name": "Timmy", "last_name": "Smith", "dob": "2020-01-01", "grade": "1st", "gender": "Boy", "relationship": "Parent"}},
+		"safety_ack": true}
 	body, _ := json.Marshal(payload)
 
 	req := httptest.NewRequest("POST", "/v1/checkins/guest-submissions", bytes.NewReader(body))
@@ -86,9 +86,9 @@ func TestController_CreateSubmissionContentType(t *testing.T) {
 	wipeSubmissionTables(t, testDB)
 
 	payload := map[string]any{
-		"parent":   map[string]any{"first_name": "John", "last_name": "Smith", "phone": "555-1234", "email": "john@example.com"},
-		"children": []map[string]any{{"first_name": "Timmy", "last_name": "Smith", "dob": "2020-01-01", "grade": "1st"}},
-	}
+		"parent":     map[string]any{"first_name": "John", "last_name": "Smith", "phone": "555-1234", "email": "john@example.com", "address1": "123 Main St", "address2": "", "city": "Seattle", "state": "WA", "zip": "98101"},
+		"children":   []map[string]any{{"first_name": "Timmy", "last_name": "Smith", "dob": "2020-01-01", "grade": "1st", "gender": "Boy", "relationship": "Parent"}},
+		"safety_ack": true}
 	body, _ := json.Marshal(payload)
 
 	t.Run("wrong content type returns 415", func(t *testing.T) {
@@ -117,30 +117,34 @@ func TestController_CreateSubmissionRequiresPhoneOrEmail(t *testing.T) {
 	wipeSubmissionTables(t, testDB)
 
 	tests := []struct {
-		name  string
-		phone string
-		email string
+		name           string
+		phone          string
+		email          string
+		expectedStatus int
 	}{
-		{"phone only", "5551234", ""},
-		{"email only", "", "john@example.com"},
-		{"both", "5551234", "john@example.com"},
+		{"phone only", "5551234", "", fiber.StatusCreated},
+		{"email only", "", "john@example.com", fiber.StatusBadRequest},
+		{"both", "5551234", "john@example.com", fiber.StatusCreated},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			payload := map[string]any{
-				"parent":   map[string]any{"first_name": "A", "last_name": "B", "phone": tt.phone, "email": tt.email},
-				"children": []map[string]any{{"first_name": "C", "last_name": "D", "dob": "2020-01-01", "grade": "1st"}},
+				"parent":     map[string]any{"first_name": "A", "last_name": "B", "phone": tt.phone, "email": tt.email, "address1": "123 Main St", "address2": "", "city": "Seattle", "state": "WA", "zip": "98101"},
+				"children":   []map[string]any{{"first_name": "C", "last_name": "D", "dob": "2020-01-01", "grade": "1st", "gender": "Boy", "relationship": "Parent"}},
+				"safety_ack": true,
 			}
 			body, _ := json.Marshal(payload)
 			req := httptest.NewRequest("POST", "/v1/checkins/guest-submissions", bytes.NewReader(body))
 			req.Header.Set("Content-Type", "application/json")
 			resp, _ := app.Test(req)
-			require.Equal(t, fiber.StatusCreated, resp.StatusCode)
+			require.Equal(t, tt.expectedStatus, resp.StatusCode)
 
-			var created Submission
-			require.NoError(t, json.NewDecoder(resp.Body).Decode(&created))
-			assert.Equal(t, tt.phone, created.Parent.Phone)
-			assert.Equal(t, tt.email, created.Parent.Email)
+			if tt.expectedStatus == fiber.StatusCreated {
+				var created Submission
+				require.NoError(t, json.NewDecoder(resp.Body).Decode(&created))
+				assert.Equal(t, tt.phone, created.Parent.Phone)
+				assert.Equal(t, tt.email, created.Parent.Email)
+			}
 		})
 	}
 }
@@ -154,39 +158,39 @@ func TestController_CreateSubmissionValidation(t *testing.T) {
 		payload map[string]any
 	}{
 		{"empty children", map[string]any{
-			"parent":   map[string]any{"first_name": "A", "last_name": "B", "phone": "1234567", "email": "a@b.com"},
-			"children": []map[string]any{},
-		}},
+			"parent":     map[string]any{"first_name": "A", "last_name": "B", "phone": "1234567", "email": "a@b.com", "address1": "123 Main St", "address2": "", "city": "Seattle", "state": "WA", "zip": "98101"},
+			"children":   []map[string]any{},
+			"safety_ack": true}},
 		{"missing phone and email", map[string]any{
-			"parent":   map[string]any{"first_name": "A", "last_name": "B", "phone": "", "email": ""},
-			"children": []map[string]any{{"first_name": "C", "last_name": "D", "dob": "2020-01-01", "grade": "1st"}},
-		}},
+			"parent":     map[string]any{"first_name": "A", "last_name": "B", "phone": "", "email": "", "address1": "123 Main St", "address2": "", "city": "Seattle", "state": "WA", "zip": "98101"},
+			"children":   []map[string]any{{"first_name": "C", "last_name": "D", "dob": "2020-01-01", "grade": "1st", "gender": "Boy", "relationship": "Parent"}},
+			"safety_ack": true}},
 		{"future dob", map[string]any{
-			"parent":   map[string]any{"first_name": "A", "last_name": "B", "phone": "1234567", "email": "a@b.com"},
-			"children": []map[string]any{{"first_name": "C", "last_name": "D", "dob": "2999-01-01", "grade": "1st"}},
-		}},
+			"parent":     map[string]any{"first_name": "A", "last_name": "B", "phone": "1234567", "email": "a@b.com", "address1": "123 Main St", "address2": "", "city": "Seattle", "state": "WA", "zip": "98101"},
+			"children":   []map[string]any{{"first_name": "C", "last_name": "D", "dob": "2999-01-01", "grade": "1st", "gender": "Boy", "relationship": "Parent"}},
+			"safety_ack": true}},
 		{"bad phone", map[string]any{
-			"parent":   map[string]any{"first_name": "A", "last_name": "B", "phone": "12", "email": "a@b.com"},
-			"children": []map[string]any{{"first_name": "C", "last_name": "D", "dob": "2020-01-01", "grade": "1st"}},
-		}},
+			"parent":     map[string]any{"first_name": "A", "last_name": "B", "phone": "12", "email": "a@b.com", "address1": "123 Main St", "address2": "", "city": "Seattle", "state": "WA", "zip": "98101"},
+			"children":   []map[string]any{{"first_name": "C", "last_name": "D", "dob": "2020-01-01", "grade": "1st", "gender": "Boy", "relationship": "Parent"}},
+			"safety_ack": true}},
 		{"whitespace-only parent names", map[string]any{
-			"parent":   map[string]any{"first_name": "   ", "last_name": "   ", "phone": "1234567", "email": "a@b.com"},
-			"children": []map[string]any{{"first_name": "C", "last_name": "D", "dob": "2020-01-01", "grade": "1st"}},
-		}},
+			"parent":     map[string]any{"first_name": "   ", "last_name": "   ", "phone": "1234567", "email": "a@b.com", "address1": "123 Main St", "address2": "", "city": "Seattle", "state": "WA", "zip": "98101"},
+			"children":   []map[string]any{{"first_name": "C", "last_name": "D", "dob": "2020-01-01", "grade": "1st", "gender": "Boy", "relationship": "Parent"}},
+			"safety_ack": true}},
 		{"whitespace-only child name", map[string]any{
-			"parent":   map[string]any{"first_name": "A", "last_name": "B", "phone": "1234567", "email": "a@b.com"},
-			"children": []map[string]any{{"first_name": " ", "last_name": "\t", "dob": "2020-01-01", "grade": "1st"}},
-		}},
+			"parent":     map[string]any{"first_name": "A", "last_name": "B", "phone": "1234567", "email": "a@b.com", "address1": "123 Main St", "address2": "", "city": "Seattle", "state": "WA", "zip": "98101"},
+			"children":   []map[string]any{{"first_name": " ", "last_name": "\t", "dob": "2020-01-01", "grade": "1st", "gender": "Boy", "relationship": "Parent"}},
+			"safety_ack": true}},
 		{"more than 10 children", map[string]any{
-			"parent": map[string]any{"first_name": "A", "last_name": "B", "phone": "1234567", "email": "a@b.com"},
+			"parent": map[string]any{"first_name": "A", "last_name": "B", "phone": "1234567", "email": "a@b.com", "address1": "123 Main St", "address2": "", "city": "Seattle", "state": "WA", "zip": "98101"},
 			"children": func() []map[string]any {
 				children := make([]map[string]any, 0, 11)
 				for range 11 {
-					children = append(children, map[string]any{"first_name": "C", "last_name": "D", "dob": "2020-01-01", "grade": "1st"})
+					children = append(children, map[string]any{"first_name": "C", "last_name": "D", "dob": "2020-01-01", "grade": "1st", "gender": "Boy", "relationship": "Parent"})
 				}
 				return children
 			}(),
-		}},
+			"safety_ack": true}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -206,7 +210,13 @@ func TestController_ListSubmissionsNamesOnly(t *testing.T) {
 	repo := guestsubmission.NewRepo(testDB)
 	_, err := repo.CreateSubmission(t.Context(), guestsubmission.Parent{
 		FirstName: "John", LastName: "Smith", Phone: "555-1234", Email: "john@example.com",
-	}, []guestsubmission.Child{{FirstName: "Timmy", LastName: "Smith", DOB: "2020-01-01", Grade: "1st"}})
+
+		Address1: "123 Main St",
+		City:     "Seattle",
+		State:    "WA",
+		Zip:      "98101"}, []guestsubmission.Child{{FirstName: "Timmy", LastName: "Smith", DOB: "2020-01-01", Grade: "1st",
+		Gender:       "Boy",
+		Relationship: "Parent"}}, true)
 	require.NoError(t, err)
 
 	req := httptest.NewRequest("GET", "/v1/checkins/guest-submissions", nil)
@@ -231,7 +241,13 @@ func TestController_AdminListFullDetail(t *testing.T) {
 	repo := guestsubmission.NewRepo(testDB)
 	_, err := repo.CreateSubmission(t.Context(), guestsubmission.Parent{
 		FirstName: "John", LastName: "Smith", Phone: "555", Email: "j@e.com",
-	}, []guestsubmission.Child{{FirstName: "Timmy", LastName: "Smith", DOB: "2020-01-01", Grade: "1st"}})
+
+		Address1: "123 Main St",
+		City:     "Seattle",
+		State:    "WA",
+		Zip:      "98101"}, []guestsubmission.Child{{FirstName: "Timmy", LastName: "Smith", DOB: "2020-01-01", Grade: "1st",
+		Gender:       "Boy",
+		Relationship: "Parent"}}, true)
 	require.NoError(t, err)
 
 	req := httptest.NewRequest("GET", "/v1/admin/guest-submissions", nil)
@@ -259,7 +275,13 @@ func TestController_AdminListPaginated(t *testing.T) {
 	for i := range 11 {
 		sub, err := repo.CreateSubmission(t.Context(), guestsubmission.Parent{
 			FirstName: "Page", LastName: fmt.Sprintf("P%d", i), Phone: "555", Email: "p@test.com",
-		}, []guestsubmission.Child{{FirstName: "Kid", LastName: fmt.Sprintf("P%d", i), DOB: "2020-01-01", Grade: "1st"}})
+
+			Address1: "123 Main St",
+			City:     "Seattle",
+			State:    "WA",
+			Zip:      "98101"}, []guestsubmission.Child{{FirstName: "Kid", LastName: fmt.Sprintf("P%d", i), DOB: "2020-01-01", Grade: "1st",
+			Gender:       "Boy",
+			Relationship: "Parent"}}, true)
 		require.NoError(t, err)
 		publicIDs = append(publicIDs, sub.PublicID)
 		createdAt := now.Add(time.Duration(i) * time.Minute)
@@ -319,7 +341,13 @@ func TestController_StaffCannotMarkEntered(t *testing.T) {
 	repo := guestsubmission.NewRepo(testDB)
 	sub, err := repo.CreateSubmission(t.Context(), guestsubmission.Parent{
 		FirstName: "A", LastName: "B", Phone: "1234567", Email: "a@b.com",
-	}, []guestsubmission.Child{{FirstName: "C", LastName: "D", DOB: "2020-01-01", Grade: "1st"}})
+
+		Address1: "123 Main St",
+		City:     "Seattle",
+		State:    "WA",
+		Zip:      "98101"}, []guestsubmission.Child{{FirstName: "C", LastName: "D", DOB: "2020-01-01", Grade: "1st",
+		Gender:       "Boy",
+		Relationship: "Parent"}}, true)
 	require.NoError(t, err)
 
 	body, _ := json.Marshal(map[string]any{"status": "entered"})
@@ -336,7 +364,13 @@ func TestController_AdminCanMarkEntered(t *testing.T) {
 	repo := guestsubmission.NewRepo(testDB)
 	sub, err := repo.CreateSubmission(t.Context(), guestsubmission.Parent{
 		FirstName: "A", LastName: "B", Phone: "1234567", Email: "a@b.com",
-	}, []guestsubmission.Child{{FirstName: "C", LastName: "D", DOB: "2020-01-01", Grade: "1st"}})
+
+		Address1: "123 Main St",
+		City:     "Seattle",
+		State:    "WA",
+		Zip:      "98101"}, []guestsubmission.Child{{FirstName: "C", LastName: "D", DOB: "2020-01-01", Grade: "1st",
+		Gender:       "Boy",
+		Relationship: "Parent"}}, true)
 	require.NoError(t, err)
 
 	approveBody, _ := json.Marshal(map[string]any{"status": "approved"})
@@ -359,7 +393,13 @@ func TestController_AdminCanEnterFromPending(t *testing.T) {
 	repo := guestsubmission.NewRepo(testDB)
 	sub, err := repo.CreateSubmission(t.Context(), guestsubmission.Parent{
 		FirstName: "A", LastName: "B", Phone: "1234567", Email: "a@b.com",
-	}, []guestsubmission.Child{{FirstName: "C", LastName: "D", DOB: "2020-01-01", Grade: "1st"}})
+
+		Address1: "123 Main St",
+		City:     "Seattle",
+		State:    "WA",
+		Zip:      "98101"}, []guestsubmission.Child{{FirstName: "C", LastName: "D", DOB: "2020-01-01", Grade: "1st",
+		Gender:       "Boy",
+		Relationship: "Parent"}}, true)
 	require.NoError(t, err)
 
 	body, _ := json.Marshal(map[string]any{"status": "entered"})
@@ -388,10 +428,16 @@ func TestController_ApproveCreatesManualCheckins(t *testing.T) {
 	repo := guestsubmission.NewRepo(testDB)
 	sub, err := repo.CreateSubmission(t.Context(), guestsubmission.Parent{
 		FirstName: "A", LastName: "B", Phone: "1234567", Email: "a@b.com",
-	}, []guestsubmission.Child{
-		{FirstName: "C", LastName: "D", DOB: "2020-01-01", Grade: "1st"},
-		{FirstName: "E", LastName: "F", DOB: "2021-02-02", Grade: "1st"},
-	})
+
+		Address1: "123 Main St",
+		City:     "Seattle",
+		State:    "WA",
+		Zip:      "98101"}, []guestsubmission.Child{
+		{FirstName: "C", LastName: "D", DOB: "2020-01-01", Grade: "1st",
+			Gender:       "Boy",
+			Relationship: "Parent"},
+		{FirstName: "E", LastName: "F", DOB: "2021-02-02", Grade: "1st", Gender: "Boy", Relationship: "Parent"},
+	}, true)
 	require.NoError(t, err)
 
 	body, _ := json.Marshal(map[string]any{"status": "approved"})
@@ -413,7 +459,13 @@ func TestController_PatchSubmissionStatusNamesOnly(t *testing.T) {
 	repo := guestsubmission.NewRepo(testDB)
 	sub, err := repo.CreateSubmission(t.Context(), guestsubmission.Parent{
 		FirstName: "John", LastName: "Smith", Phone: "555-1234", Email: "john@example.com",
-	}, []guestsubmission.Child{{FirstName: "Timmy", LastName: "Smith", DOB: "2020-01-01", Grade: "1st"}})
+
+		Address1: "123 Main St",
+		City:     "Seattle",
+		State:    "WA",
+		Zip:      "98101"}, []guestsubmission.Child{{FirstName: "Timmy", LastName: "Smith", DOB: "2020-01-01", Grade: "1st",
+		Gender:       "Boy",
+		Relationship: "Parent"}}, true)
 	require.NoError(t, err)
 
 	body, _ := json.Marshal(map[string]any{"status": "approved"})
@@ -437,7 +489,13 @@ func TestController_CreateCheckinsFromEntered(t *testing.T) {
 	repo := guestsubmission.NewRepo(testDB)
 	sub, err := repo.CreateSubmission(t.Context(), guestsubmission.Parent{
 		FirstName: "A", LastName: "B", Phone: "1234567", Email: "a@b.com",
-	}, []guestsubmission.Child{{FirstName: "C", LastName: "D", DOB: "2020-01-01", Grade: "1st"}})
+
+		Address1: "123 Main St",
+		City:     "Seattle",
+		State:    "WA",
+		Zip:      "98101"}, []guestsubmission.Child{{FirstName: "C", LastName: "D", DOB: "2020-01-01", Grade: "1st",
+		Gender:       "Boy",
+		Relationship: "Parent"}}, true)
 	require.NoError(t, err)
 	require.NoError(t, repo.UpdateSubmissionStatus(t.Context(), sub.PublicID, guestsubmission.StatusEntered, time.Now().UTC()))
 
@@ -463,7 +521,13 @@ func TestController_CreateCheckinsAlreadyExist(t *testing.T) {
 	repo := guestsubmission.NewRepo(testDB)
 	sub, err := repo.CreateSubmission(t.Context(), guestsubmission.Parent{
 		FirstName: "A", LastName: "B", Phone: "1234567", Email: "a@b.com",
-	}, []guestsubmission.Child{{FirstName: "C", LastName: "D", DOB: "2020-01-01", Grade: "1st"}})
+
+		Address1: "123 Main St",
+		City:     "Seattle",
+		State:    "WA",
+		Zip:      "98101"}, []guestsubmission.Child{{FirstName: "C", LastName: "D", DOB: "2020-01-01", Grade: "1st",
+		Gender:       "Boy",
+		Relationship: "Parent"}}, true)
 	require.NoError(t, err)
 	require.NoError(t, repo.UpdateSubmissionStatus(t.Context(), sub.PublicID, guestsubmission.StatusEntered, time.Now().UTC()))
 	require.NoError(t, repo.CreateManualCheckins(t.Context(), sub.PublicID))
@@ -547,7 +611,13 @@ func TestController_CreateCheckinsInvalidStatusReturnsBadRequest(t *testing.T) {
 	t.Run("pending returns 400 not 500", func(t *testing.T) {
 		sub, err := repo.CreateSubmission(t.Context(), guestsubmission.Parent{
 			FirstName: "A", LastName: "B", Phone: "1234567", Email: "a@b.com",
-		}, []guestsubmission.Child{{FirstName: "C", LastName: "D", DOB: "2020-01-01", Grade: "1st"}})
+
+			Address1: "123 Main St",
+			City:     "Seattle",
+			State:    "WA",
+			Zip:      "98101"}, []guestsubmission.Child{{FirstName: "C", LastName: "D", DOB: "2020-01-01", Grade: "1st",
+			Gender:       "Boy",
+			Relationship: "Parent"}}, true)
 		require.NoError(t, err)
 
 		req := httptest.NewRequest("POST", fmt.Sprintf("/v1/checkins/guest-submissions/%s/checkins", sub.PublicID), nil)
@@ -560,7 +630,13 @@ func TestController_CreateCheckinsInvalidStatusReturnsBadRequest(t *testing.T) {
 		wipeSubmissionTables(t, testDB)
 		sub, err := repo.CreateSubmission(t.Context(), guestsubmission.Parent{
 			FirstName: "E", LastName: "F", Phone: "1234567", Email: "e@f.com",
-		}, []guestsubmission.Child{{FirstName: "G", LastName: "H", DOB: "2020-01-01", Grade: "1st"}})
+
+			Address1: "123 Main St",
+			City:     "Seattle",
+			State:    "WA",
+			Zip:      "98101"}, []guestsubmission.Child{{FirstName: "G", LastName: "H", DOB: "2020-01-01", Grade: "1st",
+			Gender:       "Boy",
+			Relationship: "Parent"}}, true)
 		require.NoError(t, err)
 		require.NoError(t, repo.UpdateSubmissionStatus(t.Context(), sub.PublicID, guestsubmission.StatusRejected, time.Now().UTC()))
 
@@ -612,7 +688,13 @@ func TestController_RequiresAuth(t *testing.T) {
 	repo := guestsubmission.NewRepo(testDB)
 	sub, err := repo.CreateSubmission(t.Context(), guestsubmission.Parent{
 		FirstName: "A", LastName: "B", Phone: "1234567", Email: "a@b.com",
-	}, []guestsubmission.Child{{FirstName: "C", LastName: "D", DOB: "2020-01-01", Grade: "1st"}})
+
+		Address1: "123 Main St",
+		City:     "Seattle",
+		State:    "WA",
+		Zip:      "98101"}, []guestsubmission.Child{{FirstName: "C", LastName: "D", DOB: "2020-01-01", Grade: "1st",
+		Gender:       "Boy",
+		Relationship: "Parent"}}, true)
 	require.NoError(t, err)
 
 	t.Run("unauthenticated GET guest-submissions redirects to login", func(t *testing.T) {
@@ -654,9 +736,9 @@ func TestController_RequiresAuth(t *testing.T) {
 
 	t.Run("unauthenticated POST guest-submissions is public 201", func(t *testing.T) {
 		payload := map[string]any{
-			"parent":   map[string]any{"first_name": "John", "last_name": "Smith", "phone": "555-1234", "email": "john@example.com"},
-			"children": []map[string]any{{"first_name": "Timmy", "last_name": "Smith", "dob": "2020-01-01", "grade": "1st"}},
-		}
+			"parent":     map[string]any{"first_name": "John", "last_name": "Smith", "phone": "555-1234", "email": "john@example.com", "address1": "123 Main St", "address2": "", "city": "Seattle", "state": "WA", "zip": "98101"},
+			"children":   []map[string]any{{"first_name": "Timmy", "last_name": "Smith", "dob": "2020-01-01", "grade": "1st", "gender": "Boy", "relationship": "Parent"}},
+			"safety_ack": true}
 		body, _ := json.Marshal(payload)
 		req := httptest.NewRequest("POST", "/v1/checkins/guest-submissions", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
@@ -681,9 +763,9 @@ func TestController_UnauthenticatedPostIsPublic(t *testing.T) {
 	NewController(testDB, store).RegisterRoutes(app)
 
 	payload := map[string]any{
-		"parent":   map[string]any{"first_name": "John", "last_name": "Smith", "phone": "555-1234", "email": "john@example.com"},
-		"children": []map[string]any{{"first_name": "Timmy", "last_name": "Smith", "dob": "2020-01-01", "grade": "1st"}},
-	}
+		"parent":     map[string]any{"first_name": "John", "last_name": "Smith", "phone": "555-1234", "email": "john@example.com", "address1": "123 Main St", "address2": "", "city": "Seattle", "state": "WA", "zip": "98101"},
+		"children":   []map[string]any{{"first_name": "Timmy", "last_name": "Smith", "dob": "2020-01-01", "grade": "1st", "gender": "Boy", "relationship": "Parent"}},
+		"safety_ack": true}
 	body, _ := json.Marshal(payload)
 
 	req := httptest.NewRequest("POST", "/v1/checkins/guest-submissions", bytes.NewReader(body))
@@ -718,7 +800,13 @@ func TestController_AdminRoutesRequireAdminRole(t *testing.T) {
 		repo := guestsubmission.NewRepo(testDB)
 		sub, err := repo.CreateSubmission(t.Context(), guestsubmission.Parent{
 			FirstName: "A", LastName: "B", Phone: "1234567", Email: "a@b.com",
-		}, []guestsubmission.Child{{FirstName: "C", LastName: "D", DOB: "2020-01-01", Grade: "1st"}})
+
+			Address1: "123 Main St",
+			City:     "Seattle",
+			State:    "WA",
+			Zip:      "98101"}, []guestsubmission.Child{{FirstName: "C", LastName: "D", DOB: "2020-01-01", Grade: "1st",
+			Gender:       "Boy",
+			Relationship: "Parent"}}, true)
 		require.NoError(t, err)
 		body, _ := json.Marshal(map[string]any{"status": "approved"})
 		req := httptest.NewRequest("PATCH", fmt.Sprintf("/v1/checkins/guest-submissions/%s/status", sub.PublicID), bytes.NewReader(body))
@@ -731,7 +819,13 @@ func TestController_AdminRoutesRequireAdminRole(t *testing.T) {
 		repo := guestsubmission.NewRepo(testDB)
 		sub, err := repo.CreateSubmission(t.Context(), guestsubmission.Parent{
 			FirstName: "A", LastName: "B", Phone: "1234567", Email: "a@b.com",
-		}, []guestsubmission.Child{{FirstName: "C", LastName: "D", DOB: "2020-01-01", Grade: "1st"}})
+
+			Address1: "123 Main St",
+			City:     "Seattle",
+			State:    "WA",
+			Zip:      "98101"}, []guestsubmission.Child{{FirstName: "C", LastName: "D", DOB: "2020-01-01", Grade: "1st",
+			Gender:       "Boy",
+			Relationship: "Parent"}}, true)
 		require.NoError(t, err)
 		require.NoError(t, repo.UpdateSubmissionStatus(t.Context(), sub.PublicID, guestsubmission.StatusEntered, time.Now().UTC()))
 		req := httptest.NewRequest("POST", fmt.Sprintf("/v1/checkins/guest-submissions/%s/checkins", sub.PublicID), nil)
@@ -749,7 +843,13 @@ func TestController_AuthEnforcementTableDriven(t *testing.T) {
 	repo := guestsubmission.NewRepo(testDB)
 	sub, err := repo.CreateSubmission(t.Context(), guestsubmission.Parent{
 		FirstName: "Auth", LastName: "Test", Phone: "1234567", Email: "auth@test.com",
-	}, []guestsubmission.Child{{FirstName: "Kid", LastName: "Auth", DOB: "2020-01-01", Grade: "1st"}})
+
+		Address1: "123 Main St",
+		City:     "Seattle",
+		State:    "WA",
+		Zip:      "98101"}, []guestsubmission.Child{{FirstName: "Kid", LastName: "Auth", DOB: "2020-01-01", Grade: "1st",
+		Gender:       "Boy",
+		Relationship: "Parent"}}, true)
 	require.NoError(t, err)
 
 	unauthApp := fiber.New()
@@ -799,9 +899,9 @@ func TestController_AuthEnforcementTableDriven(t *testing.T) {
 
 	t.Run("unauth public POST still 201", func(t *testing.T) {
 		payload := map[string]any{
-			"parent":   map[string]any{"first_name": "John", "last_name": "Smith", "phone": "555-1234", "email": "john@example.com"},
-			"children": []map[string]any{{"first_name": "Timmy", "last_name": "Smith", "dob": "2020-01-01", "grade": "1st"}},
-		}
+			"parent":     map[string]any{"first_name": "John", "last_name": "Smith", "phone": "555-1234", "email": "john@example.com", "address1": "123 Main St", "address2": "", "city": "Seattle", "state": "WA", "zip": "98101"},
+			"children":   []map[string]any{{"first_name": "Timmy", "last_name": "Smith", "dob": "2020-01-01", "grade": "1st", "gender": "Boy", "relationship": "Parent"}},
+			"safety_ack": true}
 		body, _ := json.Marshal(payload)
 		req := httptest.NewRequest("POST", "/v1/checkins/guest-submissions", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")

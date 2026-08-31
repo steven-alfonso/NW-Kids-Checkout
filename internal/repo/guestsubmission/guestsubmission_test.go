@@ -51,10 +51,14 @@ func Test_sqliteRepo_CreateSubmission(t *testing.T) {
 		LastName:  "Smith",
 		Phone:     "555-1234",
 		Email:     "john@example.com",
-	}, []Child{
-		{FirstName: "Timmy", LastName: "Smith", DOB: "2020-01-01", Grade: "1st Grade"},
-		{FirstName: "Sara", LastName: "Smith", DOB: "2018-06-15", Grade: "3rd Grade"},
-	})
+
+		Address1: "123 Main St",
+		City:     "Seattle",
+		State:    "WA",
+		Zip:      "98101"}, []Child{
+		{FirstName: "Timmy", LastName: "Smith", DOB: "2020-01-01", Grade: "1st Grade", Gender: "Boy", Relationship: "Parent"},
+		{FirstName: "Sara", LastName: "Smith", DOB: "2018-06-15", Grade: "3rd Grade", Gender: "Boy", Relationship: "Parent"},
+	}, true)
 	require.NoError(t, err)
 
 	assert.NotZero(t, sub.ID)
@@ -77,12 +81,20 @@ func Test_sqliteRepo_ListSubmissions(t *testing.T) {
 
 	a, err := s.CreateSubmission(t.Context(), Parent{
 		FirstName: "John", LastName: "Smith", Phone: "1", Email: "a@b.com",
-	}, []Child{{FirstName: "Timmy", LastName: "Smith", DOB: "2020-01-01", Grade: "k"}})
+
+		Address1: "123 Main St",
+		City:     "Seattle",
+		State:    "WA",
+		Zip:      "98101"}, []Child{{FirstName: "Timmy", LastName: "Smith", DOB: "2020-01-01", Grade: "k", Gender: "Boy", Relationship: "Parent"}}, true)
 	require.NoError(t, err)
 
 	b, err := s.CreateSubmission(t.Context(), Parent{
 		FirstName: "Jane", LastName: "Doe", Phone: "2", Email: "j@d.com",
-	}, []Child{{FirstName: "Sam", LastName: "Doe", DOB: "2019-02-02", Grade: "1"}})
+
+		Address1: "123 Main St",
+		City:     "Seattle",
+		State:    "WA",
+		Zip:      "98101"}, []Child{{FirstName: "Sam", LastName: "Doe", DOB: "2019-02-02", Grade: "1", Gender: "Boy", Relationship: "Parent"}}, true)
 	require.NoError(t, err)
 
 	t.Run("filter by status", func(t *testing.T) {
@@ -136,11 +148,19 @@ func Test_sqliteRepo_ListSubmissions(t *testing.T) {
 		s2 := NewRepo(testDB)
 		standalone, err := s2.CreateSubmission(t.Context(), Parent{
 			FirstName: "Standalone", LastName: "Family", Phone: "99", Email: "s@f.com",
-		}, []Child{{FirstName: "SF", LastName: "Family", DOB: "2020-01-01", Grade: "k"}})
+
+			Address1: "123 Main St",
+			City:     "Seattle",
+			State:    "WA",
+			Zip:      "98101"}, []Child{{FirstName: "SF", LastName: "Family", DOB: "2020-01-01", Grade: "k", Gender: "Boy", Relationship: "Parent"}}, true)
 		require.NoError(t, err)
 		entered, err := s2.CreateSubmission(t.Context(), Parent{
 			FirstName: "Entered", LastName: "Only", Phone: "88", Email: "e@o.com",
-		}, []Child{{FirstName: "EO", LastName: "Only", DOB: "2020-01-01", Grade: "k"}})
+
+			Address1: "123 Main St",
+			City:     "Seattle",
+			State:    "WA",
+			Zip:      "98101"}, []Child{{FirstName: "EO", LastName: "Only", DOB: "2020-01-01", Grade: "k", Gender: "Boy", Relationship: "Parent"}}, true)
 		require.NoError(t, err)
 
 		now := time.Now().UTC()
@@ -160,7 +180,11 @@ func Test_sqliteRepo_ListSubmissions(t *testing.T) {
 		s3 := NewRepo(testDB)
 		b, err := s3.CreateSubmission(t.Context(), Parent{
 			FirstName: "Jane", LastName: "Doe", Phone: "2", Email: "j@d.com",
-		}, []Child{{FirstName: "Sam", LastName: "Doe", DOB: "2019-02-02", Grade: "1"}})
+
+			Address1: "123 Main St",
+			City:     "Seattle",
+			State:    "WA",
+			Zip:      "98101"}, []Child{{FirstName: "Sam", LastName: "Doe", DOB: "2019-02-02", Grade: "1", Gender: "Boy", Relationship: "Parent"}}, true)
 		require.NoError(t, err)
 		res, err := s3.ListSubmissions(t.Context(), Filter{PublicID: b.PublicID})
 		require.NoError(t, err)
@@ -176,7 +200,11 @@ func Test_sqliteRepo_ListSubmissions(t *testing.T) {
 		for i := range 3 {
 			sub, err := s4.CreateSubmission(t.Context(), Parent{
 				FirstName: "Limit", LastName: string(rune('A' + i)), Phone: "1", Email: "l@test.com",
-			}, []Child{{FirstName: "Kid", LastName: string(rune('A' + i)), DOB: "2020-01-01", Grade: "k"}})
+
+				Address1: "123 Main St",
+				City:     "Seattle",
+				State:    "WA",
+				Zip:      "98101"}, []Child{{FirstName: "Kid", LastName: string(rune('A' + i)), DOB: "2020-01-01", Grade: "k", Gender: "Boy", Relationship: "Parent"}}, true)
 			require.NoError(t, err)
 			// Spread created_at by minutes to make ordering deterministic.
 			createdAt := now.Add(time.Duration(i) * time.Minute)
@@ -217,7 +245,11 @@ func Test_sqliteRepo_ListSubmissions_Pagination(t *testing.T) {
 	for i := range 5 {
 		sub, err := s.CreateSubmission(t.Context(), Parent{
 			FirstName: "Page", LastName: string(rune('A' + i)), Phone: "1", Email: "p@test.com",
-		}, []Child{{FirstName: "Kid", LastName: string(rune('A' + i)), DOB: "2020-01-01", Grade: "k"}})
+
+			Address1: "123 Main St",
+			City:     "Seattle",
+			State:    "WA",
+			Zip:      "98101"}, []Child{{FirstName: "Kid", LastName: string(rune('A' + i)), DOB: "2020-01-01", Grade: "k", Gender: "Boy", Relationship: "Parent"}}, true)
 		require.NoError(t, err)
 		createdAt := now.Add(time.Duration(i) * time.Minute)
 		_, err = testDB.ExecContext(t.Context(), `UPDATE guest_submissions SET created_at = ? WHERE public_id = ?`, createdAt, sub.PublicID)
@@ -259,7 +291,11 @@ func Test_sqliteRepo_CountSubmissions(t *testing.T) {
 	for i := range 3 {
 		_, err := s.CreateSubmission(t.Context(), Parent{
 			FirstName: "Count", LastName: string(rune('A' + i)), Phone: "1", Email: "c@test.com",
-		}, []Child{{FirstName: "Kid", LastName: string(rune('A' + i)), DOB: "2020-01-01", Grade: "k"}})
+
+			Address1: "123 Main St",
+			City:     "Seattle",
+			State:    "WA",
+			Zip:      "98101"}, []Child{{FirstName: "Kid", LastName: string(rune('A' + i)), DOB: "2020-01-01", Grade: "k", Gender: "Boy", Relationship: "Parent"}}, true)
 		require.NoError(t, err)
 	}
 
@@ -306,7 +342,11 @@ func Test_statusPredicate(t *testing.T) {
 
 		sub, err := createSubmissionDirect(t, testDB, Parent{
 			FirstName: "Dual", LastName: "Timestamp", Phone: "555-9999", Email: "dual@test.com",
-		}, []Child{{FirstName: "DT", LastName: "Timestamp", DOB: "2020-01-01", Grade: "k"}})
+
+			Address1: "123 Main St",
+			City:     "Seattle",
+			State:    "WA",
+			Zip:      "98101"}, []Child{{FirstName: "DT", LastName: "Timestamp", DOB: "2020-01-01", Grade: "k", Gender: "Boy", Relationship: "Parent"}})
 		require.NoError(t, err)
 
 		// Set both approved_at and rejected_at directly in the DB
@@ -339,7 +379,7 @@ func statusPredicateForTest(t *testing.T, status string) squirrel.Sqlizer {
 func createSubmissionDirect(t *testing.T, db *sql.DB, parent Parent, children []Child) (Submission, error) {
 	t.Helper()
 	s := NewRepo(db)
-	return s.CreateSubmission(t.Context(), parent, children)
+	return s.CreateSubmission(t.Context(), parent, children, true)
 }
 
 func Test_sqliteRepo_UpdateSubmissionStatus(t *testing.T) {
@@ -347,7 +387,11 @@ func Test_sqliteRepo_UpdateSubmissionStatus(t *testing.T) {
 	s := NewRepo(testDB)
 	sub, err := s.CreateSubmission(t.Context(), Parent{
 		FirstName: "John", LastName: "Smith", Phone: "1", Email: "a@b.com",
-	}, []Child{{FirstName: "Timmy", LastName: "Smith", DOB: "2020-01-01", Grade: "k"}})
+
+		Address1: "123 Main St",
+		City:     "Seattle",
+		State:    "WA",
+		Zip:      "98101"}, []Child{{FirstName: "Timmy", LastName: "Smith", DOB: "2020-01-01", Grade: "k", Gender: "Boy", Relationship: "Parent"}}, true)
 	require.NoError(t, err)
 
 	t.Run("approve via UpdateSubmissionStatus is rejected", func(t *testing.T) {
@@ -381,7 +425,11 @@ func Test_sqliteRepo_UpdateSubmissionStatus(t *testing.T) {
 	t.Run("rejected", func(t *testing.T) {
 		rejSub, err := s.CreateSubmission(t.Context(), Parent{
 			FirstName: "Reject", LastName: "Test", Phone: "2", Email: "rej@test.com",
-		}, []Child{{FirstName: "RT", LastName: "Test", DOB: "2020-01-01", Grade: "k"}})
+
+			Address1: "123 Main St",
+			City:     "Seattle",
+			State:    "WA",
+			Zip:      "98101"}, []Child{{FirstName: "RT", LastName: "Test", DOB: "2020-01-01", Grade: "k", Gender: "Boy", Relationship: "Parent"}}, true)
 		require.NoError(t, err)
 
 		now := time.Now().UTC()
@@ -399,7 +447,11 @@ func Test_sqliteRepo_UpdateSubmissionStatus(t *testing.T) {
 	t.Run("concurrent status change returns ErrConflict", func(t *testing.T) {
 		raceSub, err := s.CreateSubmission(t.Context(), Parent{
 			FirstName: "Race", LastName: "Test", Phone: "3", Email: "race@test.com",
-		}, []Child{{FirstName: "RC", LastName: "Test", DOB: "2020-01-01", Grade: "k"}})
+
+			Address1: "123 Main St",
+			City:     "Seattle",
+			State:    "WA",
+			Zip:      "98101"}, []Child{{FirstName: "RC", LastName: "Test", DOB: "2020-01-01", Grade: "k", Gender: "Boy", Relationship: "Parent"}}, true)
 		require.NoError(t, err)
 		assert.Equal(t, StatusPending, raceSub.Status)
 
@@ -438,10 +490,14 @@ func Test_sqliteRepo_ApproveSubmission(t *testing.T) {
 
 	sub, err := s.CreateSubmission(t.Context(), Parent{
 		FirstName: "John", LastName: "Smith", Phone: "555-1234", Email: "john@example.com",
-	}, []Child{
-		{FirstName: "Timmy", LastName: "Smith", DOB: "2020-01-01", Grade: "k"},
-		{FirstName: "Sara", LastName: "Smith", DOB: "2018-06-15", Grade: "1"},
-	})
+
+		Address1: "123 Main St",
+		City:     "Seattle",
+		State:    "WA",
+		Zip:      "98101"}, []Child{
+		{FirstName: "Timmy", LastName: "Smith", DOB: "2020-01-01", Grade: "k", Gender: "Boy", Relationship: "Parent"},
+		{FirstName: "Sara", LastName: "Smith", DOB: "2018-06-15", Grade: "1", Gender: "Boy", Relationship: "Parent"},
+	}, true)
 	require.NoError(t, err)
 
 	now := time.Now().UTC()
@@ -471,7 +527,11 @@ func Test_sqliteRepo_ApproveSubmission(t *testing.T) {
 	t.Run("approving a submission that is no longer pending returns ErrConflict", func(t *testing.T) {
 		nonPending, err := s.CreateSubmission(t.Context(), Parent{
 			FirstName: "Ann", LastName: "Other", Phone: "555-9999", Email: "a@o.com",
-		}, []Child{{FirstName: "Kid", LastName: "Other", DOB: "2019-02-02", Grade: "1"}})
+
+			Address1: "123 Main St",
+			City:     "Seattle",
+			State:    "WA",
+			Zip:      "98101"}, []Child{{FirstName: "Kid", LastName: "Other", DOB: "2019-02-02", Grade: "1", Gender: "Boy", Relationship: "Parent"}}, true)
 		require.NoError(t, err)
 		require.NoError(t, s.UpdateSubmissionStatus(t.Context(), nonPending.PublicID, StatusEntered, time.Now().UTC()))
 
@@ -486,10 +546,14 @@ func Test_sqliteRepo_CreateManualCheckins(t *testing.T) {
 
 	sub, err := s.CreateSubmission(t.Context(), Parent{
 		FirstName: "John", LastName: "Smith", Phone: "555-1234", Email: "john@example.com",
-	}, []Child{
-		{FirstName: "Timmy", LastName: "Smith", DOB: "2020-01-01", Grade: "k"},
-		{FirstName: "Sara", LastName: "Smith", DOB: "2018-06-15", Grade: "1"},
-	})
+
+		Address1: "123 Main St",
+		City:     "Seattle",
+		State:    "WA",
+		Zip:      "98101"}, []Child{
+		{FirstName: "Timmy", LastName: "Smith", DOB: "2020-01-01", Grade: "k", Gender: "Boy", Relationship: "Parent"},
+		{FirstName: "Sara", LastName: "Smith", DOB: "2018-06-15", Grade: "1", Gender: "Boy", Relationship: "Parent"},
+	}, true)
 	require.NoError(t, err)
 
 	t.Run("creates rows without changing entered status", func(t *testing.T) {
@@ -535,7 +599,11 @@ func Test_sqliteRepo_CreateManualCheckins(t *testing.T) {
 	t.Run("rejected submission errors", func(t *testing.T) {
 		rejSub, err := s.CreateSubmission(t.Context(), Parent{
 			FirstName: "Jane", LastName: "Doe", Phone: "555-0000", Email: "j@d.com",
-		}, []Child{{FirstName: "Sam", LastName: "Doe", DOB: "2019-02-02", Grade: "1"}})
+
+			Address1: "123 Main St",
+			City:     "Seattle",
+			State:    "WA",
+			Zip:      "98101"}, []Child{{FirstName: "Sam", LastName: "Doe", DOB: "2019-02-02", Grade: "1", Gender: "Boy", Relationship: "Parent"}}, true)
 		require.NoError(t, err)
 		require.NoError(t, s.UpdateSubmissionStatus(t.Context(), rejSub.PublicID, StatusRejected, time.Now().UTC()))
 
@@ -546,7 +614,11 @@ func Test_sqliteRepo_CreateManualCheckins(t *testing.T) {
 	t.Run("pending submission errors", func(t *testing.T) {
 		pendingSub, err := s.CreateSubmission(t.Context(), Parent{
 			FirstName: "Jim", LastName: "Bean", Phone: "555-1111", Email: "j@b.com",
-		}, []Child{{FirstName: "Kid", LastName: "Bean", DOB: "2019-02-02", Grade: "1"}})
+
+			Address1: "123 Main St",
+			City:     "Seattle",
+			State:    "WA",
+			Zip:      "98101"}, []Child{{FirstName: "Kid", LastName: "Bean", DOB: "2019-02-02", Grade: "1", Gender: "Boy", Relationship: "Parent"}}, true)
 		require.NoError(t, err)
 
 		err = s.CreateManualCheckins(t.Context(), pendingSub.PublicID)
@@ -565,10 +637,14 @@ func Test_sqliteRepo_CreateManualCheckins_PartialCoverage(t *testing.T) {
 
 	sub, err := s.CreateSubmission(t.Context(), Parent{
 		FirstName: "Partial", LastName: "Family", Phone: "555-1234", Email: "partial@test.com",
-	}, []Child{
-		{FirstName: "Kid1", LastName: "Family", DOB: "2020-01-01", Grade: "k"},
-		{FirstName: "Kid2", LastName: "Family", DOB: "2019-02-02", Grade: "1"},
-	})
+
+		Address1: "123 Main St",
+		City:     "Seattle",
+		State:    "WA",
+		Zip:      "98101"}, []Child{
+		{FirstName: "Kid1", LastName: "Family", DOB: "2020-01-01", Grade: "k", Gender: "Boy", Relationship: "Parent"},
+		{FirstName: "Kid2", LastName: "Family", DOB: "2019-02-02", Grade: "1", Gender: "Boy", Relationship: "Parent"},
+	}, true)
 	require.NoError(t, err)
 	require.Len(t, sub.Children, 2)
 	require.NoError(t, s.UpdateSubmissionStatus(t.Context(), sub.PublicID, StatusEntered, time.Now().UTC()))
@@ -622,10 +698,14 @@ func Test_sqliteRepo_ListSubmissions_WithoutManualCheckins_PartialAfterCleanup(t
 
 	sub, err := s.CreateSubmission(t.Context(), Parent{
 		FirstName: "Cleanup", LastName: "Family", Phone: "555-1234", Email: "cleanup@test.com",
-	}, []Child{
-		{FirstName: "Kid1", LastName: "Family", DOB: "2020-01-01", Grade: "k"},
-		{FirstName: "Kid2", LastName: "Family", DOB: "2019-02-02", Grade: "1"},
-	})
+
+		Address1: "123 Main St",
+		City:     "Seattle",
+		State:    "WA",
+		Zip:      "98101"}, []Child{
+		{FirstName: "Kid1", LastName: "Family", DOB: "2020-01-01", Grade: "k", Gender: "Boy", Relationship: "Parent"},
+		{FirstName: "Kid2", LastName: "Family", DOB: "2019-02-02", Grade: "1", Gender: "Boy", Relationship: "Parent"},
+	}, true)
 	require.NoError(t, err)
 	require.NoError(t, s.UpdateSubmissionStatus(t.Context(), sub.PublicID, StatusEntered, time.Now().UTC()))
 	require.NoError(t, s.CreateManualCheckins(t.Context(), sub.PublicID))
@@ -668,7 +748,11 @@ func Test_sqliteRepo_CreateSubmission_ErrorBranches(t *testing.T) {
 	t.Run("zero children returns error", func(t *testing.T) {
 		_, err := s.CreateSubmission(t.Context(), Parent{
 			FirstName: "No", LastName: "Kids", Phone: "555-1234", Email: "nokids@test.com",
-		}, []Child{})
+
+			Address1: "123 Main St",
+			City:     "Seattle",
+			State:    "WA",
+			Zip:      "98101"}, []Child{}, true)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "at least one child")
 
@@ -684,7 +768,11 @@ func Test_sqliteRepo_CreateSubmission_ErrorBranches(t *testing.T) {
 		wipeAll(t)
 		_, err := s.CreateSubmission(t.Context(), Parent{
 			FirstName: "No", LastName: "Contact", Phone: "", Email: "",
-		}, []Child{{FirstName: "Kid", LastName: "Contact", DOB: "2020-01-01", Grade: "k"}})
+
+			Address1: "123 Main St",
+			City:     "Seattle",
+			State:    "WA",
+			Zip:      "98101"}, []Child{{FirstName: "Kid", LastName: "Contact", DOB: "2020-01-01", Grade: "k", Gender: "Boy", Relationship: "Parent"}}, true)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "inserting parent")
 

@@ -197,14 +197,34 @@ function renderEntry(container, entry) {
     const parentBlock = document.createElement('div');
     const parentTitle = document.createElement('p');
     parentTitle.className = 'mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500';
-    parentTitle.textContent = 'Parent';
+    parentTitle.textContent = 'Parent / Guardian';
     parentBlock.appendChild(parentTitle);
-    const parentRows = document.createElement('div');
-    parentRows.className = 'mb-4 flex flex-wrap gap-x-6 gap-y-4';
+    const parentContactRow = document.createElement('div');
+    parentContactRow.className = 'mb-3 flex flex-wrap gap-x-6 gap-y-4';
     ['first_name', 'last_name', 'phone', 'email'].forEach(field => {
-        parentRows.appendChild(chip(entry.parent[field], field));
+        parentContactRow.appendChild(chip(entry.parent[field], field));
     });
-    parentBlock.appendChild(parentRows);
+    parentBlock.appendChild(parentContactRow);
+    const parentAddressRow = document.createElement('div');
+    parentAddressRow.className = 'mb-3 flex flex-wrap gap-x-6 gap-y-4';
+    ['address1', 'address2', 'city', 'state', 'zip'].forEach(field => {
+        parentAddressRow.appendChild(chip(entry.parent[field], field));
+    });
+    parentBlock.appendChild(parentAddressRow);
+    const addressSummary = [entry.parent.address1, entry.parent.address2, [entry.parent.city, entry.parent.state].filter(Boolean).join(', '), entry.parent.zip].filter(v => v && String(v).trim()).join(' — ');
+    if (addressSummary) {
+        const addrLine = document.createElement('p');
+        addrLine.className = 'mb-3 text-xs text-slate-600';
+        addrLine.textContent = addressSummary;
+        parentBlock.appendChild(addrLine);
+    }
+    if (entry.safety_ack !== undefined) {
+        const ack = document.createElement('div');
+        ack.className = 'mb-4 inline-flex items-center gap-2 rounded-md border px-2.5 py-1 text-xs font-semibold ' + (entry.safety_ack ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-red-200 bg-red-50 text-red-700');
+        ack.textContent = entry.safety_ack ? '✓ Safety acknowledgement confirmed' : '✗ Safety acknowledgement missing';
+        ack.title = 'FOR SAFETY PURPOSES, I MUST PRESENT SAFETY CLAIM TAG ASSIGNED TO CHILD OR A VALID ID UPON CHECKOUT TO OBTAIN MY CHILD.';
+        parentBlock.appendChild(ack);
+    }
     card.appendChild(parentBlock);
 
     const childrenBlock = document.createElement('div');
@@ -214,12 +234,30 @@ function renderEntry(container, entry) {
     childrenBlock.appendChild(childrenTitle);
     (entry.children || []).forEach(child => {
         const row = document.createElement('div');
-        row.className = 'mb-4 flex flex-wrap gap-x-6 gap-y-4 items-end';
-        ['first_name', 'last_name', 'dob', 'grade'].forEach(field => {
+        row.className = 'mb-4 rounded-lg border border-slate-100 bg-slate-50 p-3';
+        const topRow = document.createElement('div');
+        topRow.className = 'flex flex-wrap gap-x-6 gap-y-4';
+        ['first_name', 'last_name', 'dob', 'grade', 'gender', 'relationship'].forEach(field => {
             const raw = child[field];
             const display = field === 'dob' ? formatDob(raw) : raw;
-            row.appendChild(chip(display, field));
+            topRow.appendChild(chip(display, field));
         });
+        row.appendChild(topRow);
+        const notesRow = document.createElement('div');
+        notesRow.className = 'mt-3 flex flex-wrap gap-x-6 gap-y-4';
+        const dietary = child.dietary_restrictions;
+        const special = child.special_needs;
+        const dietaryChip = chip(dietary, 'dietary_restrictions');
+        const specialChip = chip(special, 'special_needs');
+        if (dietary && String(dietary).trim()) {
+            dietaryChip.querySelector('button').className = 'inline-flex items-center rounded-md border border-amber-300 bg-amber-50 px-2.5 py-1 text-sm text-amber-900 hover:bg-amber-100 cursor-pointer';
+        }
+        if (special && String(special).trim()) {
+            specialChip.querySelector('button').className = 'inline-flex items-center rounded-md border border-sky-300 bg-sky-50 px-2.5 py-1 text-sm text-sky-900 hover:bg-sky-100 cursor-pointer';
+        }
+        notesRow.appendChild(dietaryChip);
+        notesRow.appendChild(specialChip);
+        row.appendChild(notesRow);
         childrenBlock.appendChild(row);
     });
     card.appendChild(childrenBlock);

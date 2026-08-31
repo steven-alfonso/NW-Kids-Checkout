@@ -59,8 +59,9 @@ function entry(publicId, status, overrides = {}) {
     return {
         public_id: publicId,
         status,
-        parent: {first_name: 'A', last_name: 'B', phone: '555', email: 'a@b.com'},
+        parent: {first_name: 'A', last_name: 'B', phone: '555', email: 'a@b.com', address1: '123 Main St', address2: '', city: 'Seattle', state: 'WA', zip: '98101'},
         children: [],
+        safety_ack: true,
         ...overrides
     };
 }
@@ -170,17 +171,40 @@ describe('admin-guest-entries', () => {
             const window = loadWindow();
             const container = window.document.createElement('div');
             const sub = entry('sub-1', 'approved', {
-                parent: {first_name: 'John', last_name: 'Smith', phone: '555-1234', email: 'j@e.com'},
-                children: [{first_name: 'Timmy', last_name: 'Smith', dob: '2020-01-01', grade: '1st Grade'}]
+                parent: {first_name: 'John', last_name: 'Smith', phone: '555-1234', email: 'j@e.com', address1: '123 Main St', address2: 'Apt 2', city: 'Seattle', state: 'WA', zip: '98101'},
+                children: [{first_name: 'Timmy', last_name: 'Smith', dob: '2020-01-01', grade: '1st Grade', gender: 'Boy', relationship: 'Parent', dietary_restrictions: 'Peanut', special_needs: 'Wheelchair'}]
             });
             const chips = window.renderEntry(container, sub);
-            expect(container.querySelectorAll('[data-copy]').length).toBeGreaterThanOrEqual(8);
+            expect(container.querySelectorAll('[data-copy]').length).toBeGreaterThanOrEqual(14);
             expect(chips[0].dataset.copy).toBe('John');
 
             const labels = Array.from(container.querySelectorAll('span.text-xs')).map(el => el.textContent);
             expect(labels).toContain('first name');
             expect(labels).toContain('email');
+            expect(labels).toContain('address1');
+            expect(labels).toContain('city');
             expect(labels).toContain('grade');
+            expect(labels).toContain('gender');
+            expect(labels).toContain('relationship');
+            expect(labels).toContain('dietary restrictions');
+            expect(labels).toContain('special needs');
+        });
+
+        it('renders address summary and safety ack badge', () => {
+            const window = loadWindow();
+            const container = window.document.createElement('div');
+            const sub = entry('sub-ack', 'approved', {
+                parent: {first_name: 'A', last_name: 'B', phone: '555', email: 'a@b.com', address1: '123 Main St', address2: '', city: 'Seattle', state: 'WA', zip: '98101'},
+                safety_ack: true,
+                children: []
+            });
+            window.renderEntry(container, sub);
+            expect(container.textContent).toContain('123 Main St');
+            expect(container.textContent).toContain('Safety acknowledgement confirmed');
+            const sub2 = entry('sub-noack', 'approved', {safety_ack: false});
+            const container2 = window.document.createElement('div');
+            window.renderEntry(container2, sub2);
+            expect(container2.textContent).toContain('Safety acknowledgement missing');
         });
 
         it('renders missing phone/email as an em dash on parent chips', () => {

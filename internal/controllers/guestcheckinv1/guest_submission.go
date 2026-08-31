@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"mime"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -84,8 +85,9 @@ func (controller *Controller) AdminPage(c *fiber.Ctx) error {
 }
 
 type createSubmissionPayload struct {
-	Parent   parentPayload  `json:"parent"`
-	Children []childPayload `json:"children"`
+	Parent    parentPayload  `json:"parent"`
+	Children  []childPayload `json:"children"`
+	SafetyAck bool           `json:"safety_ack"`
 }
 
 type parentPayload struct {
@@ -93,13 +95,22 @@ type parentPayload struct {
 	LastName  string `json:"last_name"`
 	Phone     string `json:"phone"`
 	Email     string `json:"email"`
+	Address1  string `json:"address1"`
+	Address2  string `json:"address2"`
+	City      string `json:"city"`
+	State     string `json:"state"`
+	Zip       string `json:"zip"`
 }
 
 type childPayload struct {
-	FirstName string `json:"first_name"`
-	LastName  string `json:"last_name"`
-	DOB       string `json:"dob"`
-	Grade     string `json:"grade"`
+	FirstName           string `json:"first_name"`
+	LastName            string `json:"last_name"`
+	DOB                 string `json:"dob"`
+	Grade               string `json:"grade"`
+	Gender              string `json:"gender"`
+	DietaryRestrictions string `json:"dietary_restrictions"`
+	SpecialNeeds        string `json:"special_needs"`
+	Relationship        string `json:"relationship"`
 }
 
 var allowedGrades = map[string]struct{}{
@@ -120,12 +131,26 @@ var allowedGrades = map[string]struct{}{
 	"12th":         {},
 }
 
+var allowedGenders = map[string]struct{}{
+	"Boy":  {},
+	"Girl": {},
+}
+
+var allowedRelationships = map[string]struct{}{
+	"Parent":      {},
+	"Guardian":    {},
+	"Grandparent": {},
+	"Other":       {},
+}
+
+var zipRegexp = regexp.MustCompile(`^\d{5}(-\d{4})?$`)
+
 func validateCreateSubmissionPayload(p createSubmissionPayload) error {
 	if strings.TrimSpace(p.Parent.FirstName) == "" || strings.TrimSpace(p.Parent.LastName) == "" {
 		return errors.New("parent first_name and last_name are required")
 	}
-	if p.Parent.Phone == "" && p.Parent.Email == "" {
-		return errors.New("either parent phone or email is required")
+	if strings.TrimSpace(p.Parent.Phone) == "" {
+		return errors.New("parent phone is required")
 	}
 	if len(p.Children) == 0 {
 		return errors.New("at least one child is required")
@@ -146,24 +171,69 @@ func validateCreateSubmissionPayload(p createSubmissionPayload) error {
 		return errors.New("email must be at most 254 characters")
 	}
 
-	if p.Parent.Phone != "" {
-		digits := 0
-		for _, r := range p.Parent.Phone {
-			if r >= '0' && r <= '9' {
-				digits++
-			}
+	digits := 0
+	for _, r := range p.Parent.Phone {
+		if r >= '0' && r <= '9' {
+			digits++
 		}
-		if digits < 7 {
-			return errors.New("phone must contain at least 7 digits")
-		}
+	}
+	if digits < 7 {
+		return errors.New("phone must contain at least 7 digits")
 	}
 	if p.Parent.Email != "" && !strings.Contains(p.Parent.Email, "@") {
 		return errors.New("invalid email")
 	}
 
+	if strings.TrimSpace(p.Parent.Address1) == "" {
+		return errors.New("parent address1 is required")
+	}
+	if len(p.Parent.Address1) > 200 {
+		return errors.New("parent address1 must be at most 200 characters")
+	}
+	if len(p.Parent.Address2) > 200 {
+		return errors.New("parent address2 must be at most 200 characters")
+	}
+	if strings.TrimSpace(p.Parent.City) == "" {
+		return errors.New("parent city is required")
+	}
+	if len(p.Parent.City) > 100 {
+		return errors.New("parent city must be at most 100 characters")
+	}
+	if strings.TrimSpace(p.Parent.State) == "" {
+		return errors.New("parent state is required")
+	}
+	trimmedState := strings.TrimSpace(p.Parent.State)
+	if len(trimmedState) != 2 {
+		return errors.New("parent state must be a 2-letter code")
+	}
+	for _, r := range trimmedState {
+		if !((r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z')) {
+			return errors.New("parent state must be a 2-letter code")
+		}
+	}
+	if strings.TrimSpace(p.Parent.Zip) == "" {
+		return errors.New("parent zip is required")
+	}
+	if len(p.Parent.Zip) > 10 {
+		return errors.New("parent zip must be at most 10 characters")
+	}
+	if !zipRegexp.MatchString(strings.TrimSpace(p.Parent.Zip)) {
+		return errors.New("parent zip must be 5 digits or 5+4 format (e.g. 12345 or 12345-6789)")
+	}
+
+	if !p.SafetyAck {
+		return errors.New("safety acknowledgement is required")
+	}
+
 	for i, child := range p.Children {
 		if strings.TrimSpace(child.FirstName) == "" || strings.TrimSpace(child.LastName) == "" || strings.TrimSpace(child.DOB) == "" || strings.TrimSpace(child.Grade) == "" {
 			return fmt.Errorf("child %d: first_name, last_name, dob, and grade are required", i+1)
+		}
+		if strings.TrimSpace(child.Gender) == "" {
+			return fmt.Errorf("child %d: gender is required", i+1)
+		}
+		if strings.TrimSpace(child.Relationship) == "" {
+			return fmt.Errorf("child %d: relationship is required", i+1)
 		}
 		if len(child.FirstName) > 100 {
 			return fmt.Errorf("child %d: first_name must be at most 100 characters", i+1)
@@ -176,6 +246,18 @@ func validateCreateSubmissionPayload(p createSubmissionPayload) error {
 		}
 		if _, ok := allowedGrades[child.Grade]; !ok {
 			return fmt.Errorf("child %d: grade must be one of None, Pre-K, Kindergarten, 1st, 2nd, 3rd, 4th, 5th, 6th, 7th, 8th, 9th, 10th, 11th, 12th", i+1)
+		}
+		if _, ok := allowedGenders[child.Gender]; !ok {
+			return fmt.Errorf("child %d: gender must be Boy or Girl", i+1)
+		}
+		if _, ok := allowedRelationships[child.Relationship]; !ok {
+			return fmt.Errorf("child %d: relationship must be one of Parent, Guardian, Grandparent, Other", i+1)
+		}
+		if len(child.DietaryRestrictions) > 500 {
+			return fmt.Errorf("child %d: dietary_restrictions must be at most 500 characters", i+1)
+		}
+		if len(child.SpecialNeeds) > 500 {
+			return fmt.Errorf("child %d: special_needs must be at most 500 characters", i+1)
 		}
 		dob, err := time.ParseInLocation("2006-01-02", child.DOB, time.Local)
 		if err != nil {
@@ -211,18 +293,27 @@ func (controller *Controller) CreateSubmission(c *fiber.Ctx) error {
 		LastName:  payload.Parent.LastName,
 		Phone:     payload.Parent.Phone,
 		Email:     payload.Parent.Email,
+		Address1:  payload.Parent.Address1,
+		Address2:  payload.Parent.Address2,
+		City:      payload.Parent.City,
+		State:     strings.ToUpper(strings.TrimSpace(payload.Parent.State)),
+		Zip:       strings.TrimSpace(payload.Parent.Zip),
 	}
 	children := make([]guestsubmission.Child, 0, len(payload.Children))
 	for _, child := range payload.Children {
 		children = append(children, guestsubmission.Child{
-			FirstName: child.FirstName,
-			LastName:  child.LastName,
-			DOB:       child.DOB,
-			Grade:     child.Grade,
+			FirstName:           child.FirstName,
+			LastName:            child.LastName,
+			DOB:                 child.DOB,
+			Grade:               child.Grade,
+			Gender:              child.Gender,
+			DietaryRestrictions: child.DietaryRestrictions,
+			SpecialNeeds:        child.SpecialNeeds,
+			Relationship:        child.Relationship,
 		})
 	}
 
-	submission, err := controller.submissionRepo.CreateSubmission(c.Context(), parent, children)
+	submission, err := controller.submissionRepo.CreateSubmission(c.Context(), parent, children, payload.SafetyAck)
 	if err != nil {
 		slog.Error("failed to create submission", "error", err)
 		return fiber.NewError(fiber.StatusInternalServerError, "internal error")

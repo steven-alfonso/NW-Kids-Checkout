@@ -52,8 +52,17 @@ CREATE TABLE parents (
     last_name TEXT NOT NULL,
     phone TEXT NOT NULL,
     email TEXT NOT NULL,
+    address1 TEXT NOT NULL,
+    address2 TEXT NOT NULL DEFAULT '',
+    city TEXT NOT NULL,
+    state TEXT NOT NULL,
+    zip TEXT NOT NULL,
     created_at DATETIME NOT NULL,
-    CHECK (phone <> '' OR email <> '')
+    CHECK (phone <> ''),
+    CHECK (LENGTH(TRIM(address1)) > 0),
+    CHECK (LENGTH(TRIM(city)) > 0),
+    CHECK (LENGTH(TRIM(state)) > 0),
+    CHECK (LENGTH(TRIM(zip)) > 0)
 );
 CREATE TABLE children (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -62,6 +71,10 @@ CREATE TABLE children (
     last_name TEXT NOT NULL,
     dob TEXT NOT NULL,
     grade TEXT NOT NULL,
+    gender TEXT NOT NULL CHECK (gender IN ('Boy', 'Girl')),
+    dietary_restrictions TEXT NOT NULL DEFAULT '',
+    special_needs TEXT NOT NULL DEFAULT '',
+    relationship TEXT NOT NULL CHECK (relationship IN ('Parent', 'Guardian', 'Grandparent', 'Other')),
     created_at DATETIME NOT NULL
 );
 CREATE TABLE guest_submissions (
@@ -72,6 +85,7 @@ CREATE TABLE guest_submissions (
     rejected_at DATETIME NULL,
     entered_at DATETIME NULL,
     checkins_backfilled_at DATETIME NULL,
+    safety_ack INTEGER NOT NULL DEFAULT 0 CHECK (safety_ack IN (0, 1)),
     created_at DATETIME NOT NULL
 );
 CREATE INDEX idx_children_parent_id ON children(parent_id);

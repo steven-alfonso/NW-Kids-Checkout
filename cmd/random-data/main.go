@@ -127,10 +127,34 @@ var lastNames = []string{
 var grades = []string{
 	"None", "Pre-K", "Kindergarten", "1st", "2nd", "3rd", "4th", "5th", "6th", "7th", "8th", "9th", "10th", "11th", "12th",
 }
+var genders = []string{"Boy", "Girl"}
+var relationships = []string{"Parent", "Guardian", "Grandparent", "Other"}
+var cities = []string{"Seattle", "Bellevue", "Redmond", "Kirkland", "Renton", "Tacoma", "Everett", "Kent"}
+var states = []string{"WA", "OR", "CA", "ID", "NV"}
 
-func randomFirstName() string { return firstNames[rand.Intn(len(firstNames))] }
-func randomLastName() string  { return lastNames[rand.Intn(len(lastNames))] }
-func randomGrade() string     { return grades[rand.Intn(len(grades))] }
+func randomFirstName() string    { return firstNames[rand.Intn(len(firstNames))] }
+func randomLastName() string     { return lastNames[rand.Intn(len(lastNames))] }
+func randomGrade() string        { return grades[rand.Intn(len(grades))] }
+func randomGender() string       { return genders[rand.Intn(len(genders))] }
+func randomRelationship() string { return relationships[rand.Intn(len(relationships))] }
+func randomCity() string         { return cities[rand.Intn(len(cities))] }
+func randomState() string        { return states[rand.Intn(len(states))] }
+func randomZip() string          { return fmt.Sprintf("%05d", rand.Intn(90000)+10000) }
+func randomAddress1() string     { return fmt.Sprintf("%d %s St", rand.Intn(9000)+100, randomLastName()) }
+func randomDietary() string {
+	if rand.Float32() < 0.7 {
+		return ""
+	}
+	opts := []string{"Peanut allergy", "Gluten free", "Dairy free", "Vegetarian", "No pork"}
+	return opts[rand.Intn(len(opts))]
+}
+func randomSpecialNeeds() string {
+	if rand.Float32() < 0.8 {
+		return ""
+	}
+	opts := []string{"Wheelchair access", "Sensory friendly", "ASD support", "Hearing assistance"}
+	return opts[rand.Intn(len(opts))]
+}
 
 func randomPhone() string {
 	// 10-digit US-style number
@@ -258,16 +282,9 @@ func seedGuestSubmissions(ctx context.Context, database *sql.DB, count int) erro
 	for i := range count {
 		parentFirst := randomFirstName()
 		parentLast := randomLastName()
-		phone := ""
+		phone := randomPhone()
 		email := ""
-		// ensure at least one of phone/email per parents CHECK
-		switch rand.Intn(3) {
-		case 0:
-			phone = randomPhone()
-		case 1:
-			email = randomEmail(parentFirst, parentLast)
-		default:
-			phone = randomPhone()
+		if rand.Float32() < 0.5 {
 			email = randomEmail(parentFirst, parentLast)
 		}
 
@@ -275,10 +292,14 @@ func seedGuestSubmissions(ctx context.Context, database *sql.DB, count int) erro
 		children := make([]guestsubmission.Child, 0, numChildren)
 		for range numChildren {
 			children = append(children, guestsubmission.Child{
-				FirstName: randomFirstName(),
-				LastName:  randomLastName(),
-				DOB:       randomDOB(),
-				Grade:     randomGrade(),
+				FirstName:           randomFirstName(),
+				LastName:            randomLastName(),
+				DOB:                 randomDOB(),
+				Grade:               randomGrade(),
+				Gender:              randomGender(),
+				DietaryRestrictions: randomDietary(),
+				SpecialNeeds:        randomSpecialNeeds(),
+				Relationship:        randomRelationship(),
 			})
 		}
 
@@ -287,7 +308,12 @@ func seedGuestSubmissions(ctx context.Context, database *sql.DB, count int) erro
 			LastName:  parentLast,
 			Phone:     phone,
 			Email:     email,
-		}, children)
+			Address1:  randomAddress1(),
+			Address2:  "",
+			City:      randomCity(),
+			State:     randomState(),
+			Zip:       randomZip(),
+		}, children, true)
 		if err != nil {
 			return fmt.Errorf("creating guest submission %d: %w", i, err)
 		}

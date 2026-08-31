@@ -239,8 +239,8 @@ func (f fixture) insertGuestSubmission(t *testing.T, publicID string, createdAt 
 	t.Helper()
 	res, err := squirrel.Insert("parents").
 		RunWith(f.testDB).
-		Columns("first_name", "last_name", "phone", "email", "created_at").
-		Values("Guest", "Parent", "1234567", "guest@example.com", createdAt).
+		Columns("first_name", "last_name", "phone", "email", "address1", "address2", "city", "state", "zip", "created_at").
+		Values("Guest", "Parent", "1234567", "guest@example.com", "123 Main St", "", "Seattle", "WA", "98101", createdAt).
 		ExecContext(t.Context())
 	require.NoError(t, err)
 	parentID, err := res.LastInsertId()
@@ -249,8 +249,8 @@ func (f fixture) insertGuestSubmission(t *testing.T, publicID string, createdAt 
 	for range kids {
 		_, err := squirrel.Insert("children").
 			RunWith(f.testDB).
-			Columns("parent_id", "first_name", "last_name", "dob", "grade", "created_at").
-			Values(parentID, "Kid", "One", "2020-01-01", "k", createdAt).
+			Columns("parent_id", "first_name", "last_name", "dob", "grade", "gender", "dietary_restrictions", "special_needs", "relationship", "created_at").
+			Values(parentID, "Kid", "One", "2020-01-01", "k", "Boy", "", "", "Parent", createdAt).
 			ExecContext(t.Context())
 		require.NoError(t, err)
 	}

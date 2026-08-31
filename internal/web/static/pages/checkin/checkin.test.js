@@ -17,6 +17,12 @@ function loadWindow() {
                 <input id="parent-last-name" name="parent_last_name" value="">
                 <input id="parent-phone" name="parent_phone" type="tel" value="">
                 <input id="parent-email" name="parent_email" type="email" value="">
+                <input id="parent-address1" name="parent_address1" value="">
+                <input id="parent-address2" name="parent_address2" value="">
+                <input id="parent-city" name="parent_city" value="">
+                <input id="parent-state" name="parent_state" value="">
+                <input id="parent-zip" name="parent_zip" value="">
+                <input id="safety-ack" name="safety_ack" type="checkbox">
                 <div id="children-container"></div>
                 <button id="add-child" type="button">Add child</button>
                 <input id="use-parent-last-name" type="checkbox">
@@ -45,6 +51,31 @@ function loadWindow() {
     return dom.window;
 }
 
+
+function fillValidParent(window) {
+    window.document.getElementById('parent-first-name').value = 'John';
+    window.document.getElementById('parent-last-name').value = 'Smith';
+    window.document.getElementById('parent-phone').value = '5551234';
+    window.document.getElementById('parent-email').value = 'john@example.com';
+    window.document.getElementById('parent-address1').value = '123 Main St';
+    window.document.getElementById('parent-address2').value = '';
+    window.document.getElementById('parent-city').value = 'Seattle';
+    window.document.getElementById('parent-state').value = 'WA';
+    window.document.getElementById('parent-zip').value = '98101';
+    const ack = window.document.getElementById('safety-ack');
+    if (ack) ack.checked = true;
+}
+function fillValidChild(window, rowIdx=0) {
+    const rows = window.document.querySelectorAll('.child-row');
+    const row = rows[rowIdx];
+    if (!row) return;
+    const fn = row.querySelector('.child-first-name'); if (fn) fn.value = 'Timmy';
+    const ln = row.querySelector('.child-last-name'); if (ln) ln.value = 'Smith';
+    const dob = row.querySelector('.child-dob'); if (dob) dob.value = '2020-01-01';
+    const gender = row.querySelector('.child-gender'); if (gender) gender.value = 'Boy';
+    const rel = row.querySelector('.child-relationship'); if (rel) rel.value = 'Parent';
+}
+
 afterEach(() => {
     vi.useRealTimers();
 });
@@ -63,7 +94,7 @@ describe('kiosk form', () => {
         clone.querySelectorAll('input, select').forEach(el => el.remove());
         return clone.textContent.replace(/\s+/g, ' ').trim();
     });
-        expect(labelTexts).toEqual(['First name', 'Last name', 'Birthdate', 'Grade']);
+        expect(labelTexts).toEqual(['First name', 'Last name', 'Birthdate', 'Grade', 'Gender', 'Relationship to child', 'Dietary restrictions', 'Special needs']);
     });
 
     it('renders the grade dropdown with expected options', () => {
@@ -104,10 +135,17 @@ describe('kiosk form', () => {
         window.document.getElementById('parent-last-name').value = 'Smith';
         window.document.getElementById('parent-phone').value = '555-1234';
         window.document.getElementById('parent-email').value = 'john@example.com';
+        window.document.getElementById('parent-address1').value = '123 Main St';
+        window.document.getElementById('parent-city').value = 'Seattle';
+        window.document.getElementById('parent-state').value = 'WA';
+        window.document.getElementById('parent-zip').value = '98101';
+        window.document.getElementById('safety-ack').checked = true;
         window.document.querySelector('.child-first-name').value = 'Timmy';
         window.document.querySelector('.child-last-name').value = 'Smith';
         window.document.querySelector('.child-dob').value = '2020-01-01';
         window.document.querySelector('.child-grade').value = '1st';
+        window.document.querySelector('.child-gender').value = 'Boy';
+        window.document.querySelector('.child-relationship').value = 'Parent';
 
         const payload = window.buildPayload();
         expect(payload.parent.first_name).toBe('John');
@@ -122,10 +160,17 @@ describe('kiosk form', () => {
         window.document.getElementById('parent-first-name').value = 'John';
         window.document.getElementById('parent-last-name').value = 'Smith';
         window.document.getElementById('parent-phone').value = '5551234';
+        window.document.getElementById('parent-address1').value = '123 Main St';
+        window.document.getElementById('parent-city').value = 'Seattle';
+        window.document.getElementById('parent-state').value = 'WA';
+        window.document.getElementById('parent-zip').value = '98101';
+        window.document.getElementById('safety-ack').checked = true;
         window.document.getElementById('parent-email').value = 'john@example.com';
         window.document.querySelector('.child-first-name').value = 'Timmy';
         window.document.querySelector('.child-last-name').value = 'Smith';
         window.document.querySelector('.child-dob').value = '2020-01-01';
+        window.document.querySelector('.child-gender').value = 'Boy';
+        window.document.querySelector('.child-relationship').value = 'Parent';
         await window.submitKioskForm();
         expect(window.document.getElementById('welcome-panel').classList.contains('hidden')).toBe(false);
         expect(window.document.getElementById('parent-first-name').value).toBe('');
@@ -179,16 +224,28 @@ describe('kiosk form', () => {
         window.document.getElementById('parent-first-name').value = 'John';
         window.document.getElementById('parent-last-name').value = 'Smith';
         window.document.getElementById('parent-phone').value = '12';
+        window.document.getElementById('parent-address1').value = '123 Main St';
+        window.document.getElementById('parent-city').value = 'Seattle';
+        window.document.getElementById('parent-state').value = 'WA';
+        window.document.getElementById('parent-zip').value = '98101';
+        window.document.getElementById('safety-ack').checked = true;
         window.document.getElementById('parent-email').value = 'john.example';
         window.document.querySelector('.child-first-name').value = 'Timmy';
         window.document.querySelector('.child-last-name').value = 'Smith';
         window.document.querySelector('.child-dob').value = '2020-01-01';
+        window.document.querySelector('.child-gender').value = 'Boy';
+        window.document.querySelector('.child-relationship').value = 'Parent';
 
         expect(window.validateForm()).toBe(false);
         expect(window.document.getElementById('parent-phone').validationMessage).toContain('7 digits');
         expect(window.document.getElementById('parent-email').validity.typeMismatch).toBe(true);
 
         window.document.getElementById('parent-phone').value = '5551234';
+        window.document.getElementById('parent-address1').value = '123 Main St';
+        window.document.getElementById('parent-city').value = 'Seattle';
+        window.document.getElementById('parent-state').value = 'WA';
+        window.document.getElementById('parent-zip').value = '98101';
+        window.document.getElementById('safety-ack').checked = true;
         window.document.getElementById('parent-email').value = 'john@example.com';
         expect(window.validateForm()).toBe(true);
     });
@@ -198,13 +255,20 @@ describe('kiosk form', () => {
         window.document.getElementById('parent-first-name').value = 'John';
         window.document.getElementById('parent-last-name').value = 'Smith';
         window.document.getElementById('parent-phone').value = '';
+        window.document.getElementById('parent-address1').value = '123 Main St';
+        window.document.getElementById('parent-city').value = 'Seattle';
+        window.document.getElementById('parent-state').value = 'WA';
+        window.document.getElementById('parent-zip').value = '98101';
+        window.document.getElementById('safety-ack').checked = true;
         window.document.getElementById('parent-email').value = '';
         window.document.querySelector('.child-first-name').value = 'Timmy';
         window.document.querySelector('.child-last-name').value = 'Smith';
         window.document.querySelector('.child-dob').value = '2020-01-01';
+        window.document.querySelector('.child-gender').value = 'Boy';
+        window.document.querySelector('.child-relationship').value = 'Parent';
 
         expect(window.validateForm()).toBe(false);
-        expect(window.document.getElementById('parent-phone').validationMessage).toContain('phone number or an email');
+        expect(window.document.getElementById('parent-phone').validationMessage).toContain('Phone is required');
     });
 
     it('passes validation with a phone only', () => {
@@ -212,10 +276,17 @@ describe('kiosk form', () => {
         window.document.getElementById('parent-first-name').value = 'John';
         window.document.getElementById('parent-last-name').value = 'Smith';
         window.document.getElementById('parent-phone').value = '5551234';
+        window.document.getElementById('parent-address1').value = '123 Main St';
+        window.document.getElementById('parent-city').value = 'Seattle';
+        window.document.getElementById('parent-state').value = 'WA';
+        window.document.getElementById('parent-zip').value = '98101';
+        window.document.getElementById('safety-ack').checked = true;
         window.document.getElementById('parent-email').value = '';
         window.document.querySelector('.child-first-name').value = 'Timmy';
         window.document.querySelector('.child-last-name').value = 'Smith';
         window.document.querySelector('.child-dob').value = '2020-01-01';
+        window.document.querySelector('.child-gender').value = 'Boy';
+        window.document.querySelector('.child-relationship').value = 'Parent';
         expect(window.validateForm()).toBe(true);
     });
 
@@ -224,11 +295,19 @@ describe('kiosk form', () => {
         window.document.getElementById('parent-first-name').value = 'John';
         window.document.getElementById('parent-last-name').value = 'Smith';
         window.document.getElementById('parent-phone').value = '';
+        window.document.getElementById('parent-address1').value = '123 Main St';
+        window.document.getElementById('parent-city').value = 'Seattle';
+        window.document.getElementById('parent-state').value = 'WA';
+        window.document.getElementById('parent-zip').value = '98101';
+        window.document.getElementById('safety-ack').checked = true;
         window.document.getElementById('parent-email').value = 'john@example.com';
         window.document.querySelector('.child-first-name').value = 'Timmy';
         window.document.querySelector('.child-last-name').value = 'Smith';
         window.document.querySelector('.child-dob').value = '2020-01-01';
-        expect(window.validateForm()).toBe(true);
+        window.document.querySelector('.child-gender').value = 'Boy';
+        window.document.querySelector('.child-relationship').value = 'Parent';
+        expect(window.validateForm()).toBe(false);
+        expect(window.document.getElementById('parent-phone').validationMessage).toContain('Phone is required');
     });
 
     it('copies the parent last name to all children when the toggle is on', () => {
@@ -299,10 +378,17 @@ describe('kiosk form', () => {
         window.document.getElementById('parent-first-name').value = 'John';
         window.document.getElementById('parent-last-name').value = 'Smith';
         window.document.getElementById('parent-phone').value = '5551234';
+        window.document.getElementById('parent-address1').value = '123 Main St';
+        window.document.getElementById('parent-city').value = 'Seattle';
+        window.document.getElementById('parent-state').value = 'WA';
+        window.document.getElementById('parent-zip').value = '98101';
+        window.document.getElementById('safety-ack').checked = true;
         window.document.getElementById('parent-email').value = 'john@example.com';
         window.document.querySelector('.child-first-name').value = 'Timmy';
         window.document.querySelector('.child-last-name').value = 'Smith';
         window.document.querySelector('.child-dob').value = '2020-01-01';
+        window.document.querySelector('.child-gender').value = 'Boy';
+        window.document.querySelector('.child-relationship').value = 'Parent';
         expect(window.validateForm()).toBe(true);
     });
 
@@ -311,9 +397,16 @@ describe('kiosk form', () => {
         window.document.getElementById('parent-first-name').value = 'John';
         window.document.getElementById('parent-last-name').value = 'Smith';
         window.document.getElementById('parent-phone').value = '5551234';
+        window.document.getElementById('parent-address1').value = '123 Main St';
+        window.document.getElementById('parent-city').value = 'Seattle';
+        window.document.getElementById('parent-state').value = 'WA';
+        window.document.getElementById('parent-zip').value = '98101';
+        window.document.getElementById('safety-ack').checked = true;
         window.document.querySelector('.child-first-name').value = '';
         window.document.querySelector('.child-last-name').value = 'Smith';
         window.document.querySelector('.child-dob').value = '2020-01-01';
+        window.document.querySelector('.child-gender').value = 'Boy';
+        window.document.querySelector('.child-relationship').value = 'Parent';
         expect(window.validateForm()).toBe(false);
         expect(window.document.querySelector('.child-first-name').validationMessage).toContain('First name is required');
     });
@@ -323,9 +416,16 @@ describe('kiosk form', () => {
         window.document.getElementById('parent-first-name').value = 'John';
         window.document.getElementById('parent-last-name').value = 'Smith';
         window.document.getElementById('parent-phone').value = '5551234';
+        window.document.getElementById('parent-address1').value = '123 Main St';
+        window.document.getElementById('parent-city').value = 'Seattle';
+        window.document.getElementById('parent-state').value = 'WA';
+        window.document.getElementById('parent-zip').value = '98101';
+        window.document.getElementById('safety-ack').checked = true;
         window.document.querySelector('.child-first-name').value = 'Timmy';
         window.document.querySelector('.child-last-name').value = '';
         window.document.querySelector('.child-dob').value = '2020-01-01';
+        window.document.querySelector('.child-gender').value = 'Boy';
+        window.document.querySelector('.child-relationship').value = 'Parent';
         expect(window.validateForm()).toBe(false);
         expect(window.document.querySelector('.child-last-name').validationMessage).toContain('Last name is required');
     });
@@ -335,6 +435,11 @@ describe('kiosk form', () => {
         window.document.getElementById('parent-first-name').value = 'John';
         window.document.getElementById('parent-last-name').value = 'Smith';
         window.document.getElementById('parent-phone').value = '5551234';
+        window.document.getElementById('parent-address1').value = '123 Main St';
+        window.document.getElementById('parent-city').value = 'Seattle';
+        window.document.getElementById('parent-state').value = 'WA';
+        window.document.getElementById('parent-zip').value = '98101';
+        window.document.getElementById('safety-ack').checked = true;
         const rows = window.document.querySelectorAll('.child-row');
         for (let i = rows.length - 1; i >= 0; i--) {
             rows[i].remove();
@@ -349,13 +454,22 @@ describe('kiosk form', () => {
         window.document.getElementById('parent-first-name').value = 'John';
         window.document.getElementById('parent-last-name').value = 'Smith';
         window.document.getElementById('parent-phone').value = '5551234';
+        window.document.getElementById('parent-address1').value = '123 Main St';
+        window.document.getElementById('parent-city').value = 'Seattle';
+        window.document.getElementById('parent-state').value = 'WA';
+        window.document.getElementById('parent-zip').value = '98101';
+        window.document.getElementById('safety-ack').checked = true;
         const rows = window.document.querySelectorAll('.child-row');
         rows[0].querySelector('.child-first-name').value = 'Timmy';
         rows[0].querySelector('.child-last-name').value = 'Smith';
         rows[0].querySelector('.child-dob').value = '2020-01-01';
+        rows[0].querySelector('.child-gender').value = 'Boy';
+        rows[0].querySelector('.child-relationship').value = 'Parent';
         rows[1].querySelector('.child-first-name').value = '';
         rows[1].querySelector('.child-last-name').value = 'Smith';
         rows[1].querySelector('.child-dob').value = '2020-01-01';
+        rows[1].querySelector('.child-gender').value = 'Boy';
+        rows[1].querySelector('.child-relationship').value = 'Parent';
         expect(window.validateForm()).toBe(false);
         expect(rows[1].querySelector('.child-first-name').validationMessage).toContain('First name is required');
     });
@@ -398,6 +512,11 @@ describe('kiosk form', () => {
         window.document.getElementById('parent-first-name').value = 'John';
         window.document.getElementById('parent-last-name').value = 'Smith';
         window.document.getElementById('parent-phone').value = '5551234';
+        window.document.getElementById('parent-address1').value = '123 Main St';
+        window.document.getElementById('parent-city').value = 'Seattle';
+        window.document.getElementById('parent-state').value = 'WA';
+        window.document.getElementById('parent-zip').value = '98101';
+        window.document.getElementById('safety-ack').checked = true;
         window.document.querySelector('.child-first-name').value = 'Timmy';
         window.document.querySelector('.child-last-name').value = 'Smith';
         // use a clearly future date regardless of mocked today
@@ -407,6 +526,8 @@ describe('kiosk form', () => {
         expect(window.document.querySelector('.child-dob').validationMessage).toContain('Birthdate cannot be in the future');
         // past date should pass (phone required, etc. already satisfied)
         window.document.querySelector('.child-dob').value = '2020-01-01';
+        window.document.querySelector('.child-gender').value = 'Boy';
+        window.document.querySelector('.child-relationship').value = 'Parent';
         expect(window.validateForm()).toBe(true);
     });
 
@@ -415,9 +536,16 @@ describe('kiosk form', () => {
         window.document.getElementById('parent-first-name').value = 'John';
         window.document.getElementById('parent-last-name').value = 'Smith';
         window.document.getElementById('parent-phone').value = '5551234';
+        window.document.getElementById('parent-address1').value = '123 Main St';
+        window.document.getElementById('parent-city').value = 'Seattle';
+        window.document.getElementById('parent-state').value = 'WA';
+        window.document.getElementById('parent-zip').value = '98101';
+        window.document.getElementById('safety-ack').checked = true;
         window.document.querySelector('.child-first-name').value = 'Timmy';
         window.document.querySelector('.child-last-name').value = 'Smith';
         window.document.querySelector('.child-dob').value = '2020-01-01';
+        window.document.querySelector('.child-gender').value = 'Boy';
+        window.document.querySelector('.child-relationship').value = 'Parent';
         window.fetch = vi.fn().mockResolvedValue({
             ok: false,
             status: 400,
@@ -442,9 +570,16 @@ describe('kiosk form', () => {
         window.document.getElementById('parent-first-name').value = 'John';
         window.document.getElementById('parent-last-name').value = 'Smith';
         window.document.getElementById('parent-phone').value = '5551234';
+        window.document.getElementById('parent-address1').value = '123 Main St';
+        window.document.getElementById('parent-city').value = 'Seattle';
+        window.document.getElementById('parent-state').value = 'WA';
+        window.document.getElementById('parent-zip').value = '98101';
+        window.document.getElementById('safety-ack').checked = true;
         window.document.querySelector('.child-first-name').value = 'Timmy';
         window.document.querySelector('.child-last-name').value = 'Smith';
         window.document.querySelector('.child-dob').value = '2020-01-01';
+        window.document.querySelector('.child-gender').value = 'Boy';
+        window.document.querySelector('.child-relationship').value = 'Parent';
         window.fetch = vi.fn().mockResolvedValue({
             ok: true,
             status: 200,
@@ -466,9 +601,16 @@ describe('kiosk form', () => {
         window.document.getElementById('parent-first-name').value = 'John';
         window.document.getElementById('parent-last-name').value = 'Smith';
         window.document.getElementById('parent-phone').value = '5551234';
+        window.document.getElementById('parent-address1').value = '123 Main St';
+        window.document.getElementById('parent-city').value = 'Seattle';
+        window.document.getElementById('parent-state').value = 'WA';
+        window.document.getElementById('parent-zip').value = '98101';
+        window.document.getElementById('safety-ack').checked = true;
         window.document.querySelector('.child-first-name').value = 'Timmy';
         window.document.querySelector('.child-last-name').value = 'Smith';
         window.document.querySelector('.child-dob').value = '2020-01-01';
+        window.document.querySelector('.child-gender').value = 'Boy';
+        window.document.querySelector('.child-relationship').value = 'Parent';
         window.fetch = vi.fn().mockRejectedValue(new Error('Network error'));
         await window.submitKioskForm();
         const errorEl = window.document.getElementById('kiosk-error');
@@ -482,9 +624,16 @@ describe('kiosk form', () => {
         window.document.getElementById('parent-first-name').value = 'John';
         window.document.getElementById('parent-last-name').value = 'Smith';
         window.document.getElementById('parent-phone').value = '5551234';
+        window.document.getElementById('parent-address1').value = '123 Main St';
+        window.document.getElementById('parent-city').value = 'Seattle';
+        window.document.getElementById('parent-state').value = 'WA';
+        window.document.getElementById('parent-zip').value = '98101';
+        window.document.getElementById('safety-ack').checked = true;
         window.document.querySelector('.child-first-name').value = 'Timmy';
         window.document.querySelector('.child-last-name').value = 'Smith';
         window.document.querySelector('.child-dob').value = '2020-01-01';
+        window.document.querySelector('.child-gender').value = 'Boy';
+        window.document.querySelector('.child-relationship').value = 'Parent';
         let resolveFetch;
         const fetchPromise = new Promise(resolve => { resolveFetch = resolve; });
         window.fetch = vi.fn().mockReturnValue(fetchPromise);
@@ -513,9 +662,16 @@ describe('kiosk form', () => {
         window.document.getElementById('parent-first-name').value = 'John';
         window.document.getElementById('parent-last-name').value = 'Smith';
         window.document.getElementById('parent-phone').value = '5551234';
+        window.document.getElementById('parent-address1').value = '123 Main St';
+        window.document.getElementById('parent-city').value = 'Seattle';
+        window.document.getElementById('parent-state').value = 'WA';
+        window.document.getElementById('parent-zip').value = '98101';
+        window.document.getElementById('safety-ack').checked = true;
         window.document.querySelector('.child-first-name').value = 'Timmy';
         window.document.querySelector('.child-last-name').value = 'Smith';
         window.document.querySelector('.child-dob').value = '2020-01-01';
+        window.document.querySelector('.child-gender').value = 'Boy';
+        window.document.querySelector('.child-relationship').value = 'Parent';
         window.fetch = vi.fn().mockResolvedValue({
             ok: false,
             status: 500,

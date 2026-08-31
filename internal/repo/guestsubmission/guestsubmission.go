@@ -28,16 +28,25 @@ type Parent struct {
 	LastName  string
 	Phone     string
 	Email     string
+	Address1  string
+	Address2  string
+	City      string
+	State     string
+	Zip       string
 }
 
 type Child struct {
-	ID        int64
-	ParentID  int64
-	FirstName string
-	LastName  string
-	DOB       string
-	Grade     string
-	CreatedAt time.Time
+	ID                  int64
+	ParentID            int64
+	FirstName           string
+	LastName            string
+	DOB                 string
+	Grade               string
+	Gender              string
+	DietaryRestrictions string
+	SpecialNeeds        string
+	Relationship        string
+	CreatedAt           time.Time
 }
 
 type Submission struct {
@@ -49,6 +58,7 @@ type Submission struct {
 	RejectedAt           time.Time
 	EnteredAt            time.Time
 	CheckinsBackfilledAt time.Time
+	SafetyAck            bool
 	CreatedAt            time.Time
 	Parent               Parent
 	Children             []Child
@@ -63,7 +73,7 @@ type Filter struct {
 }
 
 type Repo interface {
-	CreateSubmission(ctx context.Context, parent Parent, children []Child) (Submission, error)
+	CreateSubmission(ctx context.Context, parent Parent, children []Child, safetyAck bool) (Submission, error)
 	ListSubmissions(ctx context.Context, filter Filter) ([]Submission, error)
 	CountSubmissions(ctx context.Context, filter Filter) (int, error)
 	UpdateSubmissionStatus(ctx context.Context, publicID string, status string, now time.Time) error
@@ -168,7 +178,7 @@ func NewRepo(db *sql.DB) Repo {
 	return &sqliteRepo{db: db}
 }
 
-func (s *sqliteRepo) CreateSubmission(ctx context.Context, parent Parent, children []Child) (Submission, error) {
+func (s *sqliteRepo) CreateSubmission(ctx context.Context, parent Parent, children []Child, safetyAck bool) (Submission, error) {
 	if len(children) == 0 {
 		return Submission{}, errors.New("at least one child is required")
 	}
@@ -182,8 +192,8 @@ func (s *sqliteRepo) CreateSubmission(ctx context.Context, parent Parent, childr
 	now := time.Now().UTC()
 
 	res, err := tx.ExecContext(ctx,
-		`INSERT INTO parents (first_name, last_name, phone, email, created_at) VALUES (?, ?, ?, ?, ?)`,
-		parent.FirstName, parent.LastName, parent.Phone, parent.Email, now)
+		`INSERT INTO parents (first_name, last_name, phone, email, address1, address2, city, state, zip, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		parent.FirstName, parent.LastName, parent.Phone, parent.Email, parent.Address1, parent.Address2, parent.City, parent.State, parent.Zip, now)
 	if err != nil {
 		return Submission{}, fmt.Errorf("inserting parent: %w", err)
 	}
@@ -195,8 +205,8 @@ func (s *sqliteRepo) CreateSubmission(ctx context.Context, parent Parent, childr
 	createdChildren := make([]Child, 0, len(children))
 	for i := range children {
 		res, err := tx.ExecContext(ctx,
-			`INSERT INTO children (parent_id, first_name, last_name, dob, grade, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
-			parentID, children[i].FirstName, children[i].LastName, children[i].DOB, children[i].Grade, now)
+			`INSERT INTO children (parent_id, first_name, last_name, dob, grade, gender, dietary_restrictions, special_needs, relationship, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			parentID, children[i].FirstName, children[i].LastName, children[i].DOB, children[i].Grade, children[i].Gender, children[i].DietaryRestrictions, children[i].SpecialNeeds, children[i].Relationship, now)
 		if err != nil {
 			return Submission{}, fmt.Errorf("inserting child %d: %w", i, err)
 		}
@@ -211,9 +221,13 @@ func (s *sqliteRepo) CreateSubmission(ctx context.Context, parent Parent, childr
 	}
 
 	publicID := uuid.New().String()
+	safetyAckInt := 0
+	if safetyAck {
+		safetyAckInt = 1
+	}
 	res, err = tx.ExecContext(ctx,
-		`INSERT INTO guest_submissions (public_id, parent_id, created_at) VALUES (?, ?, ?)`,
-		publicID, parentID, now)
+		`INSERT INTO guest_submissions (public_id, parent_id, safety_ack, created_at) VALUES (?, ?, ?, ?)`,
+		publicID, parentID, safetyAckInt, now)
 	if err != nil {
 		return Submission{}, fmt.Errorf("inserting submission: %w", err)
 	}
@@ -234,6 +248,7 @@ func (s *sqliteRepo) CreateSubmission(ctx context.Context, parent Parent, childr
 		PublicID:  publicID,
 		ParentID:  parentID,
 		Status:    StatusPending,
+		SafetyAck: safetyAck,
 		CreatedAt: now,
 		Parent:    parent,
 		Children:  createdChildren,
@@ -243,7 +258,7 @@ func (s *sqliteRepo) CreateSubmission(ctx context.Context, parent Parent, childr
 func (s *sqliteRepo) ListSubmissions(ctx context.Context, filter Filter) ([]Submission, error) {
 	builder := squirrel.Select(
 		"id", "public_id", "parent_id",
-		"approved_at", "rejected_at", "entered_at", "checkins_backfilled_at", "created_at",
+		"approved_at", "rejected_at", "entered_at", "checkins_backfilled_at", "safety_ack", "created_at",
 	).From("guest_submissions")
 
 	builder, err := applyFilter(builder, filter)
@@ -269,9 +284,10 @@ func (s *sqliteRepo) ListSubmissions(ctx context.Context, filter Filter) ([]Subm
 	for rows.Next() {
 		var sub Submission
 		var approvedAt, rejectedAt, enteredAt, checkinsBackfilledAt sql.NullTime
+		var safetyAck sql.NullInt64
 		err := rows.Scan(
 			&sub.ID, &sub.PublicID, &sub.ParentID,
-			&approvedAt, &rejectedAt, &enteredAt, &checkinsBackfilledAt, &sub.CreatedAt,
+			&approvedAt, &rejectedAt, &enteredAt, &checkinsBackfilledAt, &safetyAck, &sub.CreatedAt,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("scanning guest submission: %w", err)
@@ -280,6 +296,7 @@ func (s *sqliteRepo) ListSubmissions(ctx context.Context, filter Filter) ([]Subm
 		sub.RejectedAt = rejectedAt.Time
 		sub.EnteredAt = enteredAt.Time
 		sub.CheckinsBackfilledAt = checkinsBackfilledAt.Time
+		sub.SafetyAck = safetyAck.Valid && safetyAck.Int64 != 0
 		sub.Status = statusFromTimestamps(approvedAt.Valid, rejectedAt.Valid, enteredAt.Valid)
 		submissions = append(submissions, sub)
 		parentIDs = append(parentIDs, sub.ParentID)
@@ -290,7 +307,7 @@ func (s *sqliteRepo) ListSubmissions(ctx context.Context, filter Filter) ([]Subm
 
 	parents := make(map[int64]Parent)
 	if len(parentIDs) > 0 {
-		pRows, err := squirrel.Select("id", "created_at", "first_name", "last_name", "phone", "email").
+		pRows, err := squirrel.Select("id", "created_at", "first_name", "last_name", "phone", "email", "address1", "address2", "city", "state", "zip").
 			From("parents").
 			Where(squirrel.Eq{"id": parentIDs}).
 			RunWith(s.db).
@@ -301,7 +318,7 @@ func (s *sqliteRepo) ListSubmissions(ctx context.Context, filter Filter) ([]Subm
 		defer pRows.Close()
 		for pRows.Next() {
 			var p Parent
-			if err := pRows.Scan(&p.ID, &p.CreatedAt, &p.FirstName, &p.LastName, &p.Phone, &p.Email); err != nil {
+			if err := pRows.Scan(&p.ID, &p.CreatedAt, &p.FirstName, &p.LastName, &p.Phone, &p.Email, &p.Address1, &p.Address2, &p.City, &p.State, &p.Zip); err != nil {
 				return nil, fmt.Errorf("scanning parent: %w", err)
 			}
 			parents[p.ID] = p
@@ -313,7 +330,7 @@ func (s *sqliteRepo) ListSubmissions(ctx context.Context, filter Filter) ([]Subm
 
 	childrenByParent := make(map[int64][]Child)
 	if len(parentIDs) > 0 {
-		cRows, err := squirrel.Select("id", "parent_id", "first_name", "last_name", "dob", "grade", "created_at").
+		cRows, err := squirrel.Select("id", "parent_id", "first_name", "last_name", "dob", "grade", "gender", "dietary_restrictions", "special_needs", "relationship", "created_at").
 			From("children").
 			Where(squirrel.Eq{"parent_id": parentIDs}).
 			OrderBy("id").
@@ -325,7 +342,7 @@ func (s *sqliteRepo) ListSubmissions(ctx context.Context, filter Filter) ([]Subm
 		defer cRows.Close()
 		for cRows.Next() {
 			var c Child
-			if err := cRows.Scan(&c.ID, &c.ParentID, &c.FirstName, &c.LastName, &c.DOB, &c.Grade, &c.CreatedAt); err != nil {
+			if err := cRows.Scan(&c.ID, &c.ParentID, &c.FirstName, &c.LastName, &c.DOB, &c.Grade, &c.Gender, &c.DietaryRestrictions, &c.SpecialNeeds, &c.Relationship, &c.CreatedAt); err != nil {
 				return nil, fmt.Errorf("scanning child: %w", err)
 			}
 			childrenByParent[c.ParentID] = append(childrenByParent[c.ParentID], c)

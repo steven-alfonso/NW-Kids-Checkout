@@ -161,13 +161,13 @@ func Test_sqliteRepo_CreateManualCheckin(t *testing.T) {
 	require.NoError(t, err)
 
 	// Seed a valid parent/child for FK-constrained cases.
-	res, err := squirrel.Insert("parents").Columns("first_name", "last_name", "phone", "email", "created_at").
-		Values("Seed", "Parent", "555-0000", "seed@test.com", time.Now().UTC()).RunWith(testDB).ExecContext(t.Context())
+	res, err := squirrel.Insert("parents").Columns("first_name", "last_name", "phone", "email", "address1", "address2", "city", "state", "zip", "created_at").
+		Values("Seed", "Parent", "555-0000", "seed@test.com", "123 Main St", "", "Seattle", "WA", "98101", time.Now().UTC()).RunWith(testDB).ExecContext(t.Context())
 	require.NoError(t, err)
 	seedParentID, err := res.LastInsertId()
 	require.NoError(t, err)
-	res, err = squirrel.Insert("children").Columns("parent_id", "first_name", "last_name", "dob", "grade", "created_at").
-		Values(seedParentID, "Seed", "Child", "2020-01-01", "k", time.Now().UTC()).RunWith(testDB).ExecContext(t.Context())
+	res, err = squirrel.Insert("children").Columns("parent_id", "first_name", "last_name", "dob", "grade", "gender", "dietary_restrictions", "special_needs", "relationship", "created_at").
+		Values(seedParentID, "Seed", "Child", "2020-01-01", "k", "Boy", "", "", "Parent", time.Now().UTC()).RunWith(testDB).ExecContext(t.Context())
 	require.NoError(t, err)
 	seedChildID, err := res.LastInsertId()
 	require.NoError(t, err)
@@ -442,13 +442,13 @@ func Test_sqliteRepo_CreateManualCheckinWithChildID(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create a valid parent/child to satisfy FK constraint on child_id.
-	res, err := squirrel.Insert("parents").Columns("first_name", "last_name", "phone", "email", "created_at").
-		Values("Parent", "One", "555-0001", "parent1@test.com", time.Now().UTC()).RunWith(testDB).ExecContext(t.Context())
+	res, err := squirrel.Insert("parents").Columns("first_name", "last_name", "phone", "email", "address1", "address2", "city", "state", "zip", "created_at").
+		Values("Parent", "One", "555-0001", "parent1@test.com", "123 Main St", "", "Seattle", "WA", "98101", time.Now().UTC()).RunWith(testDB).ExecContext(t.Context())
 	require.NoError(t, err)
 	parentID, err := res.LastInsertId()
 	require.NoError(t, err)
-	res, err = squirrel.Insert("children").Columns("parent_id", "first_name", "last_name", "dob", "grade", "created_at").
-		Values(parentID, "Timmy", "Smith", "2020-01-01", "k", time.Now().UTC()).RunWith(testDB).ExecContext(t.Context())
+	res, err = squirrel.Insert("children").Columns("parent_id", "first_name", "last_name", "dob", "grade", "gender", "dietary_restrictions", "special_needs", "relationship", "created_at").
+		Values(parentID, "Timmy", "Smith", "2020-01-01", "k", "Boy", "", "", "Parent", time.Now().UTC()).RunWith(testDB).ExecContext(t.Context())
 	require.NoError(t, err)
 	childID, err := res.LastInsertId()
 	require.NoError(t, err)

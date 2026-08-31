@@ -11,6 +11,8 @@ function setKioskError(message) {
 }
 
 const GRADE_OPTIONS = ['None', 'Pre-K', 'Kindergarten', '1st', '2nd', '3rd', '4th', '5th', '6th', '7th', '8th', '9th', '10th', '11th', '12th'];
+const GENDER_OPTIONS = ['Boy', 'Girl'];
+const RELATIONSHIP_OPTIONS = ['Parent', 'Guardian', 'Grandparent', 'Other'];
 const MAX_CHILDREN = 10;
 
 const inputClass = 'mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-base text-gray-900 shadow-sm focus:border-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-500';
@@ -19,6 +21,8 @@ function childRowTemplate() {
     const row = document.createElement('div');
     row.className = 'child-row rounded-lg border border-slate-200 bg-slate-50 p-5';
     const gradeOptions = GRADE_OPTIONS.map(grade => `<option value="${grade}">${grade}</option>`).join('');
+    const genderOptions = GENDER_OPTIONS.map(g => `<option value="${g}">${g}</option>`).join('');
+    const relationshipOptions = RELATIONSHIP_OPTIONS.map(r => `<option value="${r}">${r}</option>`).join('');
     row.innerHTML = `
         <div class="kiosk-field grid gap-3 sm:grid-cols-2">
             <label class="block text-sm font-semibold text-gray-700">First name
@@ -34,6 +38,24 @@ function childRowTemplate() {
                 <select class="child-grade ${inputClass}" name="child_grade" autocomplete="off">
                     ${gradeOptions}
                 </select>
+            </label>
+            <label class="block text-sm font-semibold text-gray-700">Gender
+                <select class="child-gender ${inputClass}" name="child_gender" autocomplete="off" required>
+                    <option value="">Select</option>
+                    ${genderOptions}
+                </select>
+            </label>
+            <label class="block text-sm font-semibold text-gray-700">Relationship to child
+                <select class="child-relationship ${inputClass}" name="child_relationship" autocomplete="off" required>
+                    <option value="">Select</option>
+                    ${relationshipOptions}
+                </select>
+            </label>
+            <label class="block text-sm font-semibold text-gray-700 sm:col-span-2">Dietary restrictions
+                <textarea class="child-dietary ${inputClass}" name="child_dietary" autocomplete="off" maxlength="500" rows="2" placeholder="Optional"></textarea>
+            </label>
+            <label class="block text-sm font-semibold text-gray-700 sm:col-span-2">Special needs
+                <textarea class="child-special-needs ${inputClass}" name="child_special_needs" autocomplete="off" maxlength="500" rows="2" placeholder="Optional"></textarea>
             </label>
         </div>
         <button type="button" class="remove-child mt-2 rounded-md border border-red-300 px-3 py-1.5 text-sm font-semibold text-red-600 hover:bg-red-50 cursor-pointer" aria-label="Remove child">Remove</button>
@@ -80,7 +102,11 @@ function buildPayload() {
             first_name: row.querySelector('.child-first-name').value.trim(),
             last_name: row.querySelector('.child-last-name').value.trim(),
             dob: row.querySelector('.child-dob').value,
-            grade: row.querySelector('.child-grade').value.trim()
+            grade: row.querySelector('.child-grade').value.trim(),
+            gender: row.querySelector('.child-gender').value,
+            dietary_restrictions: row.querySelector('.child-dietary').value.trim(),
+            special_needs: row.querySelector('.child-special-needs').value.trim(),
+            relationship: row.querySelector('.child-relationship').value
         });
     });
     return {
@@ -88,9 +114,15 @@ function buildPayload() {
             first_name: document.getElementById('parent-first-name').value.trim(),
             last_name: document.getElementById('parent-last-name').value.trim(),
             phone: document.getElementById('parent-phone').value.trim(),
-            email: document.getElementById('parent-email').value.trim()
+            email: document.getElementById('parent-email').value.trim(),
+            address1: document.getElementById('parent-address1').value.trim(),
+            address2: document.getElementById('parent-address2').value.trim(),
+            city: document.getElementById('parent-city').value.trim(),
+            state: document.getElementById('parent-state').value.trim().toUpperCase(),
+            zip: document.getElementById('parent-zip').value.trim()
         },
-        children
+        children,
+        safety_ack: document.getElementById('safety-ack')?.checked ?? false
     };
 }
 
@@ -166,23 +198,57 @@ function showForm() {
 function validateForm() {
     if (!kioskForm) return true;
     const phoneInput = document.getElementById('parent-phone');
-    const emailInput = document.getElementById('parent-email');
+    const address1Input = document.getElementById('parent-address1');
+    const cityInput = document.getElementById('parent-city');
+    const stateInput = document.getElementById('parent-state');
+    const zipInput = document.getElementById('parent-zip');
+    const safetyAck = document.getElementById('safety-ack');
     const phone = phoneInput?.value.trim() ?? '';
-    const email = emailInput?.value.trim() ?? '';
 
     phoneInput?.setCustomValidity('');
-    emailInput?.setCustomValidity('');
+    address1Input?.setCustomValidity('');
+    cityInput?.setCustomValidity('');
+    stateInput?.setCustomValidity('');
+    zipInput?.setCustomValidity('');
+    safetyAck?.setCustomValidity('');
 
-    if (!phone && !email) {
-        phoneInput?.setCustomValidity('Please provide either a phone number or an email');
+    if (!phone) {
+        phoneInput?.setCustomValidity('Phone is required');
         return false;
     }
-    if (phone) {
-        const digits = phone.replace(/\D/g, '').length;
-        if (digits < 7) {
-            phoneInput?.setCustomValidity('Phone must contain at least 7 digits');
-            return false;
-        }
+    const digits = phone.replace(/\D/g, '').length;
+    if (digits < 7) {
+        phoneInput?.setCustomValidity('Phone must contain at least 7 digits');
+        return false;
+    }
+    if (!address1Input?.value.trim()) {
+        address1Input?.setCustomValidity('Address is required');
+        return false;
+    }
+    if (!cityInput?.value.trim()) {
+        cityInput?.setCustomValidity('City is required');
+        return false;
+    }
+    if (!stateInput?.value.trim()) {
+        stateInput?.setCustomValidity('State is required');
+        return false;
+    }
+    if (stateInput?.value.trim().length !== 2 || !/^[A-Za-z]{2}$/.test(stateInput.value.trim())) {
+        stateInput?.setCustomValidity('State must be a 2-letter code');
+        return false;
+    }
+    if (!zipInput?.value.trim()) {
+        zipInput?.setCustomValidity('Zip is required');
+        return false;
+    }
+    if (!/^\d{5}(-\d{4})?$/.test(zipInput.value.trim())) {
+        zipInput?.setCustomValidity('Zip must be 5 digits or 5+4 format');
+        return false;
+    }
+    if (safetyAck && !safetyAck.checked) {
+        safetyAck.setCustomValidity('You must acknowledge the safety policy');
+        setKioskError('You must acknowledge the safety policy');
+        return false;
     }
 
     const childRows = childrenContainer.querySelectorAll('.child-row');
@@ -196,9 +262,13 @@ function validateForm() {
         const firstName = row.querySelector('.child-first-name');
         const lastName = row.querySelector('.child-last-name');
         const dob = row.querySelector('.child-dob');
+        const gender = row.querySelector('.child-gender');
+        const relationship = row.querySelector('.child-relationship');
         firstName?.setCustomValidity('');
         lastName?.setCustomValidity('');
         dob?.setCustomValidity('');
+        gender?.setCustomValidity('');
+        relationship?.setCustomValidity('');
         if (dob) dob.max = today;
         if (!firstName?.value.trim()) {
             firstName?.setCustomValidity('First name is required');
@@ -216,6 +286,16 @@ function validateForm() {
                 setKioskError('');
                 return false;
             }
+        }
+        if (!gender?.value) {
+            gender?.setCustomValidity('Gender is required');
+            setKioskError('');
+            return false;
+        }
+        if (!relationship?.value) {
+            relationship?.setCustomValidity('Relationship is required');
+            setKioskError('');
+            return false;
         }
     }
 
