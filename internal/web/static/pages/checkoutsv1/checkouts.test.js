@@ -671,10 +671,10 @@ describe('checkoutsv1/checkouts', () => {
         expect(w.__test.getVisibleChildren().length).toBe(0);
     });
 
-    it('skips the server fetch while the location group selection is empty', async () => {
+    it('still fetches (unfiltered) while the location group selection is empty but hides filtered children', async () => {
         let checkoutsFetchCount = 0;
         const w = loadWindow({
-            html: '<!doctype html><html><body><div id="children-list"></div></body></html>',
+            html: '<!doctype html><html><body><div id="children-list"></div><button id="overdue-badge" class="hidden"></button><div id="overdue-sheet" class="translate-y-full"></div><div id="overdue-sheet-backdrop" class="hidden"></div><div id="overdue-sheet-list"></div><div id="toast-stack"></div></body></html>',
             url: 'http://localhost/?location_group_id=',
             fetchImpl: async (url) => {
                 if (String(url).includes('/v1/checkins/checkouts')) checkoutsFetchCount++;
@@ -682,12 +682,123 @@ describe('checkoutsv1/checkouts', () => {
             }
         });
         await w.fetchChildrenData();
-        expect(checkoutsFetchCount).toBe(0);
+        // Single unfiltered poll: still hits the server so the overdue badge can be fed
+        expect(checkoutsFetchCount).toBe(1);
+        // Board is empty due to client-side isEmpty filter
         expect(w.document.getElementById('children-list').textContent).toContain('No children called yet');
+        expect(w.__test.getVisibleChildren().length).toBe(0);
+        // But childrenData still holds the fetched record (for overdue badge)
+        expect(w.__test.getChildrenData().length).toBe(1);
 
-        // Interval tick while still empty must not hit the API either
         await w.fetchChildrenData();
-        expect(checkoutsFetchCount).toBe(0);
+        expect(checkoutsFetchCount).toBe(2);
+    });
+
+    const overdueChild = (id, minutesAgo) => ({
+        source: 'planning_center',
+        planning_center_id: id,
+        first_name: id,
+        last_name: 'X',
+        security_code: id,
+        checked_out_at_ms: Date.now() - minutesAgo * 60 * 1000,
+        checked_out_confirmed_at: null
+    });
+
+    function overdueBadgeWindow() {
+        return loadWindow({
+            html: '<!doctype html><html><body><div id="children-list"></div><button id="overdue-badge" class="hidden"></button><div id="overdue-sheet" class="translate-y-full"></div><div id="overdue-sheet-backdrop" class="hidden"></div><div id="overdue-sheet-list"></div></body></html>',
+            fetchImpl: async () => ({ ok: true, json: async () => [] })
+        });
+    }
+
+    it('jiggles the overdue badge when the overdue count increases', async () => {
+        const w = overdueBadgeWindow();
+        w.document.dispatchEvent(new w.Event('DOMContentLoaded'));
+        await new Promise(r=>setTimeout(r,10));
+
+        const badge = w.document.getElementById('overdue-badge');
+        w.__test.setChildrenData([overdueChild('a', 6)]);
+        w.updateOverdueUI();
+        expect(badge.classList.contains('hidden')).toBe(false);
+        expect(badge.textContent).toContain('1 overdue');
+        expect(badge.classList.contains('overdue-badge-jiggle')).toBe(true);
+
+        // Same count: animation must not restart
+        badge.classList.remove('overdue-badge-jiggle');
+        w.updateOverdueUI();
+        expect(badge.classList.contains('overdue-badge-jiggle')).toBe(false);
+
+        // Count increases again: jiggle restarts
+        w.__test.setChildrenData([overdueChild('a', 6), overdueChild('b', 7)]);
+        w.updateOverdueUI();
+        expect(badge.classList.contains('overdue-badge-jiggle')).toBe(true);
+    });
+
+    it('does not jiggle the overdue badge when the count decreases', async () => {
+        const w = overdueBadgeWindow();
+        w.document.dispatchEvent(new w.Event('DOMContentLoaded'));
+        await new Promise(r=>setTimeout(r,10));
+
+        const badge = w.document.getElementById('overdue-badge');
+        w.__test.setChildrenData([overdueChild('a', 6), overdueChild('b', 7)]);
+        w.updateOverdueUI();
+        expect(badge.classList.contains('overdue-badge-jiggle')).toBe(true);
+        badge.classList.remove('overdue-badge-jiggle');
+
+        w.__test.setChildrenData([overdueChild('a', 6)]);
+        w.updateOverdueUI();
+        expect(badge.classList.contains('overdue-badge-jiggle')).toBe(false);
+    });
+
+    it('closes the overdue sheet when clicking the backdrop', async () => {
+        const w = overdueBadgeWindow();
+        w.document.dispatchEvent(new w.Event('DOMContentLoaded'));
+        await new Promise(r=>setTimeout(r,10));
+
+        w.__test.setChildrenData([overdueChild('a', 6)]);
+        w.updateOverdueUI();
+        w.openOverdueSheet();
+
+        const sheet = w.document.getElementById('overdue-sheet');
+        const backdrop = w.document.getElementById('overdue-sheet-backdrop');
+        expect(sheet.classList.contains('translate-y-full')).toBe(false);
+        expect(backdrop.classList.contains('hidden')).toBe(false);
+        expect(w.document.body.style.overflow).toBe('hidden');
+
+        backdrop.dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
+
+        expect(sheet.classList.contains('translate-y-full')).toBe(true);
+        expect(backdrop.classList.contains('hidden')).toBe(true);
+        expect(w.document.body.style.overflow).toBe('');
+    });
+
+    it('updates the main-list pill color when confirming via the overdue sheet', async () => {
+        const w = overdueBadgeWindow();
+        w.document.dispatchEvent(new w.Event('DOMContentLoaded'));
+        await new Promise(r=>setTimeout(r,10));
+
+        const child = overdueChild('a', 9);
+        w.__test.setChildrenData([child]);
+        w.updateUI();
+        w.updateOverdueUI();
+
+        const mainPill = w.document.querySelector('#children-list .child-time[data-child-id="pc:a"]');
+        const sheetPill = w.document.querySelector('#overdue-sheet-list .child-time[data-child-id="pc:a"]');
+        expect(mainPill).not.toBeNull();
+        expect(sheetPill).not.toBeNull();
+        expect(mainPill.className).toContain('bg-red-500');
+        expect(sheetPill.className).toContain('bg-red-500');
+
+        const sheetCheckbox = w.document.querySelector('#overdue-sheet-list .child-confirmed-checkbox[data-child-id="pc:a"]');
+        sheetCheckbox.checked = true;
+        sheetCheckbox.dispatchEvent(new w.Event('change', { bubbles: true }));
+        await new Promise(r=>setTimeout(r,10));
+
+        // Main-list pill must flip to confirmed gray even though the cached
+        // single entry pointed at the sheet pill.
+        const updatedMainPill = w.document.querySelector('#children-list .child-time[data-child-id="pc:a"]');
+        expect(updatedMainPill.className).toContain('bg-gray-400');
+        expect(updatedMainPill.className).not.toContain('bg-red-500');
     });
 
     it('refetches and reseeds the flash baseline after re-selecting a group', async () => {
@@ -706,7 +817,7 @@ describe('checkoutsv1/checkouts', () => {
         expect(w.document.querySelectorAll('.child-time').length).toBe(1);
     });
 
-    it('unchecking all groups via the UI stops future server polls', async () => {
+    it('unchecking all groups via the UI hides visible children but polling continues for overdue badge', async () => {
         let checkoutsFetchCount = 0;
         const w = locationGroupWindow();
         w.window.fetch = async (url) => {
@@ -726,17 +837,17 @@ describe('checkoutsv1/checkouts', () => {
         expect(w.getSelectedFromURL().isEmpty).toBe(true);
         expect(w.__test.getVisibleChildren().length).toBe(0);
 
-        // While empty, scheduled polls must not hit the API
+        // While empty, scheduled polls still hit the API (so overdue badge sees all groups)
         const before = checkoutsFetchCount;
         await w.fetchChildrenData();
         await w.fetchChildrenData();
-        expect(checkoutsFetchCount).toBe(before);
+        expect(checkoutsFetchCount).toBe(before + 2);
 
-        // Re-selecting a group resumes polling
+        // Re-selecting a group shows children again
         w.document.querySelector('#location-group-checkboxes input[data-lg-id="1"]').checked = true;
         w.document.querySelector('#location-group-checkboxes input[data-lg-id="1"]').dispatchEvent(new w.Event('change', {bubbles:true}));
         await new Promise(r=>setTimeout(r,10));
-        expect(checkoutsFetchCount).toBe(before + 1);
+        expect(w.getSelectedFromURL().isEmpty).toBe(false);
     });
 
     it('resolves location_group_name filters to ids once groups are known', () => {

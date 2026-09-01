@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -18,6 +19,7 @@
         :root {
             --confirmed-filter: invert(48%) sepia(92%) saturate(453%) hue-rotate(88deg) brightness(94%) contrast(92%);
         }
+
         body {
             font-family: system-ui, -apple-system, sans-serif;
         }
@@ -29,8 +31,10 @@
 
         /* Hide scrollbar for IE, Edge and Firefox */
         .hide-scrollbar {
-            -ms-overflow-style: none; /* IE and Edge */
-            scrollbar-width: none; /* Firefox */
+            -ms-overflow-style: none;
+            /* IE and Edge */
+            scrollbar-width: none;
+            /* Firefox */
         }
 
         [data-confirmed-state="confirmed"] [data-confirmed-icon] {
@@ -48,145 +52,255 @@
             overflow: hidden;
             transition: height 300ms ease-out, opacity 300ms ease-out;
         }
+
         #search-controls .search-controls-panel {
             transform: scaleY(0);
             transform-origin: top;
             transition: transform 300ms ease-out;
         }
+
         #search-controls.is-expanded {
             opacity: 1;
         }
+
         #search-controls.is-expanded .search-controls-panel {
             transform: scaleY(1);
         }
 
         @keyframes new-child-flash {
-            0% { background-color: #fef08a; }
-            100% { background-color: #ffffff; }
+            0% {
+                background-color: #fef08a;
+            }
+
+            100% {
+                background-color: #ffffff;
+            }
         }
+
         .child-card-flash {
             animation: new-child-flash 3s ease-out;
+        }
+
+        #overdue-badge {
+            max-width: calc(100vw - 2rem);
+            white-space: nowrap;
+            width: max-content;
+        }
+
+        @keyframes overdue-badge-jiggle {
+
+            0%,
+            100% {
+                transform: translateX(0) scale(1);
+            }
+
+            8.33% {
+                transform: translateX(-3px) scale(1.02);
+            }
+
+            16.66% {
+                transform: translateX(3px) scale(1.05);
+            }
+
+            25% {
+                transform: translateX(-3px) scale(1.05);
+            }
+
+            33.33% {
+                transform: translateX(3px) scale(1.05);
+            }
+
+            41.66% {
+                transform: translateX(-3px) scale(1.05);
+            }
+
+            50% {
+                transform: translateX(3px) scale(1.05);
+            }
+
+            58.33% {
+                transform: translateX(-2px) scale(1.05);
+            }
+
+            66.66% {
+                transform: translateX(2px) scale(1.03);
+            }
+
+            75% {
+                transform: translateX(-1px) scale(1.02);
+            }
+
+            83.33% {
+                transform: translateX(1px) scale(1.01);
+            }
+
+            91.66% {
+                transform: translateX(-1px) scale(1.00);
+            }
+        }
+
+        .overdue-badge-jiggle {
+            animation: overdue-badge-jiggle 1s ease-out;
+        }
+
+        #overdue-sheet {
+            transition: translate 300ms ease-out, transform 300ms ease-out;
         }
     </style>
 
 </head>
 
 <body class="min-h-screen overflow-y-auto bg-white lg:h-screen lg:overflow-hidden">
-<!-- Background images -->
-<div class="fixed inset-0 z-0 overflow-hidden pointer-events-none">
-    <img src="/static/img/bg-left.svg" alt=""
-         class="absolute left-0 bottom-0 h-[300px] w-auto m:h-auto object-cover object-bottom lg:h-auto lg:w-[100%] z-10">
-    <img src="/static/img/bg-right.svg" alt=""
-         class="absolute right-0 bottom-0 h-[200px] w-auto m:h-auto object-cover object-bottom lg:h-auto lg:w-[40%] z-0">
-</div>
-
-<header class="relative flex justify-between items-center w-full z-20 px-6 pt-4 lg:fixed">
-    <div class="flex justify-between items-center">
-        <a href="/">
-            <img src="/static/img/NWKids-logo.svg" alt="NWKids Logo" class="h-16 md:h-24 w-auto">
-        </a>
+    <!-- Background images -->
+    <div class="fixed inset-0 z-0 overflow-hidden pointer-events-none">
+        <img src="/static/img/bg-left.svg" alt=""
+            class="absolute left-0 bottom-0 h-[300px] w-auto m:h-auto object-cover object-bottom lg:h-auto lg:w-[100%] z-10">
+        <img src="/static/img/bg-right.svg" alt=""
+            class="absolute right-0 bottom-0 h-[200px] w-auto m:h-auto object-cover object-bottom lg:h-auto lg:w-[40%] z-0">
     </div>
 
-    <div class="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 text-4xl md:text-6xl font-bold text-gray-800">
-        <span id="current-time">14:30</span>
-    </div>
+    <header class="relative flex justify-between items-center w-full z-20 px-6 pt-4 lg:fixed">
+        <div class="flex justify-between items-center">
+            <a href="/">
+                <img src="/static/img/NWKids-logo.svg" alt="NWKids Logo" class="h-16 md:h-24 w-auto">
+            </a>
+        </div>
 
-    <div class="hidden lg:block w-16 md:w-24"></div>
+        <div
+            class="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 text-4xl md:text-6xl font-bold text-gray-800">
+            <span id="current-time">14:30</span>
+        </div>
 
-    <div class="absolute top-6 right-6 flex items-center gap-2">
-        <button
-            id="search-toggle-button"
-            type="button"
-            aria-expanded="false"
-            aria-controls="search-controls"
-            aria-label="Toggle search"
-            class="cursor-pointer rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50"
-        >
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="h-5 w-5 transition-transform duration-300" data-search-toggle-icon>
-                <path stroke-linecap="round" stroke-linejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.111-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.28Z" />
-                <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
-            </svg>
-        </button>
+        <div class="hidden lg:block w-16 md:w-24"></div>
 
-        <div class="relative">
-            <button id="menu-button" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="kebab-menu" class="inline-flex h-11 w-11 cursor-pointer items-center justify-center rounded-full border border-slate-200 bg-white text-slate-700 shadow-sm transition hover:border-slate-300 hover:text-slate-900">
-                <span class="sr-only">Open menu</span>
-                <svg aria-hidden="true" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                    <rect x="3" y="4" width="14" height="2" rx="1"></rect>
-                    <rect x="3" y="9" width="14" height="2" rx="1"></rect>
-                    <rect x="3" y="14" width="14" height="2" rx="1"></rect>
+        <div class="absolute top-6 right-6 flex items-center gap-2">
+            <button id="search-toggle-button" type="button" aria-expanded="false" aria-controls="search-controls"
+                aria-label="Toggle search"
+                class="cursor-pointer rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2"
+                    stroke="currentColor" class="h-5 w-5 transition-transform duration-300" data-search-toggle-icon>
+                    <path stroke-linecap="round" stroke-linejoin="round"
+                        d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.111-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.28Z" />
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
                 </svg>
             </button>
-            <div id="kebab-menu" class="absolute right-0 mt-2 hidden w-56 rounded-xl border border-slate-200 bg-white py-2 text-sm text-slate-700 shadow-lg">
-                <a id="manual-checkins-link" href="/manual-checkins" class="flex items-center justify-between px-4 py-2 font-semibold transition hover:bg-slate-50 hover:text-slate-900">
-                    Manual Check-Ins
-                    <span aria-hidden="true">→</span>
-                </a>
-                <a id="login-link" href="/login?next=/" class="hidden flex items-center justify-between px-4 py-2 font-semibold transition hover:bg-slate-50 hover:text-slate-900">
-                    Log In
-                    <span aria-hidden="true">→</span>
-                </a>
-                <a id="admin-link" href="/admin" class="hidden flex items-center justify-between px-4 py-2 font-semibold transition hover:bg-slate-50 hover:text-slate-900">
-                    Admin
-                    <span aria-hidden="true">→</span>
-                </a>
-                <a id="logout-link" href="/logout" class="hidden flex items-center justify-between px-4 py-2 font-semibold transition hover:bg-slate-50 hover:text-slate-900">
-                    Log Out
-                    <span aria-hidden="true">→</span>
-                </a>
+
+            <div class="relative">
+                <button id="menu-button" type="button" aria-haspopup="true" aria-expanded="false"
+                    aria-controls="kebab-menu"
+                    class="inline-flex h-11 w-11 cursor-pointer items-center justify-center rounded-full border border-slate-200 bg-white text-slate-700 shadow-sm transition hover:border-slate-300 hover:text-slate-900">
+                    <span class="sr-only">Open menu</span>
+                    <svg aria-hidden="true" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                        <rect x="3" y="4" width="14" height="2" rx="1"></rect>
+                        <rect x="3" y="9" width="14" height="2" rx="1"></rect>
+                        <rect x="3" y="14" width="14" height="2" rx="1"></rect>
+                    </svg>
+                </button>
+                <div id="kebab-menu"
+                    class="absolute right-0 mt-2 hidden w-56 rounded-xl border border-slate-200 bg-white py-2 text-sm text-slate-700 shadow-lg">
+                    <a id="manual-checkins-link" href="/manual-checkins"
+                        class="flex items-center justify-between px-4 py-2 font-semibold transition hover:bg-slate-50 hover:text-slate-900">
+                        Manual Check-Ins
+                        <span aria-hidden="true">→</span>
+                    </a>
+                    <a id="login-link" href="/login?next=/"
+                        class="hidden flex items-center justify-between px-4 py-2 font-semibold transition hover:bg-slate-50 hover:text-slate-900">
+                        Log In
+                        <span aria-hidden="true">→</span>
+                    </a>
+                    <a id="admin-link" href="/admin"
+                        class="hidden flex items-center justify-between px-4 py-2 font-semibold transition hover:bg-slate-50 hover:text-slate-900">
+                        Admin
+                        <span aria-hidden="true">→</span>
+                    </a>
+                    <a id="logout-link" href="/logout"
+                        class="hidden flex items-center justify-between px-4 py-2 font-semibold transition hover:bg-slate-50 hover:text-slate-900">
+                        Log Out
+                        <span aria-hidden="true">→</span>
+                    </a>
+                </div>
             </div>
         </div>
-    </div>
-</header>
+    </header>
 
-<!-- Main Content -->
-<div class="relative z-10 min-h-screen flex flex-col box-border lg:h-screen lg:pt-28">
-    <div class="relative z-10 flex flex-col items-center gap-2 px-4 md:flex-row md:justify-center md:gap-3">
-        <div id="search-controls" class="w-full max-w-md md:flex-1 md:max-w-2xl">
-            <div class="overflow-hidden search-controls-panel pb-2 md:pt-4">
-                <div class="flex flex-col items-center gap-2 md:flex-row md:items-center md:gap-3">
-                    <input
-                        id="search-input"
-                        type="search"
-                        autocomplete="off"
-                        placeholder="Search by name or code"
-                        class="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-base shadow-sm focus:border-slate-500 focus:outline-none md:flex-1 md:min-w-0"
-                    />
-                    <label class="inline-flex cursor-pointer select-none items-center gap-2 text-sm font-medium text-slate-700">
-                        Hide confirmed
-                        <span class="relative inline-flex h-5 w-9 shrink-0 items-center">
-                            <input
-                                id="hide-confirmed-toggle"
-                                type="checkbox"
-                                role="switch"
-                                aria-label="Hide confirmed children"
-                                class="peer absolute h-0 w-0 opacity-0"
-                            />
-                            <span class="pointer-events-none absolute inset-0 rounded-full bg-slate-200 transition-colors duration-200 peer-checked:bg-emerald-500"></span>
-                            <span class="pointer-events-none absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform duration-200 peer-checked:translate-x-4"></span>
-                        </span>
-                    </label>
-                </div>
-                <div id="location-group-filter" class="mt-3 border-t border-slate-200 pt-3">
-                    <div class="flex items-center justify-between mb-2">
-                        <span class="text-sm font-medium text-slate-700">Location groups</span>
-                        <button id="location-group-select-all" type="button" class="cursor-pointer text-xs font-semibold text-blue-600 hover:text-blue-700">Select all</button>
+    <!-- Main Content -->
+    <div class="relative z-10 min-h-screen flex flex-col box-border lg:h-screen lg:pt-28 pb-20">
+        <div class="relative z-10 flex flex-col items-center gap-2 px-4 md:flex-row md:justify-center md:gap-3">
+            <div id="search-controls" class="w-full max-w-md md:flex-1 md:max-w-2xl">
+                <div class="overflow-hidden search-controls-panel pb-2 md:pt-4">
+                    <div class="flex flex-col items-center gap-2 md:flex-row md:items-center md:gap-3">
+                        <input id="search-input" type="search" autocomplete="off" placeholder="Search by name or code"
+                            class="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-base shadow-sm focus:border-slate-500 focus:outline-none md:flex-1 md:min-w-0" />
+                        <label
+                            class="inline-flex cursor-pointer select-none items-center gap-2 text-sm font-medium text-slate-700">
+                            Hide confirmed
+                            <span class="relative inline-flex h-5 w-9 shrink-0 items-center">
+                                <input id="hide-confirmed-toggle" type="checkbox" role="switch"
+                                    aria-label="Hide confirmed children" class="peer absolute h-0 w-0 opacity-0" />
+                                <span
+                                    class="pointer-events-none absolute inset-0 rounded-full bg-slate-200 transition-colors duration-200 peer-checked:bg-emerald-500"></span>
+                                <span
+                                    class="pointer-events-none absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform duration-200 peer-checked:translate-x-4"></span>
+                            </span>
+                        </label>
                     </div>
-                    <div id="location-group-checkboxes" class="flex flex-wrap gap-2"></div>
+                    <div id="location-group-filter" class="mt-3 border-t border-slate-200 pt-3">
+                        <div class="flex items-center justify-between mb-2">
+                            <span class="text-sm font-medium text-slate-700">Location groups</span>
+                            <button id="location-group-select-all" type="button"
+                                class="cursor-pointer text-xs font-semibold text-blue-600 hover:text-blue-700">Select
+                                all</button>
+                        </div>
+                        <div id="location-group-checkboxes" class="flex flex-wrap gap-2"></div>
+                    </div>
                 </div>
             </div>
         </div>
-    </div>
-    <!-- Scrollable children list (list on mobile, grid on desktop) -->
-    <div id="children-list" class="grid grid-cols-1 gap-3 px-4 py-4 md:grid-cols-2 lg:flex-1 lg:min-h-0 lg:overflow-y-auto lg:content-start lg:grid-cols-3">
-        <!-- Cards will be dynamically inserted here -->
-        <div class="text-center text-gray-500 py-8">
-            Loading children data...
+        <!-- Scrollable children list (list on mobile, grid on desktop) -->
+        <div id="children-list"
+            class="grid grid-cols-1 gap-3 px-4 py-4 md:grid-cols-2 lg:flex-1 lg:min-h-0 lg:overflow-y-auto lg:content-start lg:grid-cols-3">
+            <div class="text-center text-gray-500 py-8">
+                Loading children data...
+            </div>
         </div>
     </div>
-</div>
 
-<script src="/static/js/morphdom-umd.min.js?v=dev"></script>
-<script src="/static/pages/checkoutsv1/checkouts.js?v=dev"></script>
+    <!-- Overdue floating badge (phone-friendly, zero cost when no overdue) -->
+    <button id="overdue-badge" type="button"
+        class="hidden fixed bottom-4 left-1/2 -translate-x-1/2 z-30 rounded-full bg-red-600 text-white px-5 py-2.5 text-sm font-bold shadow-[0_4px_12px_rgba(0,0,0,0.3)] hover:bg-red-700 active:bg-red-700 transition-colors cursor-pointer whitespace-nowrap w-max">
+        overdue
+    </button>
+
+    <!-- Overdue bottom sheet -->
+    <div id="overdue-sheet-backdrop" class="hidden fixed inset-0 bg-black/40 z-40" aria-hidden="true"></div>
+    <div id="overdue-sheet"
+        class="fixed inset-x-0 bottom-0 z-40 h-[80vh] bg-slate-50 rounded-t-2xl shadow-2xl border-t border-slate-200 flex flex-col translate-y-full"
+        aria-hidden="true" role="dialog" aria-label="Overdue checkouts">
+        <div class="flex items-center justify-between px-4 pt-3 pb-2 shrink-0">
+            <div class="flex items-center gap-2">
+                <span class="h-2 w-2 rounded-full bg-red-500 shrink-0"></span>
+                <h2 id="overdue-sheet-title" class="text-sm font-bold text-slate-800">Overdue &gt;5 min</h2>
+                <span id="overdue-sheet-count"
+                    class="text-xs font-semibold bg-red-100 text-red-700 px-2 py-0.5 rounded-full">0 overdue</span>
+            </div>
+            <button id="overdue-sheet-close" type="button" aria-label="Close overdue list"
+                class="h-8 w-8 inline-flex items-center justify-center rounded-full text-slate-500 hover:bg-slate-200 hover:text-slate-700 cursor-pointer">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="h-5 w-5">
+                    <path
+                        d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 0-1.06-1.06L10 8.94 6.28 5.22Z" />
+                </svg>
+            </button>
+        </div>
+        <div class="px-2 pb-2">
+            <div class="h-1 w-10 mx-auto rounded-full bg-slate-300"></div>
+        </div>
+        <div id="overdue-sheet-list" class="flex-1 overflow-y-auto px-4 pb-4 space-y-3">
+            <div class="text-center py-6 text-sm text-slate-500">No overdue checkouts</div>
+        </div>
+    </div>
+
+    <script src="/static/js/morphdom-umd.min.js?v=dev"></script>
+    <script src="/static/pages/checkoutsv1/checkouts.js?v=dev"></script>
 </body>
+
 </html>
