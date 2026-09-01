@@ -21,6 +21,9 @@ type MockRepo struct {
 
 	DeleteCheckinFunc          func(ctx context.Context, id int64) error
 	DeleteCheckinFuncCallCount atomic.Int64
+
+	DeleteAllCheckinsFunc          func(ctx context.Context) (int64, error)
+	DeleteAllCheckinsFuncCallCount atomic.Int64
 }
 
 func (repo *MockRepo) ListCheckins(ctx context.Context, filter Filter) ([]Checkin, error) {
@@ -66,4 +69,13 @@ func (repo *MockRepo) DeleteCheckin(ctx context.Context, id int64) error {
 	}
 
 	panic("MockRepo.DeleteCheckin not implemented")
+}
+
+func (repo *MockRepo) DeleteAllCheckins(ctx context.Context) (int64, error) {
+	repo.DeleteAllCheckinsFuncCallCount.Add(1)
+	if repo.DeleteAllCheckinsFunc != nil {
+		return repo.DeleteAllCheckinsFunc(ctx)
+	}
+
+	panic("MockRepo.DeleteAllCheckins not implemented")
 }

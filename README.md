@@ -2,9 +2,12 @@
 
 This project is a web service for managing kids' check-ins and check-outs, likely for a church or similar organization, given the references to "Planning Center". It's built in Go and uses the Fiber web framework. The service exposes a RESTful API and also uses websockets for real-time updates. The data is stored in a SQLite database.
 
-The project is structured as a command-line application with two main commands:
+The project is structured as a command-line application with commands:
 - `apiserver`: Starts the web server.
 - `checkout-fetcher`: A background worker that fetches checkout information from Planning Center.
+- `checkins delete-old`: Deletes old checkins/manual checkins older than a duration.
+- `checkins seed-preview`: Deletes all current checkins/manual checkins and seeds preview data (DB equivalent of `preview.js`).
+- `locations upsert-location`: Upserts a location from Planning Center.
 
 ## Requirements
 - [Golang](https://go.dev/) 1.25+
@@ -72,6 +75,25 @@ make checkout-fetcher
 
 This will build the application and start the fetcher process.
 
+### Checkins commands
+
+Delete old checkins (default 7 days):
+```sh
+./bin/kids-checkin checkins delete-old --age -168h --db-file kids-checkin.db
+# Or via env: DB_FILE=kids-checkin.db godotenv ./bin/kids-checkin checkins delete-old
+```
+
+Seed preview data (DB equivalent of `internal/web/dev-assets/preview.js`):
+
+This mirrors `loadPreviewData()` in the browser but writes directly to SQLite via `checkin`/`manualcheckin` Repos. It deletes all rows in `checkins` and `manual_checkins`, then inserts 10 demo rows (5 Planning Center + 5 manual) at 0, 3.9, 6, 7.9, and 2 min ago so you can validate pill colors and the confirm checkbox without waiting for real time. Locations/events are preserved; if no locations exist a `Preview Event`/`Preview Location` is created via `location`/`event` Repos to satisfy `checkins.location_id`.
+
+```sh
+# Requires --force (destructive operation). Respects --db-file / $DB_FILE.
+godotenv ./bin/kids-checkin checkins seed-preview --force
+godotenv ./bin/kids-checkin checkins seed-preview --force --db-file database/kids-checkin.db
+```
+
+Without `--force` the command exits with `must pass --force to seed preview data`.
 
 ### Tailwind CSS Development
 When developing the frontend, you need nodejs and npm.

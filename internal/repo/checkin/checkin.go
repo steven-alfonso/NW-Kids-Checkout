@@ -49,6 +49,7 @@ type Repo interface {
 	SetCheckedOutConfirmedAt(ctx context.Context, planningCenterID string, confirmed bool) (Checkin, error)
 	RemoveOldCheckins(ctx context.Context, olderThan time.Time) (deletedCount int64, err error)
 	DeleteCheckin(ctx context.Context, id int64) error
+	DeleteAllCheckins(ctx context.Context) (int64, error)
 }
 
 type sqliteRepo struct {
@@ -325,4 +326,14 @@ func (s *sqliteRepo) DeleteCheckin(ctx context.Context, id int64) error {
 	}
 
 	return nil
+}
+
+func (s *sqliteRepo) DeleteAllCheckins(ctx context.Context) (int64, error) {
+	res, err := squirrel.Delete("checkins").RunWith(s.db).ExecContext(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("deleting all checkins: %w", err)
+	}
+
+	ra, _ := res.RowsAffected()
+	return ra, nil
 }
