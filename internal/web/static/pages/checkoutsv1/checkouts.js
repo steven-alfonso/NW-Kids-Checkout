@@ -248,7 +248,7 @@ function renderOverdueSheet(overdue) {
                     <div class="flex items-center gap-2">
                         <span class="inline-block h-2.5 w-2.5 rounded-sm border border-black/10 shrink-0" style="background-color:${barColor}"></span>
                         <span class="text-xs font-medium text-slate-600">${groupLabel}</span>
-                        <span class="ml-auto text-white text-xs px-1.5 py-0 rounded-md child-time ${getTimePillClass(checkedOutAtMs, confirmed, nowMs)}" data-child-id="${childId}">${calculateMinutesAgoFromTimestamp(checkedOutAtMs, nowMs)}</span>
+                        <span class="ml-auto text-white text-xs px-2.5 py-1 rounded-md child-time ${getTimePillClass(checkedOutAtMs, confirmed, nowMs)}" data-child-id="${childId}">${calculateMinutesAgoFromTimestamp(checkedOutAtMs, nowMs)}</span>
                     </div>
                     <div class="font-bold text-gray-800 text-lg leading-tight">${name}${starMarkup}</div>
                     <div class="flex justify-between items-center">
@@ -279,7 +279,7 @@ function updateOverdueUI() {
 
     if (dom.overdueBadge) {
         if (count > 0) {
-            dom.overdueBadge.textContent = `${count} overdue >${OVERDUE_MINUTES}m — tap to view`;
+            dom.overdueBadge.textContent = `${count} overdue. Tap to view`;
             dom.overdueBadge.classList.remove('hidden');
             dom.overdueBadge.setAttribute('aria-label', `${count} overdue checkouts, tap to view`);
             if (count > lastOverdueCount) {
