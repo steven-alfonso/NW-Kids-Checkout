@@ -46,6 +46,7 @@ type Repo interface {
 	SetManualCheckedOutAt(ctx context.Context, id int64, checkedOut bool) (ManualCheckin, error)
 	SetManualCheckedOutConfirmedAt(ctx context.Context, id int64, confirmed bool) (ManualCheckin, error)
 	RemoveOldManualCheckins(ctx context.Context, olderThan time.Time) (deletedCount int64, err error)
+	DeleteAllManualCheckins(ctx context.Context) (int64, error)
 }
 
 type sqliteRepo struct {
@@ -314,4 +315,14 @@ func (s *sqliteRepo) RemoveOldManualCheckins(ctx context.Context, olderThan time
 
 	ra, _ := res.RowsAffected()
 	return ra, err
+}
+
+func (s *sqliteRepo) DeleteAllManualCheckins(ctx context.Context) (int64, error) {
+	res, err := squirrel.Delete("manual_checkins").RunWith(s.db).ExecContext(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("deleting all manual checkins: %w", err)
+	}
+
+	ra, _ := res.RowsAffected()
+	return ra, nil
 }

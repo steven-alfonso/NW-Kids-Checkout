@@ -161,13 +161,18 @@ func (controller *Controller) checkoutsWeb(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
 	}
 
-	manualCheckins, err := controller.manualRepo.ListManualCheckins(c.Context(), manualFilter)
-	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
+	// Manual checkins have no location, so they can't match a location-group
+	// filter; skip them to avoid over-fetching rows the client discards.
+	var manualCheckins []manualcheckin.ManualCheckin
+	if len(filter.LocationGroupIDs) == 0 && filter.LocationGroupName == "" {
+		manualCheckins, err = controller.manualRepo.ListManualCheckins(c.Context(), manualFilter)
+		if err != nil {
+			return fiber.NewError(fiber.StatusInternalServerError, err.Error())
+		}
+		manualCheckins = sortManualCheckins(manualCheckins)
 	}
 
 	checkins = sortCheckins(checkins)
-	manualCheckins = sortManualCheckins(manualCheckins)
 
 	_, err = controller.locationRepo.ListLocations(c.Context(), location.LocationFilter{})
 	if err != nil {
@@ -309,7 +314,7 @@ func buildFilter(c *fiber.Ctx) (checkin.Filter, error) {
 	if locationGroupName != "" {
 		locationGroupName, err = url.QueryUnescape(locationGroupName)
 		if err != nil {
-			return checkin.Filter{}, errors.New("cannot parse location_group_id")
+			return checkin.Filter{}, errors.New("cannot parse location_group_name")
 		}
 	}
 
@@ -338,20 +343,19 @@ func buildFilter(c *fiber.Ctx) (checkin.Filter, error) {
 		filter.Limit = limitInt
 	}
 
-	if lgIDStr := c.Query("location_group_id"); lgIDStr != "" {
-		lgID, err := strconv.ParseInt(lgIDStr, 10, 64)
-		if err != nil {
-			return checkin.Filter{}, errors.New("cannot parse location_group_id")
-		}
-		if lgID < 0 {
-			return checkin.Filter{}, errors.New("location_group_id must be positive")
-		}
-		filter.LocationGroupID = lgID
+	if inc := c.Query("include_unassigned"); inc == "1" || inc == "true" {
+		filter.IncludeUnassigned = true
 	}
 
-	if lgName := c.Query("location_group_name"); lgName != "" {
-		filter.LocationGroupName = lgName
+	// parse repeated/comma location_group_id
+	ids, err := parseLocationGroupIDs(c)
+	if err != nil {
+		return checkin.Filter{}, err
 	}
+	if len(ids) == 1 {
+		filter.LocationGroupID = ids[0]
+	}
+	filter.LocationGroupIDs = ids
 
 	if cobStr := c.Query("checked_out_before"); cobStr != "" {
 		// try time.ParseDuration
@@ -385,6 +389,35 @@ func buildFilter(c *fiber.Ctx) (checkin.Filter, error) {
 	return filter, nil
 }
 
+func parseLocationGroupIDs(c *fiber.Ctx) ([]int64, error) {
+	var ids []int64
+	var parseErr error
+	c.Request().URI().QueryArgs().VisitAll(func(key, value []byte) {
+		if parseErr != nil || string(key) != "location_group_id" {
+			return
+		}
+		for _, part := range strings.Split(string(value), ",") {
+			part = strings.TrimSpace(part)
+			if part == "" {
+				continue
+			}
+			parsed, err := strconv.ParseInt(part, 10, 64)
+			if err != nil {
+				parseErr = errors.New("cannot parse location_group_id")
+				return
+			}
+			if parsed < 0 {
+				parseErr = errors.New("location_group_id must be positive")
+				return
+			}
+			if parsed > 0 {
+				ids = append(ids, parsed)
+			}
+		}
+	})
+	return ids, parseErr
+}
+
 func repoCheckinToOutput(checkin checkin.Checkin) Checkin {
 	var coa *time.Time
 	if !checkin.CheckedOutAt.IsZero() {
@@ -397,6 +430,7 @@ func repoCheckinToOutput(checkin checkin.Checkin) Checkin {
 	return Checkin{
 		PlanningCenterID:      checkin.PlanningCenterID,
 		LocationID:            checkin.LocationID,
+		LocationGroupID:       checkin.LocationGroupID,
 		FirstName:             checkin.FirstName,
 		LastName:              checkin.LastName,
 		SecurityCode:          checkin.SecurityCode,
@@ -484,6 +518,7 @@ func manualFilterFromCheckinFilter(filter checkin.Filter) manualcheckin.Filter {
 type Checkin struct {
 	PlanningCenterID      string     `json:"planning_center_id"`
 	LocationID            int64      `json:"location_id"`
+	LocationGroupID       *int64     `json:"location_group_id"`
 	PublicID              string     `json:"public_id"`
 	FirstName             string     `json:"first_name"`
 	LastName              string     `json:"last_name"`

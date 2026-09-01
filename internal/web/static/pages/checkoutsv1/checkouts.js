@@ -10,14 +10,22 @@ let lastListSignature = null;
 let searchQuery = '';
 let hideConfirmed = false;
 let knownChildIds = new Set();
+let lastFetchParams = null;
+let locationGroups = [];
 let flashChildIds = new Set();
 let flashTimeoutId = null;
 const CONFIRM_OVERRIDE_TTL_MS = 15000;
 const FLASH_RESET_DELAY_MS = 4000;
+const OVERDUE_MINUTES = 5;
+let lastOverdueCount = 0;
 const confirmationOverrides = new Map();
 const dom = {
     childrenList: null,
-    currentTime: null
+    currentTime: null,
+    overdueBadge: null,
+    overdueSheet: null,
+    overdueSheetList: null,
+    overdueSheetBackdrop: null
 };
 
 const API_CALL_BLOCKS = {
@@ -145,7 +153,8 @@ function getChildSignature(child) {
         child.checked_out_at || '',
         child.first_name || '',
         child.last_name || '',
-        child.security_code || ''
+        child.security_code || '',
+        child.location_group_id != null ? String(child.location_group_id) : ''
     ].join('|');
 }
 
@@ -160,6 +169,15 @@ function getVisibleChildren() {
             const name = `${child.first_name || ''} ${child.last_name || ''}`.toLowerCase();
             const code = (child.security_code || '').toLowerCase();
             return name.includes(q) || code.includes(q);
+        });
+    }
+    const { ids, includeUnassigned, isEmpty } = getSelectedFromURL();
+    if (isEmpty) return [];
+    if (ids.size > 0 || includeUnassigned) {
+        children = children.filter((child) => {
+            const lgId = child.location_group_id;
+            if (lgId == null) return includeUnassigned;
+            return ids.has(Number(lgId));
         });
     }
     return children;
@@ -179,6 +197,156 @@ function setHideConfirmed(hidden) {
     updateUI();
 }
 
+function isChildConfirmed(child) {
+    const childId = getChildId(child);
+    if (!childId) return Boolean(child.checked_out_confirmed_at);
+    const override = getConfirmationOverride(childId);
+    if (override) return override.confirmed;
+    return Boolean(child.checked_out_confirmed_at);
+}
+
+function getOverdueChildren(nowMs) {
+    const now = typeof nowMs === 'number' ? nowMs : Date.now();
+    const cutoff = OVERDUE_MINUTES * 60 * 1000;
+    return childrenData.filter((child) => {
+        if (!child.checked_out_at_ms) return false;
+        if (isChildConfirmed(child)) return false;
+        return now - child.checked_out_at_ms >= cutoff;
+    }).sort((a, b) => a.checked_out_at_ms - b.checked_out_at_ms);
+}
+
+function getOverdueCount(nowMs) {
+    return getOverdueChildren(nowMs).length;
+}
+
+function renderOverdueSheet(overdue) {
+    if (!dom.overdueSheetList) return;
+    if (overdue.length === 0) {
+        dom.overdueSheetList.innerHTML = '<div class="text-center py-6 text-sm text-slate-500">No overdue checkouts</div>';
+        return;
+    }
+    const nowMs = Date.now();
+    dom.overdueSheetList.innerHTML = overdue.map((child) => {
+        const name = `${escapeHtml(child.first_name)} ${escapeHtml(child.last_name)}`;
+        const code = child.source === 'manual' ? '---' : escapeHtml(child.security_code || '----');
+        const childId = escapeHtml(getChildId(child));
+        const planningCenterId = escapeHtml(child.planning_center_id || '');
+        const publicId = escapeHtml(child.public_id || '');
+        const source = escapeHtml(child.source || '');
+        const starMarkup = getManualCheckinStarMarkup(child.source);
+        const checkedOutAtMs = child.checked_out_at_ms ?? getCheckedOutTimestamp(child.checked_out_at);
+        const confirmed = isChildConfirmed(child);
+        const barColor = getLocationGroupColor(child.location_group_id);
+        const groupLabel = child.location_group_id == null ? 'Unassigned' : (() => {
+            const g = locationGroups.find((lg) => Number(lg.id) === Number(child.location_group_id));
+            return g ? escapeHtml(g.name) : `Group ${escapeHtml(String(child.location_group_id))}`;
+        })();
+        return `
+            <div class="bg-white rounded-lg shadow flex overflow-hidden">
+                <div style="background-color:${barColor}; width:6px; flex-shrink:0" aria-hidden="true"></div>
+                <div class="flex-1 py-2 px-3 flex flex-col gap-1">
+                    <div class="flex items-center gap-2">
+                        <span class="inline-block h-2.5 w-2.5 rounded-sm border border-black/10 shrink-0" style="background-color:${barColor}"></span>
+                        <span class="text-xs font-medium text-slate-600">${groupLabel}</span>
+                        <span class="ml-auto text-white text-xs px-2.5 py-1 rounded-md child-time ${getTimePillClass(checkedOutAtMs, confirmed, nowMs)}" data-child-id="${childId}">${calculateMinutesAgoFromTimestamp(checkedOutAtMs, nowMs)}</span>
+                    </div>
+                    <div class="font-bold text-gray-800 text-lg leading-tight">${name}${starMarkup}</div>
+                    <div class="flex justify-between items-center">
+                        <div class="text-black text-base">${code}</div>
+                        <label class="relative flex items-center cursor-pointer leading-none" data-confirmed-label data-confirmed-state="${confirmed ? 'confirmed' : 'unconfirmed'}">
+                            <input type="checkbox" class="sr-only child-confirmed-checkbox" aria-label="Mark ${name} as confirmed"
+                                data-child-id="${childId}" data-planning-center-id="${planningCenterId}" data-public-id="${publicId}" data-source="${source}" ${confirmed ? 'checked' : ''}>
+                            <img src="${CONFIRMED_ICON_SRC}" alt="" class="h-9 w-9 block" data-confirmed-icon>
+                        </label>
+                    </div>
+                </div>
+            </div>
+        `;
+    }).join('');
+    cacheChildTimeElements(dom.overdueSheetList);
+}
+
+function jiggleOverdueBadge() {
+    if (!dom.overdueBadge) return;
+    dom.overdueBadge.classList.remove('overdue-badge-jiggle');
+    void dom.overdueBadge.offsetWidth;
+    dom.overdueBadge.classList.add('overdue-badge-jiggle');
+}
+
+function updateOverdueUI() {
+    const overdue = getOverdueChildren();
+    const count = overdue.length;
+
+    if (dom.overdueBadge) {
+        if (count > 0) {
+            dom.overdueBadge.textContent = `${count} overdue. Tap to view`;
+            dom.overdueBadge.classList.remove('hidden');
+            dom.overdueBadge.setAttribute('aria-label', `${count} overdue checkouts, tap to view`);
+            if (count > lastOverdueCount) {
+                jiggleOverdueBadge();
+            }
+        } else {
+            dom.overdueBadge.classList.add('hidden');
+            closeOverdueSheet();
+        }
+    }
+    lastOverdueCount = count;
+
+    if (dom.overdueSheet) {
+        renderOverdueSheet(overdue);
+        const countEl = document.getElementById('overdue-sheet-count');
+        if (countEl) countEl.textContent = count > 0 ? `${count} overdue` : 'No overdue';
+    }
+}
+
+let bodyScrollLock = null;
+
+function lockBodyScroll() {
+    if (bodyScrollLock || !document.body) return;
+    bodyScrollLock = { scrollY: window.scrollY || 0 };
+    const style = document.body.style;
+    style.position = 'fixed';
+    style.top = `-${bodyScrollLock.scrollY}px`;
+    style.left = '0';
+    style.right = '0';
+    style.width = '100%';
+    style.overflow = 'hidden';
+}
+
+function unlockBodyScroll() {
+    if (!bodyScrollLock || !document.body) return;
+    const scrollY = bodyScrollLock.scrollY;
+    bodyScrollLock = null;
+    const style = document.body.style;
+    style.position = '';
+    style.top = '';
+    style.left = '';
+    style.right = '';
+    style.width = '';
+    style.overflow = '';
+    if (typeof window.scrollTo === 'function') {
+        try {
+            window.scrollTo(0, scrollY);
+        } catch (e) { /* jsdom and some embedders don't implement scrollTo */ }
+    }
+}
+
+function openOverdueSheet() {
+    if (!dom.overdueSheet || !dom.overdueSheetBackdrop) return;
+    dom.overdueSheet.classList.remove('translate-y-full');
+    dom.overdueSheet.setAttribute('aria-hidden', 'false');
+    dom.overdueSheetBackdrop.classList.remove('hidden');
+    lockBodyScroll();
+}
+
+function closeOverdueSheet() {
+    if (!dom.overdueSheet || !dom.overdueSheetBackdrop) return;
+    dom.overdueSheet.classList.add('translate-y-full');
+    dom.overdueSheet.setAttribute('aria-hidden', 'true');
+    dom.overdueSheetBackdrop.classList.add('hidden');
+    unlockBodyScroll();
+}
+
 function syncConfirmedStates() {
     if (!childrenData.length) return;
 
@@ -191,7 +359,7 @@ function syncConfirmedStates() {
         confirmedById.set(childId, confirmed);
     });
 
-    const roots = [dom.childrenList].filter(Boolean);
+    const roots = [dom.childrenList, dom.overdueSheetList].filter(Boolean);
     roots.forEach((root) => {
         root.querySelectorAll('.child-confirmed-checkbox[data-child-id]').forEach((checkbox) => {
             const childId = checkbox.dataset.childId;
@@ -270,6 +438,160 @@ async function confirmCheckedOut(source, planningCenterId, publicId, checkbox, c
     }
 }
 
+const GRAY_UNASSIGNED = '#9CA3AF';
+const PAUL_TOL_MUTED = ['#332288', '#117733', '#44AA99', '#88CCEE', '#DDCC77', '#CC6677', '#AA4499', '#882255'];
+
+function getLocationGroupColor(locationGroupId) {
+    if (locationGroupId == null) return GRAY_UNASSIGNED;
+    const id = Number(locationGroupId);
+    if (!Number.isFinite(id)) return GRAY_UNASSIGNED;
+    const idx = Math.abs(id - 1) % PAUL_TOL_MUTED.length;
+    return PAUL_TOL_MUTED[idx];
+}
+
+if (typeof window !== 'undefined') {
+    window.GRAY_UNASSIGNED = GRAY_UNASSIGNED;
+    window.PAUL_TOL_MUTED = PAUL_TOL_MUTED;
+    window.getLocationGroupColor = getLocationGroupColor;
+}
+
+function getSelectedFromURL() {
+    const params = new URLSearchParams(window.location.search);
+    const ids = new Set();
+    const rawValues = params.getAll('location_group_id');
+    rawValues.forEach((v) => {
+        v.split(',').forEach((part) => {
+            const trimmed = part.trim();
+            if (!trimmed) return;
+            const n = Number(trimmed);
+            if (Number.isFinite(n) && n > 0) ids.add(n);
+        });
+    });
+    const inc = params.get('include_unassigned');
+    const includeUnassigned = inc === '1' || inc === 'true';
+    const nameValues = params.getAll('location_group_name');
+    const names = new Set();
+    nameValues.forEach((v) => {
+        v.split(',').forEach((part) => {
+            const trimmed = part.trim();
+            if (trimmed) names.add(trimmed);
+        });
+    });
+    const hasLocationGroupParam = params.has('location_group_id') || params.has('location_group_name') || params.has('include_unassigned');
+    const isEmpty = hasLocationGroupParam && ids.size === 0 && names.size === 0 && !includeUnassigned;
+    if (names.size > 0 && locationGroups.length > 0) {
+        locationGroups.forEach((g) => {
+            const gid = Number(g.id);
+            if (names.has(g.name) && Number.isFinite(gid) && gid > 0) ids.add(gid);
+        });
+    }
+    return { ids, includeUnassigned, names, isEmpty };
+}
+
+function pushURLFromSelection(idsSet, includeUnassigned) {
+    const params = new URLSearchParams(window.location.search);
+    params.delete('location_group_id');
+    params.delete('location_group_name');
+    params.delete('include_unassigned');
+    if (idsSet && idsSet.size) {
+        idsSet.forEach((id) => params.append('location_group_id', String(id)));
+    }
+    if (includeUnassigned) {
+        params.append('include_unassigned', '1');
+    }
+    const newSearch = params.toString();
+    const newUrl = newSearch ? '?' + newSearch : window.location.pathname;
+    history.replaceState(null, '', newUrl);
+    syncLocationGroupUIFromURL();
+    updateUI();
+    fetchChildrenData();
+}
+
+function renderLocationGroupSettings(groups) {
+    const container = document.getElementById('location-group-checkboxes');
+    if (!container) return;
+    locationGroups = groups || [];
+    const parts = [];
+    (groups || []).forEach((g) => {
+        const color = getLocationGroupColor(g.id);
+        const name = escapeHtml(g.name || '');
+        parts.push(`<label class="inline-flex items-center gap-1.5 text-sm cursor-pointer"><input type="checkbox" data-lg-id="${escapeHtml(String(g.id))}" class="h-4 w-4 rounded border-slate-300 cursor-pointer"> <span style="background-color:${color}" class="inline-block h-3 w-3 rounded-sm border border-black/10 shrink-0"></span> ${name}</label>`);
+    });
+    const unassignedColor = GRAY_UNASSIGNED;
+    parts.push(`<label class="inline-flex items-center gap-1.5 text-sm cursor-pointer"><input type="checkbox" data-lg-id="unassigned" class="h-4 w-4 rounded border-slate-300 cursor-pointer"> <span style="background-color:${unassignedColor}" class="inline-block h-3 w-3 rounded-sm border border-black/10 shrink-0"></span> Unassigned</label>`);
+    container.innerHTML = parts.join('');
+    syncLocationGroupUIFromURL();
+}
+
+function syncLocationGroupUIFromURL() {
+    const container = document.getElementById('location-group-checkboxes');
+    const selectAll = document.getElementById('location-group-select-all');
+    if (!container) return;
+    const { ids, includeUnassigned, names, isEmpty } = getSelectedFromURL();
+    const hasFilter = ids.size > 0 || names.size > 0 || includeUnassigned;
+    const checkboxes = container.querySelectorAll('input[type="checkbox"][data-lg-id]');
+    if (isEmpty) {
+        checkboxes.forEach((cb) => { cb.checked = false; });
+        if (selectAll) {
+            selectAll.textContent = 'Select all';
+            selectAll.disabled = false;
+        }
+        return;
+    }
+    if (!hasFilter) {
+        checkboxes.forEach((cb) => { cb.checked = true; });
+        if (selectAll) {
+            selectAll.textContent = 'Deselect all';
+            selectAll.disabled = false;
+        }
+        return;
+    }
+    checkboxes.forEach((cb) => {
+        const val = cb.getAttribute('data-lg-id');
+        if (val === 'unassigned') {
+            cb.checked = includeUnassigned;
+        } else {
+            cb.checked = ids.has(Number(val));
+        }
+    });
+    if (selectAll) {
+        const allChecked = checkboxes.length > 0 && [...checkboxes].every((cb) => cb.checked);
+        selectAll.textContent = allChecked ? 'Deselect all' : 'Select all';
+        selectAll.disabled = false;
+    }
+}
+
+async function fetchLocationGroups() {
+    try {
+        const response = await fetch(`${API_URL}/v1/location_groups`, { credentials: 'same-origin' });
+        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+        const data = await response.json();
+        let groups = [];
+        if (Array.isArray(data)) groups = data;
+        else if (Array.isArray(data.location_groups)) groups = data.location_groups;
+        else if (Array.isArray(data.checkins)) groups = [];
+        renderLocationGroupSettings(groups);
+        syncLocationGroupUIFromURL();
+    } catch (error) {
+        console.error('Error fetching location groups:', error);
+    }
+}
+
+if (typeof window !== 'undefined') {
+    window.getSelectedFromURL = getSelectedFromURL;
+    window.pushURLFromSelection = pushURLFromSelection;
+    window.renderLocationGroupSettings = renderLocationGroupSettings;
+    window.syncLocationGroupUIFromURL = syncLocationGroupUIFromURL;
+    window.fetchLocationGroups = fetchLocationGroups;
+    window.getOverdueChildren = getOverdueChildren;
+    window.getOverdueCount = getOverdueCount;
+    window.updateOverdueUI = updateOverdueUI;
+    window.jiggleOverdueBadge = jiggleOverdueBadge;
+    window.openOverdueSheet = openOverdueSheet;
+    window.closeOverdueSheet = closeOverdueSheet;
+    window.OVERDUE_MINUTES = OVERDUE_MINUTES;
+}
+
 const PILL_BG_CLASSES = ['bg-gray-400', 'bg-green-500', 'bg-yellow-500', 'bg-red-500'];
 
 function getTimePillClass(checkedOutAtMs, confirmed, nowMs) {
@@ -316,13 +638,24 @@ function calculateMinutesAgoFromTimestamp(checkedOutAtMs, nowMs) {
 
 // Function to update time display for all children
 function cacheChildTimeElements(container) {
+    // Merge, don't replace: both childrenList and overdueSheetList share the
+    // map, but childrenList is the primary surface — never let an overdue-sheet
+    // pill overwrite a main-list entry for the same child.
+    if (!container) return;
     const timeElements = container.querySelectorAll('.child-time[data-child-id]');
-    const nextMap = new Map();
     timeElements.forEach((element) => {
         const id = element.dataset.childId;
-        if (id) nextMap.set(id, element);
+        if (!id) return;
+        if (container === dom.childrenList || !childTimeElementsById.has(id)) {
+            childTimeElementsById.set(id, element);
+        }
     });
-    childTimeElementsById = nextMap;
+}
+
+function cacheAllTimeElements() {
+    childTimeElementsById = new Map();
+    if (dom.childrenList) cacheChildTimeElements(dom.childrenList);
+    if (dom.overdueSheetList) cacheChildTimeElements(dom.overdueSheetList);
 }
 
 function updateTimes() {
@@ -343,6 +676,19 @@ function updateTimes() {
         const confirmed = override ? override.confirmed : Boolean(child.checked_out_confirmed_at);
         applyPillColor(element, child, confirmed, nowMs);
     });
+    // Also update any overdue-sheet pills that share the same child id
+    if (dom.overdueSheetList) {
+        dom.overdueSheetList.querySelectorAll('.child-time[data-child-id]').forEach((el) => {
+            const id = el.dataset.childId;
+            const child = childrenData.find((c) => getChildId(c) === id);
+            if (!child) return;
+            const checkedOutAtMs = child.checked_out_at_ms ?? getCheckedOutTimestamp(child.checked_out_at);
+            const nextValue = calculateMinutesAgoFromTimestamp(checkedOutAtMs, nowMs);
+            if (el.textContent !== nextValue) el.textContent = nextValue;
+            const confirmed = isChildConfirmed(child);
+            applyPillColor(el, child, confirmed, nowMs);
+        });
+    }
 }
 
 // Function to fetch data from API
@@ -367,14 +713,14 @@ async function fetchChildrenData() {
             outParams.append('limit', '100');
         }
 
-        const locationGroupName = params.get('location_group_name')
-        if (locationGroupName) outParams.append('location_group_name', locationGroupName);
-
-        const locationGroupId = params.get('location_group_id')
-        if (locationGroupId) outParams.append('location_group_id', locationGroupId);
-
+        // Single unfiltered poll: location-group filtering is done client-side
+        // so the overdue badge can see all kids regardless of filter. Only
+        // non-group params are forwarded.
         const checkedOutAfter = params.get('checked_out_after')
         if (checkedOutAfter) outParams.append('checked_out_after', checkedOutAfter);
+
+        const fetchSignature = window.location.search;
+        const filterChanged = fetchSignature !== lastFetchParams;
 
         const response = await fetch(`${API_URL}/v1/checkins/checkouts/?${outParams.toString()}`, {
             signal: controller.signal
@@ -398,11 +744,19 @@ async function fetchChildrenData() {
             .sort((a, b) => b.checked_out_at_ms - a.checked_out_at_ms);
 
         childrenData = sortedData;
-        const newIds = computeNewChildIds(childrenData);
-        if (newIds.size > 0) {
-            flashChildIds = newIds;
-            clearTimeout(flashTimeoutId);
-            flashTimeoutId = setTimeout(clearFlashStyles, FLASH_RESET_DELAY_MS);
+        if (filterChanged) {
+            // Filter changed: treat this response as the new baseline rather
+            // than a set of arrivals, so existing children don't flash.
+            knownChildIds = new Set(childrenData.map(getChildId).filter(Boolean));
+            clearFlashStyles();
+            lastFetchParams = fetchSignature;
+        } else {
+            const newIds = computeNewChildIds(childrenData);
+            if (newIds.size > 0) {
+                flashChildIds = newIds;
+                clearTimeout(flashTimeoutId);
+                flashTimeoutId = setTimeout(clearFlashStyles, FLASH_RESET_DELAY_MS);
+            }
         }
         const confirmedById = new Map();
         childrenData.forEach((child) => {
@@ -417,6 +771,7 @@ async function fetchChildrenData() {
             }
         });
         updateUI();
+        updateOverdueUI();
         updateTimes(); // Initialize times
 
         if (DEBUG) {
@@ -451,13 +806,13 @@ function updateUI() {
 
     const nowMs = Date.now();
     const visibleChildren = getVisibleChildren();
-    const listSignature = hideConfirmed + '||' + searchQuery + '||' + visibleChildren.slice(0, 100).map(getChildSignature).join('||');
+    const listSignature = hideConfirmed + '||' + searchQuery + '||' + window.location.search + '||' + visibleChildren.slice(0, 100).map(getChildSignature).join('||');
     if (dom.childrenList && listSignature !== lastListSignature) {
         const previousScrollTop = dom.childrenList.scrollTop;
         resetFlashClasses(dom.childrenList);
         const markup = renderChildren(visibleChildren.slice(0, 100), nowMs, Boolean(searchQuery));
         morphChildren(dom.childrenList, markup);
-        cacheChildTimeElements(dom.childrenList);
+        cacheAllTimeElements();
         requestAnimationFrame(() => {
             if (!dom.childrenList) return;
             const maxScrollTop = Math.max(0, dom.childrenList.scrollHeight - dom.childrenList.clientHeight);
@@ -466,6 +821,8 @@ function updateUI() {
         lastListSignature = listSignature;
     }
     syncConfirmedStates();
+    // Keep overdue badge in sync when filter changes (no extra fetch needed)
+    if (dom.overdueBadge) updateOverdueUI();
 }
 
 function renderChildren(children, nowMs, searchActive) {
@@ -490,25 +847,29 @@ function renderChildren(children, nowMs, searchActive) {
         const childId = escapeHtml(getChildId(child));
         const checkedOutAtMs = child.checked_out_at_ms ?? getCheckedOutTimestamp(child.checked_out_at);
         const flashClass = flashChildIds.has(childId) ? ' child-card-flash' : '';
+        const barColor = getLocationGroupColor(child.location_group_id);
 
         return `
-            <div class="bg-white rounded-lg py-2.5 px-4 shadow-[0_0_10px_rgba(0,0,0,0.25)] flex flex-col justify-center${flashClass}">
-                <div class="font-bold text-gray-800 text-2xl mb-0">
-                    ${name}${starMarkup}
-                </div>
-                <div class="flex justify-between items-center">
-                    <div class="text-black text-xl">
-                        ${code}
+            <div class="bg-white rounded-lg shadow-[0_0_10px_rgba(0,0,0,0.25)] flex${flashClass}">
+                <div class="rounded-l-lg" style="background-color:${barColor}; width:6px; flex-shrink:0" aria-hidden="true"></div>
+                <div class="flex-1 py-2.5 px-4 flex flex-col justify-center">
+                    <div class="font-bold text-gray-800 text-2xl mb-0">
+                        ${name}${starMarkup}
                     </div>
-                    <div class="flex items-center gap-3">
-                        <div class="text-white transition-colors duration-1000 px-1.5 py-0 rounded-md text-base child-time ${getTimePillClass(checkedOutAtMs, confirmed, nowMs)}" data-child-id="${childId}">
-                            ${calculateMinutesAgoFromTimestamp(checkedOutAtMs, nowMs)}
+                    <div class="flex justify-between items-center">
+                        <div class="text-black text-xl">
+                            ${code}
                         </div>
-                        <label class="relative flex items-center text-xs text-gray-600 cursor-pointer leading-none" data-confirmed-label data-confirmed-state="${confirmed ? 'confirmed' : 'unconfirmed'}">
-                            <input type="checkbox" class="sr-only child-confirmed-checkbox" aria-label="Mark ${name} as confirmed"
-                                data-child-id="${childId}" data-planning-center-id="${planningCenterId}" data-public-id="${publicId}" data-source="${source}" ${confirmed ? 'checked' : ''}>
-                            <img src="${CONFIRMED_ICON_SRC}" alt="" class="h-10 w-10 block" data-confirmed-icon>
-                        </label>
+                        <div class="flex items-center gap-3">
+                            <div class="text-white transition-colors duration-1000 px-1.5 py-0 rounded-md text-base child-time ${getTimePillClass(checkedOutAtMs, confirmed, nowMs)}" data-child-id="${childId}">
+                                ${calculateMinutesAgoFromTimestamp(checkedOutAtMs, nowMs)}
+                            </div>
+                            <label class="relative flex items-center text-xs text-gray-600 cursor-pointer leading-none" data-confirmed-label data-confirmed-state="${confirmed ? 'confirmed' : 'unconfirmed'}">
+                                <input type="checkbox" class="sr-only child-confirmed-checkbox" aria-label="Mark ${name} as confirmed"
+                                    data-child-id="${childId}" data-planning-center-id="${planningCenterId}" data-public-id="${publicId}" data-source="${source}" ${confirmed ? 'checked' : ''}>
+                                <img src="${CONFIRMED_ICON_SRC}" alt="" class="h-10 w-10 block" data-confirmed-icon>
+                            </label>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -550,12 +911,31 @@ function updateCurrentTime() {
 function updateAllTimes() {
     updateCurrentTime();
     updateTimes();
+    updateOverdueUI();
 }
 
 // Initialize and start periodic updates
 document.addEventListener('DOMContentLoaded', function () {
+    if (window.__checkoutsInitialized) return;
+    window.__checkoutsInitialized = true;
     dom.childrenList = document.getElementById('children-list');
     dom.currentTime = document.getElementById('current-time');
+    dom.overdueBadge = document.getElementById('overdue-badge');
+    dom.overdueSheet = document.getElementById('overdue-sheet');
+    dom.overdueSheetList = document.getElementById('overdue-sheet-list');
+    dom.overdueSheetBackdrop = document.getElementById('overdue-sheet-backdrop');
+
+    if (dom.overdueBadge) {
+        dom.overdueBadge.addEventListener('click', openOverdueSheet);
+    }
+    const overdueClose = document.getElementById('overdue-sheet-close');
+    if (overdueClose) overdueClose.addEventListener('click', closeOverdueSheet);
+    if (dom.overdueSheetBackdrop) dom.overdueSheetBackdrop.addEventListener('click', closeOverdueSheet);
+    document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape' && dom.overdueSheet && !dom.overdueSheet.classList.contains('translate-y-full')) {
+            closeOverdueSheet();
+        }
+    });
 
     if (typeof window.initKebabMenu === "function") {
         window.initKebabMenu();
@@ -605,6 +985,59 @@ document.addEventListener('DOMContentLoaded', function () {
         });
     }
 
+    const locationGroupCheckboxes = document.getElementById('location-group-checkboxes');
+    if (locationGroupCheckboxes) {
+        locationGroupCheckboxes.addEventListener('change', function (event) {
+            const target = event.target;
+            if (!target.matches('input[type="checkbox"][data-lg-id]')) return;
+            const ids = new Set();
+            let includeUnassigned = false;
+            locationGroupCheckboxes.querySelectorAll('input[type="checkbox"][data-lg-id]').forEach((cb) => {
+                if (!cb.checked) return;
+                const val = cb.getAttribute('data-lg-id');
+                if (val === 'unassigned') includeUnassigned = true;
+                else {
+                    const n = Number(val);
+                    if (Number.isFinite(n) && n > 0) ids.add(n);
+                }
+            });
+            if (ids.size === 0 && !includeUnassigned) {
+                const params = new URLSearchParams(window.location.search);
+                params.delete('location_group_id');
+                params.delete('location_group_name');
+                params.delete('include_unassigned');
+                params.append('location_group_id', '');
+                const newSearch = params.toString();
+                const newUrl = newSearch ? '?' + newSearch : window.location.pathname;
+                history.replaceState(null, '', newUrl);
+                syncLocationGroupUIFromURL();
+                updateUI();
+                fetchChildrenData();
+                return;
+            }
+            pushURLFromSelection(ids, includeUnassigned);
+        });
+    }
+
+    const locationGroupSelectAll = document.getElementById('location-group-select-all');
+    if (locationGroupSelectAll) {
+        locationGroupSelectAll.addEventListener('click', function () {
+            const isDeselect = locationGroupSelectAll.textContent.trim() === 'Deselect all';
+            const params = new URLSearchParams(window.location.search);
+            params.delete('location_group_id');
+            params.delete('location_group_name');
+            params.delete('include_unassigned');
+            if (isDeselect) {
+                params.append('location_group_id', '');
+            }
+            const newSearch = params.toString();
+            const newUrl = newSearch ? '?' + newSearch : window.location.pathname;
+            history.replaceState(null, '', newUrl);
+            syncLocationGroupUIFromURL();
+            fetchChildrenData();
+        });
+    }
+
     document.addEventListener('change', function (event) {
         const checkbox = event.target;
         if (!checkbox.classList.contains('child-confirmed-checkbox')) return;
@@ -618,10 +1051,26 @@ document.addEventListener('DOMContentLoaded', function () {
         confirmCheckedOut(source, planningCenterId, publicId, checkbox, checkbox.checked, previousConfirmed);
         const childId = checkbox.dataset.childId;
         const child = childrenData.find((item) => getChildId(item) === childId);
-        applyPillColor(childTimeElementsById.get(childId), child, checkbox.checked, Date.now());
+        const wasOverdue = getOverdueChildren().some((c) => getChildId(c) === childId);
+        // Update the pill everywhere (main list + overdue sheet), since the
+        // cached single entry may point at either.
+        [dom.childrenList, dom.overdueSheetList].filter(Boolean).forEach((root) => {
+            root.querySelectorAll('.child-time[data-child-id]').forEach((element) => {
+                if (element.dataset.childId === childId) {
+                    applyPillColor(element, child, checkbox.checked, Date.now());
+                }
+            });
+        });
+        if (checkbox.checked && wasOverdue) {
+            // Optimistically update pill + badge; full sync on next poll
+            updateOverdueUI();
+        } else if (!checkbox.checked) {
+            updateOverdueUI();
+        }
     });
 
     // Initial fetch
+    fetchLocationGroups();
     fetchChildrenData();
 
     // Fetch new data from API every 3 seconds
