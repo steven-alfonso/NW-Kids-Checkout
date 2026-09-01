@@ -94,7 +94,7 @@ describe('kiosk form', () => {
         clone.querySelectorAll('input, select').forEach(el => el.remove());
         return clone.textContent.replace(/\s+/g, ' ').trim();
     });
-        expect(labelTexts).toEqual(['First name', 'Last name', 'Birthdate', 'Grade', 'Gender', 'Relationship to child', 'Dietary restrictions', 'Special needs']);
+        expect(labelTexts).toEqual(['First name *', 'Last name *', 'Birthdate *', 'Grade *', 'Gender *', 'Relationship to child *', 'Dietary restrictions', 'Special needs']);
     });
 
     it('renders the grade dropdown with expected options', () => {

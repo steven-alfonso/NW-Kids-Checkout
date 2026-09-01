@@ -25,27 +25,27 @@ function childRowTemplate() {
     const relationshipOptions = RELATIONSHIP_OPTIONS.map(r => `<option value="${r}">${r}</option>`).join('');
     row.innerHTML = `
         <div class="kiosk-field grid gap-3 sm:grid-cols-2">
-            <label class="block text-sm font-semibold text-gray-700">First name
+            <label class="block text-sm font-semibold text-gray-700">First name <span class="text-red-600">*</span>
                 <input class="child-first-name ${inputClass}" name="child_first_name" type="text" autocomplete="off" required maxlength="100">
             </label>
-            <label class="block text-sm font-semibold text-gray-700">Last name
+            <label class="block text-sm font-semibold text-gray-700">Last name <span class="text-red-600">*</span>
                 <input class="child-last-name ${inputClass}" name="child_last_name" type="text" autocomplete="off" required maxlength="100">
             </label>
-            <label class="block text-sm font-semibold text-gray-700">Birthdate
+            <label class="block text-sm font-semibold text-gray-700">Birthdate <span class="text-red-600">*</span>
                 <input class="child-dob ${inputClass}" name="child_dob" type="date" autocomplete="off" max="${new Date().toLocaleDateString('en-CA')}" required>
             </label>
-            <label class="block text-sm font-semibold text-gray-700">Grade
-                <select class="child-grade ${inputClass}" name="child_grade" autocomplete="off">
+            <label class="block text-sm font-semibold text-gray-700">Grade <span class="text-red-600">*</span>
+                <select class="child-grade ${inputClass}" name="child_grade" autocomplete="off" required>
                     ${gradeOptions}
                 </select>
             </label>
-            <label class="block text-sm font-semibold text-gray-700">Gender
+            <label class="block text-sm font-semibold text-gray-700">Gender <span class="text-red-600">*</span>
                 <select class="child-gender ${inputClass}" name="child_gender" autocomplete="off" required>
                     <option value="">Select</option>
                     ${genderOptions}
                 </select>
             </label>
-            <label class="block text-sm font-semibold text-gray-700">Relationship to child
+            <label class="block text-sm font-semibold text-gray-700">Relationship to child <span class="text-red-600">*</span>
                 <select class="child-relationship ${inputClass}" name="child_relationship" autocomplete="off" required>
                     <option value="">Select</option>
                     ${relationshipOptions}
@@ -280,12 +280,15 @@ function validateForm() {
             setKioskError('');
             return false;
         }
-        if (dob?.value) {
-            if (dob.value > today) {
-                dob.setCustomValidity('Birthdate cannot be in the future');
-                setKioskError('');
-                return false;
-            }
+        if (!dob?.value) {
+            dob?.setCustomValidity('Birthdate is required');
+            setKioskError('');
+            return false;
+        }
+        if (dob.value > today) {
+            dob.setCustomValidity('Birthdate cannot be in the future');
+            setKioskError('');
+            return false;
         }
         if (!gender?.value) {
             gender?.setCustomValidity('Gender is required');
@@ -389,6 +392,44 @@ if (childrenContainer && !childrenContainer.querySelector('.child-row')) {
     addChildRow();
 }
 updateChildCount();
+
+// Handle bfcache/page refresh where browser may show a cached date but
+// input.value is empty (date inputs restore locale string which is invalid
+// for type="date" → value stays "" → required fails). Clear ghost display
+// and re-apply max so validation is consistent.
+function handlePageshow(event) {
+    const isPersisted = Boolean(event && event.persisted);
+    // Also handle normal reload where browser autofills after JS created rows
+    // Use a microtask to let browser finish autofill
+    setTimeout(() => {
+        const today = new Date().toLocaleDateString('en-CA');
+        childrenContainer.querySelectorAll('.child-dob').forEach(input => {
+            input.max = today;
+            // If input appears filled (has attribute value or autofill) but
+            // value is empty and validity is valueMissing, clear any stale
+            // display by resetting value to itself (forces browser to sync)
+            if (!input.value && input.hasAttribute('value') && input.getAttribute('value')) {
+                input.value = input.getAttribute('value');
+            }
+            // Detect WebKit/Blink autofill ghost: matches :autofill but value empty
+            try {
+                if (!input.value && input.matches(':autofill')) {
+                    // Force browser to re-evaluate; clearing and refocusing helps
+                    const val = input.getAttribute('value') || '';
+                    input.value = val;
+                }
+            } catch (_) {}
+            input.setCustomValidity('');
+        });
+        if (isPersisted) {
+            validateForm();
+        }
+    }, 0);
+}
+
+window.addEventListener('pageshow', handlePageshow);
+window.addEventListener('DOMContentLoaded', () => handlePageshow({persisted: false}));
+window.handlePageshow = handlePageshow;
 
 window.addChildRow = addChildRow;
 window.removeChildRow = removeChildRow;

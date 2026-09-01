@@ -200,11 +200,13 @@ describe('admin-guest-entries', () => {
             });
             window.renderEntry(container, sub);
             expect(container.textContent).toContain('123 Main St');
-            expect(container.textContent).toContain('Safety acknowledgement confirmed');
+            // address summary (non-copyable) and safety ack badge removed per product request
+            expect(container.textContent).not.toContain('Safety acknowledgement confirmed');
+            expect(container.querySelector('p.text-xs.text-slate-600')).toBeNull();
             const sub2 = entry('sub-noack', 'approved', {safety_ack: false});
             const container2 = window.document.createElement('div');
             window.renderEntry(container2, sub2);
-            expect(container2.textContent).toContain('Safety acknowledgement missing');
+            expect(container2.textContent).not.toContain('Safety acknowledgement missing');
         });
 
         it('renders missing phone/email as an em dash on parent chips', () => {

@@ -211,20 +211,6 @@ function renderEntry(container, entry) {
         parentAddressRow.appendChild(chip(entry.parent[field], field));
     });
     parentBlock.appendChild(parentAddressRow);
-    const addressSummary = [entry.parent.address1, entry.parent.address2, [entry.parent.city, entry.parent.state].filter(Boolean).join(', '), entry.parent.zip].filter(v => v && String(v).trim()).join(' — ');
-    if (addressSummary) {
-        const addrLine = document.createElement('p');
-        addrLine.className = 'mb-3 text-xs text-slate-600';
-        addrLine.textContent = addressSummary;
-        parentBlock.appendChild(addrLine);
-    }
-    if (entry.safety_ack !== undefined) {
-        const ack = document.createElement('div');
-        ack.className = 'mb-4 inline-flex items-center gap-2 rounded-md border px-2.5 py-1 text-xs font-semibold ' + (entry.safety_ack ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-red-200 bg-red-50 text-red-700');
-        ack.textContent = entry.safety_ack ? '✓ Safety acknowledgement confirmed' : '✗ Safety acknowledgement missing';
-        ack.title = 'FOR SAFETY PURPOSES, I MUST PRESENT SAFETY CLAIM TAG ASSIGNED TO CHILD OR A VALID ID UPON CHECKOUT TO OBTAIN MY CHILD.';
-        parentBlock.appendChild(ack);
-    }
     card.appendChild(parentBlock);
 
     const childrenBlock = document.createElement('div');
