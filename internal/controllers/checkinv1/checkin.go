@@ -128,10 +128,8 @@ func (controller *Controller) checkoutsWeb(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
 	}
 
-	// Manual checkins have no location, so they can't match a location-group
-	// filter; skip them to avoid over-fetching rows the client discards.
 	var manualCheckins []manualcheckin.ManualCheckin
-	if len(filter.LocationGroupIDs) == 0 && filter.LocationGroupName == "" {
+	if !isLocationGroupFilterEmpty(c, filter) {
 		manualCheckins, err = controller.manualRepo.ListManualCheckins(c.Context(), manualFilter)
 		if err != nil {
 			return fiber.NewError(fiber.StatusInternalServerError, err.Error())
@@ -383,6 +381,15 @@ func parseLocationGroupIDs(c *fiber.Ctx) ([]int64, error) {
 		}
 	})
 	return ids, parseErr
+}
+
+func isLocationGroupFilterEmpty(c *fiber.Ctx, filter checkin.Filter) bool {
+	args := c.Request().URI().QueryArgs()
+	hasParam := args.Has("location_group_id") || args.Has("location_group_name") || args.Has("include_unassigned")
+	if !hasParam {
+		return false
+	}
+	return len(filter.LocationGroupIDs) == 0 && filter.LocationGroupName == "" && !filter.IncludeUnassigned
 }
 
 func repoCheckinToOutput(checkin checkin.Checkin) Checkin {
