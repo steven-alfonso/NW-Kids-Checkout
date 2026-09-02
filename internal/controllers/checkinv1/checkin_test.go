@@ -389,19 +389,35 @@ func TestController_Checkouts_location_group_filtering(t *testing.T) {
 		assert.True(t, ids["plc_20"])
 		assert.True(t, ids["plc_null"])
 		assert.False(t, ids["plc_excluded"])
-		assert.Len(t, payload.ManualCheckins, 0)
+		assert.Len(t, payload.ManualCheckins, 1)
 	})
 
 	t.Run("multiple groups without unassigned returns assigned only", func(t *testing.T) {
-		ids, _ := idsFor(t, "/v1/checkins/checkouts?location_group_id=10&location_group_id=20")
+		ids, payload := idsFor(t, "/v1/checkins/checkouts?location_group_id=10&location_group_id=20")
 		assert.True(t, ids["plc_10"])
 		assert.True(t, ids["plc_20"])
 		assert.False(t, ids["plc_null"])
 		assert.False(t, ids["plc_excluded"])
+		assert.Len(t, payload.ManualCheckins, 1)
 	})
 
 	t.Run("no group filter still returns manual checkins", func(t *testing.T) {
 		_, payload := idsFor(t, "/v1/checkins/checkouts")
+		assert.Len(t, payload.ManualCheckins, 1)
+	})
+
+	t.Run("empty location filter hides manual checkins", func(t *testing.T) {
+		_, payload := idsFor(t, "/v1/checkins/checkouts?location_group_id=")
+		assert.Len(t, payload.ManualCheckins, 0)
+	})
+
+	t.Run("single group filter still returns manual checkins", func(t *testing.T) {
+		_, payload := idsFor(t, "/v1/checkins/checkouts?location_group_id=10")
+		assert.Len(t, payload.ManualCheckins, 1)
+	})
+
+	t.Run("include unassigned only returns manual checkins", func(t *testing.T) {
+		_, payload := idsFor(t, "/v1/checkins/checkouts?include_unassigned=1")
 		assert.Len(t, payload.ManualCheckins, 1)
 	})
 }

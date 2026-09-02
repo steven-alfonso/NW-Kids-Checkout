@@ -175,6 +175,7 @@ function getVisibleChildren() {
     if (isEmpty) return [];
     if (ids.size > 0 || includeUnassigned) {
         children = children.filter((child) => {
+            if (child.source === 'manual') return true;
             const lgId = child.location_group_id;
             if (lgId == null) return includeUnassigned;
             return ids.has(Number(lgId));
