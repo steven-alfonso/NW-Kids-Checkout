@@ -34,7 +34,7 @@ func TestMigration_GuestFamilyModel_RoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	defer db.Close()
 
-	targetMigration := "migrations/20260825030013_add_guest_family_model.up.sqlite"
+	targetMigration := "migrations/20260906164308_add_guest_family_model.up.sqlite"
 	applyMigrationsUpTo(t, db, targetMigration)
 
 	_, err = db.Exec(`INSERT INTO manual_checkins (first_name, last_name) VALUES ('Alice', 'Smith')`)
@@ -93,7 +93,7 @@ func TestMigration_GuestFamilyModel_RoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, upIdxCount, "idx_children_parent_id should exist after up")
 
-	downSQL, err := os.ReadFile("migrations/20260825030013_add_guest_family_model.down.sqlite")
+	downSQL, err := os.ReadFile("migrations/20260906164308_add_guest_family_model.down.sqlite")
 	require.NoError(t, err)
 	_, err = db.Exec(string(downSQL))
 	require.NoError(t, err, "guest family model down migration failed")
@@ -146,7 +146,7 @@ func TestMigration_GuestFamilyModel_NoRedundantAlterTable(t *testing.T) {
 	require.NoError(t, err)
 	defer db.Close()
 
-	targetMigration := "migrations/20260825030013_add_guest_family_model.up.sqlite"
+	targetMigration := "migrations/20260906164308_add_guest_family_model.up.sqlite"
 	applyMigrationsUpTo(t, db, targetMigration)
 
 	_, err = db.Exec(`INSERT INTO manual_checkins (first_name, last_name) VALUES ('Alice', 'Smith')`)
@@ -178,7 +178,7 @@ func TestMigration_GuestFamilyModel_BlankNameBackfill(t *testing.T) {
 	require.NoError(t, err)
 	defer db.Close()
 
-	targetMigration := "migrations/20260825030013_add_guest_family_model.up.sqlite"
+	targetMigration := "migrations/20260906164308_add_guest_family_model.up.sqlite"
 	applyMigrationsUpTo(t, db, targetMigration)
 
 	// Insert legacy blank-name rows that would have been allowed by main's

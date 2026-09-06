@@ -152,6 +152,17 @@ async function main() {
     return 'daily';
   };
 
+  const showError = (msg) => {
+    if (!statusEl) return;
+    statusEl.textContent = msg;
+    statusEl.classList.remove('hidden');
+  };
+  const clearError = () => {
+    if (!statusEl) return;
+    statusEl.textContent = '';
+    statusEl.classList.add('hidden');
+  };
+
   const load = async (view) => {
     try {
       if (view === 'latency') {
@@ -164,7 +175,7 @@ async function main() {
         const data = await loadMetrics(daysEl ? daysEl.value : 14);
         renderMetrics(data);
       }
-      if (statusEl) statusEl.textContent = '';
+      clearError();
     } catch (error) {
       if (error instanceof window.SessionExpiredError) {
         window.location.href = '/login?next=' + encodeURIComponent(
@@ -172,7 +183,14 @@ async function main() {
         );
         return;
       }
-      if (statusEl) statusEl.textContent = error.message;
+      showError(error.message || String(error));
+      // Keep body from staying in perpetual "Loading..." state
+      const bodyId = view === 'latency' ? 'fetch-latency-body' : view === 'guest' ? 'guest-body' : 'metrics-body';
+      const body = document.getElementById(bodyId);
+      if (body && body.textContent.includes('Loading')) {
+        const col = view === 'latency' ? 5 : view === 'guest' ? 7 : 6;
+        body.innerHTML = `<tr><td colspan="${col}" class="px-4 py-6 text-center text-red-500">Failed to load. ${escapeHtml(error.message || '')}</td></tr>`;
+      }
     }
   };
 
@@ -183,6 +201,10 @@ async function main() {
   await load(currentView());
 }
 
-document.addEventListener('DOMContentLoaded', main);
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', main);
+} else {
+  main();
+}
 
 window.__test = { renderMetrics, renderFetchLatency, renderFetchLatencyRows, loadMetrics, loadFetchLatency, renderGuestMetrics, loadGuestMetrics };

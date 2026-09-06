@@ -70,6 +70,7 @@ DROP TABLE manual_checkins;
 ALTER TABLE manual_checkins_new RENAME TO manual_checkins;
 
 CREATE INDEX idx_manual_checked_out_at ON manual_checkins (checked_out_at);
+CREATE INDEX idx_manual_created_at ON manual_checkins (created_at);
 CREATE INDEX idx_manual_checkins_child_id ON manual_checkins(child_id);
 CREATE INDEX idx_guest_submissions_created_at ON guest_submissions(created_at);
 CREATE INDEX idx_guest_submissions_parent_id ON guest_submissions(parent_id);

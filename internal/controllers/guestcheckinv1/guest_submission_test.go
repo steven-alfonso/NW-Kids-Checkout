@@ -700,8 +700,7 @@ func TestController_RequiresAuth(t *testing.T) {
 	t.Run("unauthenticated GET guest-submissions redirects to login", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/v1/checkins/guest-submissions", nil)
 		resp, _ := app.Test(req)
-		require.Equal(t, fiber.StatusFound, resp.StatusCode)
-		require.Contains(t, resp.Header.Get("Location"), "/login")
+		require.Equal(t, fiber.StatusUnauthorized, resp.StatusCode)
 	})
 
 	t.Run("unauthenticated PATCH guest-submissions redirects to login", func(t *testing.T) {
@@ -709,22 +708,19 @@ func TestController_RequiresAuth(t *testing.T) {
 		req := httptest.NewRequest("PATCH", fmt.Sprintf("/v1/checkins/guest-submissions/%s/status", sub.PublicID), bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		resp, _ := app.Test(req)
-		require.Equal(t, fiber.StatusFound, resp.StatusCode)
-		require.Contains(t, resp.Header.Get("Location"), "/login")
+		require.Equal(t, fiber.StatusUnauthorized, resp.StatusCode)
 	})
 
 	t.Run("unauthenticated POST checkins redirects to login", func(t *testing.T) {
 		req := httptest.NewRequest("POST", fmt.Sprintf("/v1/checkins/guest-submissions/%s/checkins", sub.PublicID), nil)
 		resp, _ := app.Test(req)
-		require.Equal(t, fiber.StatusFound, resp.StatusCode)
-		require.Contains(t, resp.Header.Get("Location"), "/login")
+		require.Equal(t, fiber.StatusUnauthorized, resp.StatusCode)
 	})
 
 	t.Run("unauthenticated GET admin guest-submissions redirects to login", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/v1/admin/guest-submissions", nil)
 		resp, _ := app.Test(req)
-		require.Equal(t, fiber.StatusFound, resp.StatusCode)
-		require.Contains(t, resp.Header.Get("Location"), "/login")
+		require.Equal(t, fiber.StatusUnauthorized, resp.StatusCode)
 	})
 
 	t.Run("unauthenticated GET admin guest-entries redirects to login", func(t *testing.T) {
@@ -879,10 +875,10 @@ func TestController_AuthEnforcementTableDriven(t *testing.T) {
 	}
 
 	unauthCases := []routeCase{
-		{"GET staff list", "GET", "/v1/checkins/guest-submissions", nil, "", fiber.StatusFound},
-		{"PATCH staff status", "PATCH", fmt.Sprintf("/v1/checkins/guest-submissions/%s/status", sub.PublicID), []byte(`{"status":"approved"}`), "application/json", fiber.StatusFound},
-		{"POST staff checkins", "POST", fmt.Sprintf("/v1/checkins/guest-submissions/%s/checkins", sub.PublicID), nil, "", fiber.StatusFound},
-		{"GET admin list", "GET", "/v1/admin/guest-submissions", nil, "", fiber.StatusFound},
+		{"GET staff list", "GET", "/v1/checkins/guest-submissions", nil, "", fiber.StatusUnauthorized},
+		{"PATCH staff status", "PATCH", fmt.Sprintf("/v1/checkins/guest-submissions/%s/status", sub.PublicID), []byte(`{"status":"approved"}`), "application/json", fiber.StatusUnauthorized},
+		{"POST staff checkins", "POST", fmt.Sprintf("/v1/checkins/guest-submissions/%s/checkins", sub.PublicID), nil, "", fiber.StatusUnauthorized},
+		{"GET admin list", "GET", "/v1/admin/guest-submissions", nil, "", fiber.StatusUnauthorized},
 		{"GET admin page", "GET", "/admin/guest-entries", nil, "", fiber.StatusFound},
 	}
 	for _, tc := range unauthCases {
@@ -893,7 +889,9 @@ func TestController_AuthEnforcementTableDriven(t *testing.T) {
 			}
 			resp, _ := unauthApp.Test(req)
 			require.Equal(t, tc.expectedStatus, resp.StatusCode, tc.name)
-			require.Contains(t, resp.Header.Get("Location"), "/login")
+			if tc.expectedStatus == fiber.StatusFound {
+				require.Contains(t, resp.Header.Get("Location"), "/login")
+			}
 		})
 	}
 

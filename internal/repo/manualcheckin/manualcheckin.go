@@ -119,6 +119,7 @@ func (s *sqliteRepo) ListManualCheckins(ctx context.Context, filter Filter) ([]M
 	manualCheckins := make([]ManualCheckin, 0)
 	for rows.Next() {
 		var manualCheckin ManualCheckin
+		var publicID sql.NullString
 		var checkedOutAt sql.NullTime
 		var checkedOutConfirmedAt sql.NullTime
 		var childID sql.NullInt64
@@ -126,7 +127,7 @@ func (s *sqliteRepo) ListManualCheckins(ctx context.Context, filter Filter) ([]M
 		err := rows.Scan(
 			&manualCheckin.ID,
 			&manualCheckin.CreatedAt,
-			&manualCheckin.PublicID,
+			&publicID,
 			&childID,
 			&manualCheckin.FirstName,
 			&manualCheckin.LastName,
@@ -135,6 +136,10 @@ func (s *sqliteRepo) ListManualCheckins(ctx context.Context, filter Filter) ([]M
 		)
 		if err != nil {
 			return nil, fmt.Errorf("scanning manual checkin: %w", err)
+		}
+
+		if publicID.Valid {
+			manualCheckin.PublicID = publicID.String
 		}
 
 		if childID.Valid {
