@@ -18,6 +18,9 @@ const CONFIRM_OVERRIDE_TTL_MS = 15000;
 const FLASH_RESET_DELAY_MS = 4000;
 const OVERDUE_MINUTES = 5;
 let lastOverdueCount = 0;
+let isOverdueSheetOpen = false;
+let overdueSheetNeedsRefresh = false;
+const overdueRetainedIds = new Set();
 const confirmationOverrides = new Map();
 const dom = {
     childrenList: null,
@@ -286,11 +289,50 @@ function updateOverdueUI() {
             if (count > lastOverdueCount) {
                 jiggleOverdueBadge();
             }
+        } else if (isOverdueSheetOpen) {
+            // Defer hiding the badge and auto-closing the drawer while the
+            // sheet is open — keep confirmed rows visible until close.
+            overdueSheetNeedsRefresh = true;
         } else {
             dom.overdueBadge.classList.add('hidden');
             closeOverdueSheet();
         }
     }
+
+    // While the drawer is open, keep confirmed rows visible until close,
+    // but still allow newly-overdue children to appear.
+    if (isOverdueSheetOpen) {
+        if (count !== lastOverdueCount) {
+            overdueSheetNeedsRefresh = true;
+        }
+        lastOverdueCount = count;
+
+        if (dom.overdueSheet) {
+            const liveIds = new Set(overdue.map(getChildId));
+            const retainedChildren = [];
+            overdueRetainedIds.forEach((id) => {
+                if (liveIds.has(id)) {
+                    // No longer needs retaining — it's live overdue again (e.g. unchecked)
+                    overdueRetainedIds.delete(id);
+                    return;
+                }
+                const child = childrenData.find((c) => getChildId(c) === id);
+                if (child) {
+                    retainedChildren.push(child);
+                } else {
+                    overdueRetainedIds.delete(id);
+                }
+            });
+            const drawerOverdue = [...overdue, ...retainedChildren].sort(
+                (a, b) => (a.checked_out_at_ms ?? 0) - (b.checked_out_at_ms ?? 0)
+            );
+            renderOverdueSheet(drawerOverdue);
+            const countEl = document.getElementById('overdue-sheet-count');
+            if (countEl) countEl.textContent = drawerOverdue.length > 0 ? `${drawerOverdue.length} overdue` : 'No overdue';
+        }
+        return;
+    }
+
     lastOverdueCount = count;
 
     if (dom.overdueSheet) {
@@ -334,6 +376,14 @@ function unlockBodyScroll() {
 
 function openOverdueSheet() {
     if (!dom.overdueSheet || !dom.overdueSheetBackdrop) return;
+    isOverdueSheetOpen = true;
+    overdueSheetNeedsRefresh = false;
+    overdueRetainedIds.clear();
+    // Fresh snapshot on every open so prior confirms are reflected
+    const overdue = getOverdueChildren();
+    renderOverdueSheet(overdue);
+    const countEl = document.getElementById('overdue-sheet-count');
+    if (countEl) countEl.textContent = overdue.length > 0 ? `${overdue.length} overdue` : 'No overdue';
     dom.overdueSheet.classList.remove('translate-y-full');
     dom.overdueSheet.setAttribute('aria-hidden', 'false');
     dom.overdueSheetBackdrop.classList.remove('hidden');
@@ -342,10 +392,22 @@ function openOverdueSheet() {
 
 function closeOverdueSheet() {
     if (!dom.overdueSheet || !dom.overdueSheetBackdrop) return;
+    const wasOpen = !dom.overdueSheet.classList.contains('translate-y-full');
     dom.overdueSheet.classList.add('translate-y-full');
     dom.overdueSheet.setAttribute('aria-hidden', 'true');
     dom.overdueSheetBackdrop.classList.add('hidden');
     unlockBodyScroll();
+    if (wasOpen) {
+        isOverdueSheetOpen = false;
+    } else if (isOverdueSheetOpen) {
+        // Closed via badge auto-close path while already flagged open
+        isOverdueSheetOpen = false;
+    }
+    overdueRetainedIds.clear();
+    if (overdueSheetNeedsRefresh && !isOverdueSheetOpen) {
+        overdueSheetNeedsRefresh = false;
+        updateOverdueUI();
+    }
 }
 
 function syncConfirmedStates() {
@@ -1112,16 +1174,22 @@ document.addEventListener('DOMContentLoaded', function () {
         const checkbox = event.target;
         if (!checkbox.classList.contains('child-confirmed-checkbox')) return;
 
+        const childId = checkbox.dataset.childId;
+        const wasOverdue = getOverdueChildren().some((c) => getChildId(c) === childId);
         const planningCenterId = checkbox.dataset.planningCenterId;
         const publicId = checkbox.dataset.publicId;
         const source = checkbox.dataset.source;
         const label = checkbox.closest('[data-confirmed-label]');
         const previousConfirmed = label?.dataset.confirmedState === 'confirmed';
+        // Retain confirmed overdue rows in the drawer until it closes.
+        if (wasOverdue && !previousConfirmed && checkbox.checked && isOverdueSheetOpen) {
+            overdueRetainedIds.add(childId);
+        } else if (!checkbox.checked) {
+            overdueRetainedIds.delete(childId);
+        }
         updateConfirmedIcon(checkbox);
         confirmCheckedOut(source, planningCenterId, publicId, checkbox, checkbox.checked, previousConfirmed);
-        const childId = checkbox.dataset.childId;
         const child = childrenData.find((item) => getChildId(item) === childId);
-        const wasOverdue = getOverdueChildren().some((c) => getChildId(c) === childId);
         // Update the pill everywhere (main list + overdue sheet), since the
         // cached single entry may point at either.
         [dom.childrenList, dom.overdueSheetList].filter(Boolean).forEach((root) => {
