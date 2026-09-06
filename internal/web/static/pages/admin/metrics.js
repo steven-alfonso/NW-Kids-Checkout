@@ -1,21 +1,38 @@
 const API_URL = '';
 
-async function loadMetrics(days) {
-  const response = await fetch(`${API_URL}/v1/admin/metrics?days=${days}`);
-  if (!response.ok) {
-    const data = await response.json().catch(() => ({}));
-    throw new Error(data.message || `failed to load metrics (${response.status})`);
+function parseErrorBody(data, fallback) {
+  if (data && typeof data === 'object') {
+    return data.message || data.error || data.sorry || fallback;
   }
-  return response.json();
+  if (typeof data === 'string' && data.trim()) return data.trim();
+  return fallback;
+}
+
+async function fetchJsonWithError(url, fallbackPrefix) {
+  const response = await fetch(url, { credentials: 'same-origin' });
+  if (!response.ok) {
+    const text = await response.text().catch(() => '');
+    let data;
+    try { data = JSON.parse(text); } catch (_) { data = text; }
+    throw new Error(parseErrorBody(data, `${fallbackPrefix} (${response.status})`));
+  }
+  try {
+    return await response.json();
+  } catch (e) {
+    const text = await response.text().catch(() => '');
+    if (text && text.trim().startsWith('<')) {
+      throw new Error(`${fallbackPrefix}: received HTML instead of JSON (maybe not authenticated)`);
+    }
+    throw new Error(`${fallbackPrefix}: invalid JSON response`);
+  }
+}
+
+async function loadMetrics(days) {
+  return fetchJsonWithError(`${API_URL}/v1/admin/metrics?days=${days}`, 'failed to load metrics');
 }
 
 async function loadFetchLatency(days) {
-  const response = await fetch(`${API_URL}/v1/admin/metrics/fetch-latency?days=${days}`);
-  if (!response.ok) {
-    const data = await response.json().catch(() => ({}));
-    throw new Error(data.message || `failed to load fetch latency (${response.status})`);
-  }
-  return response.json();
+  return fetchJsonWithError(`${API_URL}/v1/admin/metrics/fetch-latency?days=${days}`, 'failed to load fetch latency');
 }
 
 function escapeHtml(value) {
@@ -122,6 +139,17 @@ async function main() {
     if (viewLatency) viewLatency.classList.toggle('hidden', !latency);
   };
 
+  const showError = (msg) => {
+    if (!statusEl) return;
+    statusEl.textContent = msg;
+    statusEl.classList.remove('hidden');
+  };
+  const clearError = () => {
+    if (!statusEl) return;
+    statusEl.textContent = '';
+    statusEl.classList.add('hidden');
+  };
+
   const load = async (latency) => {
     try {
       if (latency) {
@@ -131,9 +159,14 @@ async function main() {
         const data = await loadMetrics(daysEl ? daysEl.value : 14);
         renderMetrics(data);
       }
-      if (statusEl) statusEl.textContent = '';
+      clearError();
     } catch (error) {
-      if (statusEl) statusEl.textContent = error.message;
+      showError(error.message || String(error));
+      // Keep body from staying in perpetual "Loading..." state
+      const body = document.getElementById(latency ? 'fetch-latency-body' : 'metrics-body');
+      if (body && body.textContent.includes('Loading')) {
+        body.innerHTML = `<tr><td colspan="${latency ? 5 : 7}" class="px-4 py-6 text-center text-red-500">Failed to load. ${escapeHtml(error.message || '')}</td></tr>`;
+      }
     }
   };
 
@@ -143,6 +176,10 @@ async function main() {
   await load(false);
 }
 
-document.addEventListener('DOMContentLoaded', main);
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', main);
+} else {
+  main();
+}
 
-window.__test = { renderMetrics, renderFetchLatency, renderFetchLatencyRows, loadMetrics, loadFetchLatency };
+window.__test = { renderMetrics, renderFetchLatency, renderFetchLatencyRows, loadMetrics, loadFetchLatency, parseErrorBody, fetchJsonWithError };

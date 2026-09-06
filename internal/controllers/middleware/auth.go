@@ -17,6 +17,21 @@ func AuthRequired(sessionStore session.Storer, allowedRoles ...string) fiber.Han
 
 		// Check if logged in
 		if sess.Get("authenticated") != true {
+			// For API/JSON clients, return JSON instead of redirecting to login page
+			// (which would cause fetch to receive HTML and hang on JSON parse).
+			accepts := c.Accepts(fiber.MIMEApplicationJSON, fiber.MIMETextHTML)
+			isAPI := accepts == fiber.MIMEApplicationJSON
+			// Also treat /v1/ and /api/ paths as API even if Accept is ambiguous
+			path := c.Path()
+			if !isAPI && len(path) >= 4 && path[:4] == "/v1/" {
+				isAPI = true
+			}
+			if !isAPI && len(path) >= 5 && path[:5] == "/api/" {
+				isAPI = true
+			}
+			if isAPI {
+				return c.Status(http.StatusUnauthorized).JSON(fiber.Map{"error": "Unauthorized"})
+			}
 			requestedURL := c.OriginalURL()
 			if requestedURL == "" {
 				requestedURL = c.Path()

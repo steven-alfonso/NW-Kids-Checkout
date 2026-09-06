@@ -28,8 +28,6 @@ CREATE TABLE checkins (
     fetched_at DATETIME DEFAULT NULL
 );
 
-CREATE INDEX idx_checked_out_at ON checkins (checked_out_at);
-
 CREATE TABLE events (
     id INTEGER PRIMARY KEY,
     name TEXT NOT NULL UNIQUE,
@@ -66,3 +64,12 @@ CREATE TABLE event_check_windows (
 );
 
 CREATE INDEX idx_event_check_windows_event_id ON event_check_windows (event_id);
+
+CREATE INDEX idx_manual_created_at ON manual_checkins (created_at);
+
+-- Condensed checkins indexes: composites cover single-col filters via leftmost prefix + ORDER BY checked_out_at DESC (checkin.go:139)
+CREATE INDEX idx_checkins_checked_out_at_fetched_at ON checkins (checked_out_at DESC, fetched_at);
+
+CREATE INDEX idx_checkins_event_id_checked_out_at ON checkins (event_id, checked_out_at DESC);
+
+CREATE INDEX idx_checkins_location_id_checked_out_at ON checkins (location_id, checked_out_at DESC);

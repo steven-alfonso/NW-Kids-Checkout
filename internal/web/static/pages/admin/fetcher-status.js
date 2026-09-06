@@ -2,9 +2,23 @@ const API_URL = '';
 const STALE_THRESHOLD_MS = 15 * 60 * 1000;
 
 async function loadEvents() {
-  const response = await fetch(`${API_URL}/v1/events`);
-  if (!response.ok) throw new Error(`failed to load events (${response.status})`);
-  return response.json();
+  const response = await fetch(`${API_URL}/v1/events`, { credentials: 'same-origin' });
+  if (!response.ok) {
+    const text = await response.text().catch(() => '');
+    let data;
+    try { data = JSON.parse(text); } catch (_) { data = text; }
+    const msg = (data && data.error) || (data && data.message) || (data && data.sorry) || text || `failed to load events (${response.status})`;
+    throw new Error(msg);
+  }
+  try {
+    return await response.json();
+  } catch (_) {
+    const text = await response.text().catch(() => '');
+    if (text && text.trim().startsWith('<')) {
+      throw new Error('failed to load events: received HTML instead of JSON (maybe not authenticated)');
+    }
+    throw new Error('failed to load events: invalid JSON response');
+  }
 }
 
 function formatAge(ms) {
@@ -56,13 +70,27 @@ async function main() {
   try {
     const events = await loadEvents();
     renderEvents(events);
-    if (statusEl) statusEl.textContent = '';
+    if (statusEl) {
+      statusEl.textContent = '';
+      statusEl.classList.add('hidden');
+    }
   } catch (error) {
-    if (statusEl) statusEl.textContent = error.message;
+    if (statusEl) {
+      statusEl.textContent = error.message;
+      statusEl.classList.remove('hidden');
+    }
+    const body = document.getElementById('fetcher-status-body');
+    if (body && body.textContent.includes('Loading')) {
+      body.innerHTML = `<tr><td colspan="4" class="px-4 py-6 text-center text-red-500">Failed to load. ${escapeHtml(error.message || '')}</td></tr>`;
+    }
   }
 }
 
-document.addEventListener('DOMContentLoaded', main);
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', main);
+} else {
+  main();
+}
 
 // test hooks (mirror existing pattern)
 window.__test = { renderEvents, loadEvents, formatAge };
