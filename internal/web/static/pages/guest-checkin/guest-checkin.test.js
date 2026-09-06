@@ -1,7 +1,7 @@
-import {describe, it, expect, vi, afterEach} from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
-import {JSDOM} from 'jsdom';
+import { JSDOM } from 'jsdom';
 
 const scriptPath = path.resolve(process.cwd(), 'internal/web/static/pages/guest-checkin/guest-checkin.js');
 const apiScriptPath = path.resolve(process.cwd(), 'internal/web/static/js/api.js');
@@ -37,11 +37,11 @@ function loadWindow() {
                 <p id="countdown-text"></p>
             </div>
         </body></html>`;
-    const dom = new JSDOM(html, {runScripts: 'dangerously', url: 'http://localhost/'});
+    const dom = new JSDOM(html, { runScripts: 'dangerously', url: 'http://localhost/' });
     dom.window.fetch = async (url, opts) => ({
         ok: true,
         status: 200,
-        json: async () => ({public_id: 'abc', status: 'pending'}),
+        json: async () => ({ public_id: 'abc', status: 'pending' }),
         text: async () => ''
     });
     // Sync JSDOM Date with Node's mocked Date (for fake timers).
@@ -65,7 +65,7 @@ function fillValidParent(window) {
     const ack = window.document.getElementById('safety-ack');
     if (ack) ack.checked = true;
 }
-function fillValidChild(window, rowIdx=0) {
+function fillValidChild(window, rowIdx = 0) {
     const rows = window.document.querySelectorAll('.child-row');
     const row = rows[rowIdx];
     if (!row) return;
@@ -90,11 +90,11 @@ describe('kiosk form', () => {
         const window = loadWindow();
         const labels = Array.from(window.document.querySelectorAll('.child-row label'));
         const labelTexts = labels.map(label => {
-        const clone = label.cloneNode(true);
-        clone.querySelectorAll('input, select').forEach(el => el.remove());
-        return clone.textContent.replace(/\s+/g, ' ').trim();
-    });
-        expect(labelTexts).toEqual(['First name *', 'Last name *', 'Birthdate *', 'Grade *', 'Gender *', 'Relationship to child *', 'Dietary restrictions', 'Special needs']);
+            const clone = label.cloneNode(true);
+            clone.querySelectorAll('input, select').forEach(el => el.remove());
+            return clone.textContent.replace(/\s+/g, ' ').trim();
+        });
+        expect(labelTexts).toEqual(['First name *', 'Last name *', 'Birthdate *', 'Grade *', 'Gender *', 'Relationship to child *', 'Dietary restriction(s)', 'Special needs']);
     });
 
     it('renders the grade dropdown with expected options', () => {

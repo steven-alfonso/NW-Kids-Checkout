@@ -15,7 +15,55 @@ const GENDER_OPTIONS = ['Boy', 'Girl'];
 const RELATIONSHIP_OPTIONS = ['Parent', 'Guardian', 'Grandparent', 'Other'];
 const MAX_CHILDREN = 10;
 
+const DIETARY_PRESETS = ['Peanut allergy', 'Tree nut allergy', 'Dairy allergy', 'Egg allergy', 'Soy allergy', 'Sesame allergy', 'Gluten free', 'Avoid food dye'];
+
 const inputClass = 'mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-base text-gray-900 shadow-sm focus:border-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-500';
+
+let dietaryHintIdCounter = 0;
+
+const dietaryPillBaseClass = 'dietary-pill inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium cursor-pointer transition-colors';
+const dietaryPillOffClass = 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50';
+const dietaryPillOnClass = 'border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100';
+
+function parseDietaryTokens(value) {
+    if (!value) return [];
+    return value.split(',').map(s => s.trim()).filter(Boolean);
+}
+
+function syncDietaryPills(row) {
+    const textarea = row.querySelector('.child-dietary');
+    if (!textarea) return;
+    const tokensLower = new Set(parseDietaryTokens(textarea.value).map(t => t.toLowerCase()));
+    row.querySelectorAll('.dietary-pill').forEach(btn => {
+        const pillValue = btn.dataset.value || '';
+        const active = tokensLower.has(pillValue.toLowerCase());
+        btn.setAttribute('aria-pressed', String(active));
+        btn.className = `${dietaryPillBaseClass} ${active ? dietaryPillOnClass : dietaryPillOffClass}`;
+    });
+}
+
+function toggleDietaryPill(row, pillText) {
+    const textarea = row.querySelector('.child-dietary');
+    if (!textarea) return;
+    const tokens = parseDietaryTokens(textarea.value);
+    const lowerPill = pillText.toLowerCase();
+    const idx = tokens.findIndex(t => t.toLowerCase() === lowerPill);
+    let newTokens;
+    if (idx !== -1) {
+        newTokens = tokens.slice(0, idx).concat(tokens.slice(idx + 1));
+    } else {
+        const candidate = tokens.length === 0 ? pillText : tokens.join(', ') + ', ' + pillText;
+        if (candidate.length > 500) return;
+        newTokens = [...tokens, pillText];
+    }
+    textarea.value = newTokens.join(', ');
+    syncDietaryPills(row);
+    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+function dietaryPillsMarkup() {
+    return DIETARY_PRESETS.map(p => `<button type="button" class="${dietaryPillBaseClass} ${dietaryPillOffClass}" data-value="${p}" aria-pressed="false">${p}</button>`).join('');
+}
 
 function childRowTemplate() {
     const row = document.createElement('div');
@@ -23,6 +71,7 @@ function childRowTemplate() {
     const gradeOptions = GRADE_OPTIONS.map(grade => `<option value="${grade}">${grade}</option>`).join('');
     const genderOptions = GENDER_OPTIONS.map(g => `<option value="${g}">${g}</option>`).join('');
     const relationshipOptions = RELATIONSHIP_OPTIONS.map(r => `<option value="${r}">${r}</option>`).join('');
+    const dietaryHintId = `dietary-hint-${++dietaryHintIdCounter}`;
     row.innerHTML = `
         <div class="kiosk-field grid gap-3 sm:grid-cols-2">
             <label class="block text-sm font-semibold text-gray-700">First name <span class="text-red-600">*</span>
@@ -51,16 +100,30 @@ function childRowTemplate() {
                     ${relationshipOptions}
                 </select>
             </label>
-            <label class="block text-sm font-semibold text-gray-700 sm:col-span-2">Dietary restrictions
-                <textarea class="child-dietary ${inputClass}" name="child_dietary" autocomplete="off" maxlength="500" rows="2" placeholder="Optional"></textarea>
-            </label>
+            <div class="sm:col-span-2">
+                <label class="block text-sm font-semibold text-gray-700">Dietary restriction(s)
+                    <textarea class="child-dietary ${inputClass}" name="child_dietary" autocomplete="off" maxlength="500" rows="2" placeholder="Optional" aria-describedby="${dietaryHintId}"></textarea>
+                </label>
+                <div class="dietary-pills mt-2 flex flex-wrap gap-1.5" role="group" aria-label="Quick select dietary restrictions">
+                    ${dietaryPillsMarkup()}
+                </div>
+                <p id="${dietaryHintId}" class="dietary-hint mt-1.5 text-xs leading-4 text-slate-500">Tap a pill to add it, or type your own — separate with commas.</p>
+            </div>
             <label class="block text-sm font-semibold text-gray-700 sm:col-span-2">Special needs
                 <textarea class="child-special-needs ${inputClass}" name="child_special_needs" autocomplete="off" maxlength="500" rows="2" placeholder="Optional"></textarea>
             </label>
         </div>
-        <button type="button" class="remove-child mt-2 rounded-md border border-red-300 px-3 py-1.5 text-sm font-semibold text-red-600 hover:bg-red-50 cursor-pointer" aria-label="Remove child">Remove</button>
+        <button type="button" class="remove-child mt-2 rounded-md border border-red-300 px-3 py-1.5 text-sm font-semibold text-red-600 hover:bg-red-50 cursor-pointer" aria-label="Remove child">Remove Child</button>
     `;
     row.querySelector('.remove-child').addEventListener('click', () => removeChildRow(row));
+    const dietaryTextarea = row.querySelector('.child-dietary');
+    if (dietaryTextarea) {
+        dietaryTextarea.addEventListener('input', () => syncDietaryPills(row));
+    }
+    row.querySelectorAll('.dietary-pill').forEach(btn => {
+        btn.addEventListener('click', () => toggleDietaryPill(row, btn.dataset.value));
+    });
+    syncDietaryPills(row);
     return row;
 }
 
@@ -133,6 +196,7 @@ function resetForm() {
     for (let i = rows.length - 1; i >= 1; i--) {
         rows[i].remove();
     }
+    childrenContainer.querySelectorAll('.child-row').forEach(row => syncDietaryPills(row));
     updateChildCount();
 }
 
@@ -177,7 +241,7 @@ async function postSubmission(payload) {
     try {
         const data = await globalThis.fetchJson('/v1/checkins/guest-submissions', {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'},
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
         });
         return data;
@@ -418,7 +482,7 @@ function handlePageshow(event) {
                     const val = input.getAttribute('value') || '';
                     input.value = val;
                 }
-            } catch (_) {}
+            } catch (_) { }
             input.setCustomValidity('');
         });
         if (isPersisted) {
@@ -428,7 +492,7 @@ function handlePageshow(event) {
 }
 
 window.addEventListener('pageshow', handlePageshow);
-window.addEventListener('DOMContentLoaded', () => handlePageshow({persisted: false}));
+window.addEventListener('DOMContentLoaded', () => handlePageshow({ persisted: false }));
 window.handlePageshow = handlePageshow;
 
 window.addChildRow = addChildRow;
@@ -438,6 +502,10 @@ window.syncChildrenLastName = syncChildrenLastName;
 window.handleParentLastNameInput = handleParentLastNameInput;
 window.handleUseParentLastNameChange = handleUseParentLastNameChange;
 window.setUseParentLastNameToggleVisual = setUseParentLastNameToggleVisual;
+window.toggleDietaryPill = toggleDietaryPill;
+window.syncDietaryPills = syncDietaryPills;
+window.parseDietaryTokens = parseDietaryTokens;
+window.DIETARY_PRESETS = DIETARY_PRESETS;
 
 setUseParentLastNameToggleVisual(document.getElementById('use-parent-last-name')?.checked);
 window.buildPayload = buildPayload;

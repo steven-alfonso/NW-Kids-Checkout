@@ -1,7 +1,7 @@
-import {describe, it, expect} from 'vitest';
+import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
-import {JSDOM, VirtualConsole} from 'jsdom';
+import { JSDOM, VirtualConsole } from 'jsdom';
 
 const scriptPath = path.resolve(process.cwd(), 'internal/web/static/pages/admin-guest-entries/admin-guest-entries.js');
 const apiScriptPath = path.resolve(process.cwd(), 'internal/web/static/js/api.js');
@@ -9,7 +9,7 @@ const script = fs.readFileSync(scriptPath, 'utf8');
 const apiScript = fs.readFileSync(apiScriptPath, 'utf8');
 const flush = () => new Promise(resolve => setTimeout(resolve, 0));
 
-function loadWindow({respond} = {}) {
+function loadWindow({ respond } = {}) {
     const virtualConsole = new VirtualConsole();
     virtualConsole.on('jsdomError', (e) => {
         if (e.message.includes('Not implemented: navigation')) return;
@@ -41,14 +41,14 @@ function loadWindow({respond} = {}) {
                 </div>
             </div>
             <div id="page-status" class="hidden"></div>
-        </body></html>`, {runScripts: 'dangerously', url: 'http://localhost/', virtualConsole});
+        </body></html>`, { runScripts: 'dangerously', url: 'http://localhost/', virtualConsole });
     const calls = [];
     dom.window.fetch = async (url, opts) => {
-        calls.push({url: String(url), opts: opts || {}});
+        calls.push({ url: String(url), opts: opts || {} });
         if (respond) return respond(url, opts);
-        return {ok: true, status: 200, json: async () => pageOf([])};
+        return { ok: true, status: 200, json: async () => pageOf([]) };
     };
-    dom.window.navigator.clipboard = {writeText: async (text) => (dom.window._copied = text)};
+    dom.window.navigator.clipboard = { writeText: async (text) => (dom.window._copied = text) };
     dom.window.eval(apiScript);
     dom.window.eval(script);
     dom.window._fetchCalls = calls;
@@ -59,7 +59,7 @@ function entry(publicId, status, overrides = {}) {
     return {
         public_id: publicId,
         status,
-        parent: {first_name: 'A', last_name: 'B', phone: '555', email: 'a@b.com', address1: '123 Main St', address2: '', city: 'Seattle', state: 'WA', zip: '98101'},
+        parent: { first_name: 'A', last_name: 'B', phone: '555', email: 'a@b.com', address1: '123 Main St', address2: '', city: 'Seattle', state: 'WA', zip: '98101' },
         children: [],
         safety_ack: true,
         ...overrides
@@ -118,8 +118,8 @@ describe('admin-guest-entries', () => {
         it('renders tab entries without a count heading', async () => {
             const window = loadWindow({
                 respond: (url) => url.includes('status=entered')
-                    ? {ok: true, status: 200, json: async () => pageOf([entry('e-1', 'entered'), entry('e-2', 'entered')])}
-                    : {ok: true, status: 200, json: async () => pageOf([])}
+                    ? { ok: true, status: 200, json: async () => pageOf([entry('e-1', 'entered'), entry('e-2', 'entered')]) }
+                    : { ok: true, status: 200, json: async () => pageOf([]) }
             });
             await window.loadEntries('entered');
             const heading = window.document.querySelector('#view-entered h2');
@@ -136,9 +136,9 @@ describe('admin-guest-entries', () => {
         it('renders entries into the active tab view', async () => {
             const window = loadWindow({
                 respond: (url) => {
-                    if (url.includes('pending,approved') || url.includes('pending%2Capproved')) return {ok: true, status: 200, json: async () => pageOf([entry('p-1', 'pending'), entry('a-1', 'approved')])};
-                    if (url.includes('status=pending')) return {ok: true, status: 200, json: async () => pageOf([entry('p-1', 'pending')])};
-                    return {ok: true, status: 200, json: async () => pageOf([entry('a-1', 'approved')])};
+                    if (url.includes('pending,approved') || url.includes('pending%2Capproved')) return { ok: true, status: 200, json: async () => pageOf([entry('p-1', 'pending'), entry('a-1', 'approved')]) };
+                    if (url.includes('status=pending')) return { ok: true, status: 200, json: async () => pageOf([entry('p-1', 'pending')]) };
+                    return { ok: true, status: 200, json: async () => pageOf([entry('a-1', 'approved')]) };
                 }
             });
             await window.loadEntries('needs-entry');
@@ -149,9 +149,9 @@ describe('admin-guest-entries', () => {
         it('reloads the active tab after marking an entry entered', async () => {
             const window = loadWindow({
                 respond: (url, opts) => {
-                    if (opts && opts.method === 'PATCH') return {ok: true, status: 200, json: async () => ({})};
-                    if (url.includes('status=pending')) return {ok: true, status: 200, json: async () => pageOf([entry('s-1', 'pending')])};
-                    return {ok: true, status: 200, json: async () => pageOf([])};
+                    if (opts && opts.method === 'PATCH') return { ok: true, status: 200, json: async () => ({}) };
+                    if (url.includes('status=pending')) return { ok: true, status: 200, json: async () => pageOf([entry('s-1', 'pending')]) };
+                    return { ok: true, status: 200, json: async () => pageOf([]) };
                 }
             });
             await flush();
@@ -171,8 +171,8 @@ describe('admin-guest-entries', () => {
             const window = loadWindow();
             const container = window.document.createElement('div');
             const sub = entry('sub-1', 'approved', {
-                parent: {first_name: 'John', last_name: 'Smith', phone: '555-1234', email: 'j@e.com', address1: '123 Main St', address2: 'Apt 2', city: 'Seattle', state: 'WA', zip: '98101'},
-                children: [{first_name: 'Timmy', last_name: 'Smith', dob: '2020-01-01', grade: '1st Grade', gender: 'Boy', relationship: 'Parent', dietary_restrictions: 'Peanut', special_needs: 'Wheelchair'}]
+                parent: { first_name: 'John', last_name: 'Smith', phone: '555-1234', email: 'j@e.com', address1: '123 Main St', address2: 'Apt 2', city: 'Seattle', state: 'WA', zip: '98101' },
+                children: [{ first_name: 'Timmy', last_name: 'Smith', dob: '2020-01-01', grade: '1st Grade', gender: 'Boy', relationship: 'Parent', dietary_restrictions: 'Peanut', special_needs: 'Wheelchair' }]
             });
             const chips = window.renderEntry(container, sub);
             expect(container.querySelectorAll('[data-copy]').length).toBeGreaterThanOrEqual(14);
@@ -186,7 +186,7 @@ describe('admin-guest-entries', () => {
             expect(labels).toContain('grade');
             expect(labels).toContain('gender');
             expect(labels).toContain('relationship');
-            expect(labels).toContain('dietary restrictions');
+            expect(labels).toContain('dietary restriction(s)');
             expect(labels).toContain('special needs');
         });
 
@@ -194,7 +194,7 @@ describe('admin-guest-entries', () => {
             const window = loadWindow();
             const container = window.document.createElement('div');
             const sub = entry('sub-ack', 'approved', {
-                parent: {first_name: 'A', last_name: 'B', phone: '555', email: 'a@b.com', address1: '123 Main St', address2: '', city: 'Seattle', state: 'WA', zip: '98101'},
+                parent: { first_name: 'A', last_name: 'B', phone: '555', email: 'a@b.com', address1: '123 Main St', address2: '', city: 'Seattle', state: 'WA', zip: '98101' },
                 safety_ack: true,
                 children: []
             });
@@ -203,7 +203,7 @@ describe('admin-guest-entries', () => {
             // address summary (non-copyable) and safety ack badge removed per product request
             expect(container.textContent).not.toContain('Safety acknowledgement confirmed');
             expect(container.querySelector('p.text-xs.text-slate-600')).toBeNull();
-            const sub2 = entry('sub-noack', 'approved', {safety_ack: false});
+            const sub2 = entry('sub-noack', 'approved', { safety_ack: false });
             const container2 = window.document.createElement('div');
             window.renderEntry(container2, sub2);
             expect(container2.textContent).not.toContain('Safety acknowledgement missing');
@@ -212,7 +212,7 @@ describe('admin-guest-entries', () => {
         it('renders missing phone/email as an em dash on parent chips', () => {
             const window = loadWindow();
             const container = window.document.createElement('div');
-            const sub = entry('sub-4', 'approved', {parent: {first_name: 'A', last_name: 'B', phone: '', email: ''}});
+            const sub = entry('sub-4', 'approved', { parent: { first_name: 'A', last_name: 'B', phone: '', email: '' } });
             window.renderEntry(container, sub);
             const phoneChip = Array.from(container.querySelectorAll('[data-copy]')).find(btn => btn.dataset.label === 'phone');
             const emailChip = Array.from(container.querySelectorAll('[data-copy]')).find(btn => btn.dataset.label === 'email');
@@ -266,7 +266,7 @@ describe('admin-guest-entries', () => {
             const container = window.document.createElement('div');
             window.renderEntry(container, entry('appr-1', 'approved'));
             window.renderEntry(container, entry('pend-1', 'pending'));
-            window.renderEntry(container, entry('rej-1', 'rejected', {parent: {first_name: 'E', last_name: 'F', phone: '3', email: 'e@f.com'}}));
+            window.renderEntry(container, entry('rej-1', 'rejected', { parent: { first_name: 'E', last_name: 'F', phone: '3', email: 'e@f.com' } }));
             const cards = container.querySelectorAll('.rounded-xl');
             expect(cards[0].className).toContain('border-l-amber-400');
             expect(cards[1].className).toContain('border-l-amber-400');
@@ -297,11 +297,11 @@ describe('admin-guest-entries', () => {
                     const page = Number(new URL(url, 'http://localhost').searchParams.get('page')) || 1;
                     if (url.includes('status=pending')) {
                         const item = page === 1
-                            ? entry('p-1', 'pending', {parent: {first_name: 'Page', last_name: 'One', phone: '1', email: 'a@b.com'}})
-                            : entry('p-2', 'pending', {parent: {first_name: 'Page', last_name: 'Two', phone: '2', email: 'a@b.com'}});
-                        return {ok: true, status: 200, json: async () => pageOf([item], {page, total_pages: 2, total: 15})};
+                            ? entry('p-1', 'pending', { parent: { first_name: 'Page', last_name: 'One', phone: '1', email: 'a@b.com' } })
+                            : entry('p-2', 'pending', { parent: { first_name: 'Page', last_name: 'Two', phone: '2', email: 'a@b.com' } });
+                        return { ok: true, status: 200, json: async () => pageOf([item], { page, total_pages: 2, total: 15 }) };
                     }
-                    return {ok: true, status: 200, json: async () => pageOf([], {page, total_pages: 2, total: 12})};
+                    return { ok: true, status: 200, json: async () => pageOf([], { page, total_pages: 2, total: 12 }) };
                 }
             });
             await flush();
@@ -320,10 +320,10 @@ describe('admin-guest-entries', () => {
         it('renders page summary and navigation in both top and bottom bars', async () => {
             const window = loadWindow({
                 respond: (url) => {
-                    if (url.includes('pending,approved') || url.includes('pending%2Capproved')) return {ok: true, status: 200, json: async () => pageOf([entry('p-1', 'pending'), entry('p-2', 'pending')], {total: 27, total_pages: 2})};
+                    if (url.includes('pending,approved') || url.includes('pending%2Capproved')) return { ok: true, status: 200, json: async () => pageOf([entry('p-1', 'pending'), entry('p-2', 'pending')], { total: 27, total_pages: 2 }) };
                     return url.includes('status=pending')
-                        ? {ok: true, status: 200, json: async () => pageOf([entry('p-1', 'pending'), entry('p-2', 'pending')], {total: 15, total_pages: 2})}
-                        : {ok: true, status: 200, json: async () => pageOf([], {total: 12, total_pages: 2})};
+                        ? { ok: true, status: 200, json: async () => pageOf([entry('p-1', 'pending'), entry('p-2', 'pending')], { total: 15, total_pages: 2 }) }
+                        : { ok: true, status: 200, json: async () => pageOf([], { total: 12, total_pages: 2 }) };
                 }
             });
             await window.loadEntries('needs-entry');
@@ -346,9 +346,9 @@ describe('admin-guest-entries', () => {
                 respond: (url) => {
                     const page = Number(new URL(url, 'http://localhost').searchParams.get('page')) || 1;
                     if (url.includes('status=pending')) {
-                        return {ok: true, status: 200, json: async () => pageOf(page === 1 ? [entry('p-1', 'pending')] : [], {page, total_pages: 2, total: 11})};
+                        return { ok: true, status: 200, json: async () => pageOf(page === 1 ? [entry('p-1', 'pending')] : [], { page, total_pages: 2, total: 11 }) };
                     }
-                    return {ok: true, status: 200, json: async () => pageOf([], {page, total_pages: 2, total: 11})};
+                    return { ok: true, status: 200, json: async () => pageOf([], { page, total_pages: 2, total: 11 }) };
                 }
             });
             await flush();
@@ -364,37 +364,43 @@ describe('admin-guest-entries', () => {
             const window = loadWindow({
                 respond: (url) => {
                     if (url.includes('pending,approved') || url.includes('pending%2Capproved')) {
-                        return {ok: true, status: 200, json: async () => pageOf([
-                            entry('old-pending', 'pending', {
+                        return {
+                            ok: true, status: 200, json: async () => pageOf([
+                                entry('old-pending', 'pending', {
+                                    created_at: '2026-01-01T10:00:00Z',
+                                    parent: { first_name: 'Old', last_name: 'Pending', phone: '1', email: 'a@b.com' }
+                                }),
+                                entry('new-approved', 'approved', {
+                                    created_at: '2026-02-01T10:00:00Z',
+                                    parent: { first_name: 'New', last_name: 'Approved', phone: '1', email: 'a@b.com' }
+                                }),
+                                entry('no-date-approved', 'approved', {
+                                    created_at: null,
+                                    parent: { first_name: 'No', last_name: 'Date', phone: '1', email: 'a@b.com' }
+                                })
+                            ])
+                        };
+                    }
+                    if (url.includes('status=pending')) {
+                        return {
+                            ok: true, status: 200, json: async () => pageOf([entry('old-pending', 'pending', {
                                 created_at: '2026-01-01T10:00:00Z',
-                                parent: {first_name: 'Old', last_name: 'Pending', phone: '1', email: 'a@b.com'}
-                            }),
+                                parent: { first_name: 'Old', last_name: 'Pending', phone: '1', email: 'a@b.com' }
+                            })])
+                        };
+                    }
+                    return {
+                        ok: true, status: 200, json: async () => pageOf([
                             entry('new-approved', 'approved', {
                                 created_at: '2026-02-01T10:00:00Z',
-                                parent: {first_name: 'New', last_name: 'Approved', phone: '1', email: 'a@b.com'}
+                                parent: { first_name: 'New', last_name: 'Approved', phone: '1', email: 'a@b.com' }
                             }),
                             entry('no-date-approved', 'approved', {
                                 created_at: null,
-                                parent: {first_name: 'No', last_name: 'Date', phone: '1', email: 'a@b.com'}
+                                parent: { first_name: 'No', last_name: 'Date', phone: '1', email: 'a@b.com' }
                             })
-                        ])};
-                    }
-                    if (url.includes('status=pending')) {
-                        return {ok: true, status: 200, json: async () => pageOf([entry('old-pending', 'pending', {
-                            created_at: '2026-01-01T10:00:00Z',
-                            parent: {first_name: 'Old', last_name: 'Pending', phone: '1', email: 'a@b.com'}
-                        })])};
-                    }
-                    return {ok: true, status: 200, json: async () => pageOf([
-                        entry('new-approved', 'approved', {
-                            created_at: '2026-02-01T10:00:00Z',
-                            parent: {first_name: 'New', last_name: 'Approved', phone: '1', email: 'a@b.com'}
-                        }),
-                        entry('no-date-approved', 'approved', {
-                            created_at: null,
-                            parent: {first_name: 'No', last_name: 'Date', phone: '1', email: 'a@b.com'}
-                        })
-                    ])};
+                        ])
+                    };
                 }
             });
             await window.loadEntries('needs-entry');
@@ -410,11 +416,13 @@ describe('admin-guest-entries', () => {
                 respond: (url) => {
                     const page = Number(new URL(url, 'http://localhost').searchParams.get('page')) || 1;
                     if (url.includes('status=pending')) {
-                        return {ok: true, status: 200, json: async () => pageOf([entry(`p-${page}`, 'pending', {
-                            parent: {first_name: `P${page}`, last_name: 'Familia', phone: '1', email: 'a@b.com'}
-                        })], {page, total_pages: 30, total: 300})};
+                        return {
+                            ok: true, status: 200, json: async () => pageOf([entry(`p-${page}`, 'pending', {
+                                parent: { first_name: `P${page}`, last_name: 'Familia', phone: '1', email: 'a@b.com' }
+                            })], { page, total_pages: 30, total: 300 })
+                        };
                     }
-                    return {ok: true, status: 200, json: async () => pageOf([], {page, total_pages: 30, total: 300})};
+                    return { ok: true, status: 200, json: async () => pageOf([], { page, total_pages: 30, total: 300 }) };
                 }
             });
             const pageNumbers = () => {
@@ -444,10 +452,10 @@ describe('admin-guest-entries', () => {
             const window = loadWindow({
                 respond: (url, opts) => {
                     if (opts && opts.method === 'PATCH') {
-                        return {ok: true, redirected: true, url: 'http://localhost/login', status: 200, headers: {get: () => 'text/html'}};
+                        return { ok: true, redirected: true, url: 'http://localhost/login', status: 200, headers: { get: () => 'text/html' } };
                     }
-                    if (url.includes('status=pending')) return {ok: true, status: 200, json: async () => pageOf([entry('s-1', 'pending')])};
-                    return {ok: true, status: 200, json: async () => pageOf([])};
+                    if (url.includes('status=pending')) return { ok: true, status: 200, json: async () => pageOf([entry('s-1', 'pending')]) };
+                    return { ok: true, status: 200, json: async () => pageOf([]) };
                 }
             });
             await flush();
@@ -473,12 +481,12 @@ describe('admin-guest-entries', () => {
                             status: 400,
                             redirected: false,
                             url: 'http://localhost/v1/checkins/guest-submissions/s-1/status',
-                            headers: {get: () => 'application/json'},
-                            json: async () => ({sorry: 'submission status changed, please retry'})
+                            headers: { get: () => 'application/json' },
+                            json: async () => ({ sorry: 'submission status changed, please retry' })
                         };
                     }
-                    if (url.includes('status=pending')) return {ok: true, status: 200, json: async () => pageOf([entry('s-1', 'pending')])};
-                    return {ok: true, status: 200, json: async () => pageOf([])};
+                    if (url.includes('status=pending')) return { ok: true, status: 200, json: async () => pageOf([entry('s-1', 'pending')]) };
+                    return { ok: true, status: 200, json: async () => pageOf([]) };
                 }
             });
             await flush();
@@ -503,12 +511,12 @@ describe('admin-guest-entries', () => {
                             status: 400,
                             redirected: false,
                             url: 'http://localhost/v1/checkins/guest-submissions/s-1/status',
-                            headers: {get: () => 'application/json'},
-                            json: async () => ({sorry: 'invalid status transition'})
+                            headers: { get: () => 'application/json' },
+                            json: async () => ({ sorry: 'invalid status transition' })
                         };
                     }
-                    if (url.includes('status=pending')) return {ok: true, status: 200, json: async () => pageOf([entry('s-1', 'pending')])};
-                    return {ok: true, status: 200, json: async () => pageOf([])};
+                    if (url.includes('status=pending')) return { ok: true, status: 200, json: async () => pageOf([entry('s-1', 'pending')]) };
+                    return { ok: true, status: 200, json: async () => pageOf([]) };
                 }
             });
             await flush();
@@ -522,7 +530,7 @@ describe('admin-guest-entries', () => {
 
         it('redirects to login when loadEntries session expires (HTML response)', async () => {
             const window = loadWindow({
-                respond: () => ({ok: true, redirected: true, url: 'http://localhost/login', status: 200, headers: {get: () => 'text/html'}})
+                respond: () => ({ ok: true, redirected: true, url: 'http://localhost/login', status: 200, headers: { get: () => 'text/html' } })
             });
             await window.loadEntries('needs-entry');
             await flush();
@@ -534,7 +542,7 @@ describe('admin-guest-entries', () => {
 
         it('redirects to login when loadEntries returns HTML content-type', async () => {
             const window = loadWindow({
-                respond: () => ({ok: false, redirected: false, url: 'http://localhost/v1/admin/guest-submissions?status=pending,approved&page=1', status: 200, headers: {get: () => 'text/html; charset=utf-8'}, json: async () => { throw new Error('should not parse'); }})
+                respond: () => ({ ok: false, redirected: false, url: 'http://localhost/v1/admin/guest-submissions?status=pending,approved&page=1', status: 200, headers: { get: () => 'text/html; charset=utf-8' }, json: async () => { throw new Error('should not parse'); } })
             });
             await window.loadEntries('entered');
             await flush();

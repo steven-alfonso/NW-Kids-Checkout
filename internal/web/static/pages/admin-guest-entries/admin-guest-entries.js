@@ -132,7 +132,7 @@ function formatDob(value) {
 }
 
 function chip(value, label) {
-    const labelText = label.replace(/_/g, ' ');
+    const labelText = label === 'dietary_restrictions' ? 'dietary restriction(s)' : label.replace(/_/g, ' ');
 
     const wrap = document.createElement('div');
     wrap.className = 'relative inline-flex flex-col';
@@ -318,7 +318,7 @@ function buildPaginationBar(page, totalPages, total) {
         const btn = document.createElement('button');
         btn.type = 'button';
         btn.dataset.gotoPage = String(targetPage);
-        btn.className = 'px-3 py-1.5 text-sm font-medium border-r border-slate-200 last:border-r-0';
+        btn.className = 'px-3 py-1.5 text-sm font-medium border-r border-slate-200 last:border-r-0 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 disabled:text-slate-400 disabled:bg-slate-50';
         if (opts.current) {
             btn.classList.add('bg-slate-900', 'text-white');
             btn.setAttribute('aria-current', 'page');
