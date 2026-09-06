@@ -440,7 +440,16 @@ async function confirmCheckedOut(source, planningCenterId, publicId, checkbox, c
 }
 
 const GRAY_UNASSIGNED = '#9CA3AF';
-const PAUL_TOL_MUTED = ['#332288', '#117733', '#44AA99', '#88CCEE', '#DDCC77', '#CC6677', '#AA4499', '#882255'];
+const PAUL_TOL_MUTED = [
+    '#332288',
+    '#117733',
+    '#CC6677',
+    '#44AA99',
+    '#882255',
+    '#88CCEE',
+    '#DDCC77',
+    '#AA4499',
+];
 
 function getLocationGroupColor(locationGroupId) {
     if (locationGroupId == null) return GRAY_UNASSIGNED;
