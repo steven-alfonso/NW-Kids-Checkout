@@ -26,6 +26,7 @@ func (controller *Controller) RegisterRoutes(app fiber.Router) {
 	group.Use(middleware.AuthRequired(controller.sessionStore, "admin"))
 	group.Get("", controller.GetMetrics)
 	group.Get("/fetch-latency", controller.GetFetchLatency)
+	group.Get("/guest", controller.GetGuestMetrics)
 }
 
 type DailyMetricResponse struct {
@@ -35,7 +36,6 @@ type DailyMetricResponse struct {
 	Confirmed         int     `json:"confirmed"`
 	Unconfirmed       int     `json:"unconfirmed"`
 	AvgConfirmMinutes float64 `json:"avg_confirm_minutes"`
-	ManualCount       int     `json:"manual_count"`
 }
 
 type MetricsResponse struct {
@@ -77,7 +77,6 @@ func (controller *Controller) GetMetrics(c *fiber.Ctx) error {
 			Confirmed:         dm.Confirmed,
 			Unconfirmed:       dm.Unconfirmed,
 			AvgConfirmMinutes: math.Round(dm.AvgConfirmMinutes*100) / 100,
-			ManualCount:       dm.ManualCount,
 		})
 	}
 	return c.JSON(response)
@@ -94,6 +93,21 @@ type FetchLatencyMetricResponse struct {
 type FetchLatencyResponse struct {
 	Days int                          `json:"days"`
 	Rows []FetchLatencyMetricResponse `json:"rows"`
+}
+
+type GuestMetricResponse struct {
+	Date        string `json:"date"`
+	Submissions int    `json:"submissions"`
+	Children    int    `json:"children"`
+	Entered     int    `json:"entered"`
+	Approved    int    `json:"approved"`
+	Rejected    int    `json:"rejected"`
+	Pending     int    `json:"pending"`
+}
+
+type GuestMetricsResponse struct {
+	Days int                   `json:"days"`
+	Rows []GuestMetricResponse `json:"rows"`
 }
 
 func (controller *Controller) GetFetchLatency(c *fiber.Ctx) error {
@@ -115,6 +129,32 @@ func (controller *Controller) GetFetchLatency(c *fiber.Ctx) error {
 			AvgMs: math.Round(fm.AvgMs*100) / 100,
 			P95Ms: math.Round(fm.P95Ms*100) / 100,
 			P99Ms: math.Round(fm.P99Ms*100) / 100,
+		})
+	}
+	return c.JSON(response)
+}
+
+func (controller *Controller) GetGuestMetrics(c *fiber.Ctx) error {
+	days := parseDays(c)
+	if days < 0 {
+		return fiber.NewError(fiber.StatusBadRequest, "days must be an integer between 1 and 90")
+	}
+
+	guestMetrics, err := controller.repo.ListGuestMetrics(c.Context(), metrics.Filter{Days: days})
+	if err != nil {
+		return fmt.Errorf("listing guest metrics: %w", err)
+	}
+
+	response := GuestMetricsResponse{Days: days, Rows: make([]GuestMetricResponse, 0, len(guestMetrics))}
+	for _, gm := range guestMetrics {
+		response.Rows = append(response.Rows, GuestMetricResponse{
+			Date:        gm.Date,
+			Submissions: gm.Submissions,
+			Children:    gm.Children,
+			Entered:     gm.Entered,
+			Approved:    gm.Approved,
+			Rejected:    gm.Rejected,
+			Pending:     gm.Pending,
 		})
 	}
 	return c.JSON(response)

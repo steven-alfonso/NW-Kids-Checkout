@@ -1,0 +1,540 @@
+package guestcheckinv1
+
+import (
+	"bytes"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log/slog"
+	"mime"
+	"regexp"
+	"strconv"
+	"strings"
+	"time"
+
+	"kids-checkin/internal/controllers/middleware"
+	"kids-checkin/internal/controllers/session"
+	"kids-checkin/internal/repo"
+	"kids-checkin/internal/repo/guestsubmission"
+	"kids-checkin/internal/web/static"
+
+	"github.com/gofiber/fiber/v2"
+)
+
+type Controller struct {
+	submissionRepo guestsubmission.Repo
+	sessionStore   session.Storer
+}
+
+const adminGuestPageSize = 10
+
+func NewController(db *sql.DB, sessionStore session.Storer) *Controller {
+	return &Controller{
+		submissionRepo: guestsubmission.NewRepo(db),
+		sessionStore:   sessionStore,
+	}
+}
+
+func noStoreCache(c *fiber.Ctx) error {
+	c.Set("Cache-Control", "no-store")
+	return c.Next()
+}
+
+func (controller *Controller) RegisterRoutes(app *fiber.App) {
+	publicGroup := app.Group("/v1/checkins")
+	publicGroup.Use(noStoreCache)
+	publicGroup.Post("/guest-submissions", controller.CreateSubmission)
+
+	group := app.Group("/v1/checkins")
+	group.Use(middleware.AuthRequired(controller.sessionStore, ""))
+	group.Use(noStoreCache)
+	group.Get("/guest-submissions", controller.ListSubmissions)
+	group.Patch("/guest-submissions/:public_id/status", controller.PatchSubmissionStatus)
+	group.Post("/guest-submissions/:public_id/checkins", controller.CreateSubmissionCheckins)
+
+	adminGroup := app.Group("/v1/admin")
+	adminGroup.Use(middleware.AuthRequired(controller.sessionStore, "admin"))
+	adminGroup.Use(noStoreCache)
+	adminGroup.Get("/guest-submissions", controller.AdminListSubmissions)
+
+	app.Get("/guest-checkin", controller.KioskPage)
+	app.Get("/admin/guest-entries", middleware.AuthRequired(controller.sessionStore, "admin"), controller.AdminPage)
+}
+
+func (controller *Controller) KioskPage(c *fiber.Ctx) error {
+	c.Set("Cache-Control", "no-store")
+	f, err := static.EmbeddedFS.Open("pages/guest-checkin/index.html")
+	if err != nil {
+		return fiber.ErrInternalServerError
+	}
+	defer f.Close()
+	c.Type("html")
+	return c.SendStream(f)
+}
+
+func (controller *Controller) AdminPage(c *fiber.Ctx) error {
+	c.Set("Cache-Control", "no-store")
+	f, err := static.EmbeddedFS.Open("pages/admin-guest-entries/index.html")
+	if err != nil {
+		return fiber.ErrInternalServerError
+	}
+	defer f.Close()
+	c.Type("html")
+	return c.SendStream(f)
+}
+
+type createSubmissionPayload struct {
+	Parent    parentPayload  `json:"parent"`
+	Children  []childPayload `json:"children"`
+	SafetyAck bool           `json:"safety_ack"`
+}
+
+type parentPayload struct {
+	FirstName string `json:"first_name"`
+	LastName  string `json:"last_name"`
+	Phone     string `json:"phone"`
+	Email     string `json:"email"`
+	Address1  string `json:"address1"`
+	Address2  string `json:"address2"`
+	City      string `json:"city"`
+	State     string `json:"state"`
+	Zip       string `json:"zip"`
+}
+
+type childPayload struct {
+	FirstName           string `json:"first_name"`
+	LastName            string `json:"last_name"`
+	DOB                 string `json:"dob"`
+	Grade               string `json:"grade"`
+	Gender              string `json:"gender"`
+	DietaryRestrictions string `json:"dietary_restrictions"`
+	SpecialNeeds        string `json:"special_needs"`
+	Relationship        string `json:"relationship"`
+}
+
+var allowedGrades = map[string]struct{}{
+	"None":         {},
+	"Pre-K":        {},
+	"Kindergarten": {},
+	"1st":          {},
+	"2nd":          {},
+	"3rd":          {},
+	"4th":          {},
+	"5th":          {},
+	"6th":          {},
+	"7th":          {},
+	"8th":          {},
+	"9th":          {},
+	"10th":         {},
+	"11th":         {},
+	"12th":         {},
+}
+
+var allowedGenders = map[string]struct{}{
+	"Boy":  {},
+	"Girl": {},
+}
+
+var allowedRelationships = map[string]struct{}{
+	"Parent":      {},
+	"Guardian":    {},
+	"Grandparent": {},
+	"Other":       {},
+}
+
+var zipRegexp = regexp.MustCompile(`^\d{5}(-\d{4})?$`)
+
+func validateCreateSubmissionPayload(p createSubmissionPayload) error {
+	if strings.TrimSpace(p.Parent.FirstName) == "" || strings.TrimSpace(p.Parent.LastName) == "" {
+		return errors.New("parent first_name and last_name are required")
+	}
+	if strings.TrimSpace(p.Parent.Phone) == "" {
+		return errors.New("parent phone is required")
+	}
+	if len(p.Children) == 0 {
+		return errors.New("at least one child is required")
+	}
+	if len(p.Children) > 10 {
+		return errors.New("at most 10 children are allowed per submission")
+	}
+	if len(p.Parent.FirstName) > 100 {
+		return errors.New("parent first_name must be at most 100 characters")
+	}
+	if len(p.Parent.LastName) > 100 {
+		return errors.New("parent last_name must be at most 100 characters")
+	}
+	if len(p.Parent.Phone) > 30 {
+		return errors.New("phone must be at most 30 characters")
+	}
+	if len(p.Parent.Email) > 254 {
+		return errors.New("email must be at most 254 characters")
+	}
+
+	digits := 0
+	for _, r := range p.Parent.Phone {
+		if r >= '0' && r <= '9' {
+			digits++
+		}
+	}
+	if digits < 7 {
+		return errors.New("phone must contain at least 7 digits")
+	}
+	if p.Parent.Email != "" && !strings.Contains(p.Parent.Email, "@") {
+		return errors.New("invalid email")
+	}
+
+	if strings.TrimSpace(p.Parent.Address1) == "" {
+		return errors.New("parent address1 is required")
+	}
+	if len(p.Parent.Address1) > 200 {
+		return errors.New("parent address1 must be at most 200 characters")
+	}
+	if len(p.Parent.Address2) > 200 {
+		return errors.New("parent address2 must be at most 200 characters")
+	}
+	if strings.TrimSpace(p.Parent.City) == "" {
+		return errors.New("parent city is required")
+	}
+	if len(p.Parent.City) > 100 {
+		return errors.New("parent city must be at most 100 characters")
+	}
+	if strings.TrimSpace(p.Parent.State) == "" {
+		return errors.New("parent state is required")
+	}
+	trimmedState := strings.TrimSpace(p.Parent.State)
+	if len(trimmedState) != 2 {
+		return errors.New("parent state must be a 2-letter code")
+	}
+	for _, r := range trimmedState {
+		if !((r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z')) {
+			return errors.New("parent state must be a 2-letter code")
+		}
+	}
+	if strings.TrimSpace(p.Parent.Zip) == "" {
+		return errors.New("parent zip is required")
+	}
+	if len(p.Parent.Zip) > 10 {
+		return errors.New("parent zip must be at most 10 characters")
+	}
+	if !zipRegexp.MatchString(strings.TrimSpace(p.Parent.Zip)) {
+		return errors.New("parent zip must be 5 digits or 5+4 format (e.g. 12345 or 12345-6789)")
+	}
+
+	if !p.SafetyAck {
+		return errors.New("safety acknowledgement is required")
+	}
+
+	for i, child := range p.Children {
+		if strings.TrimSpace(child.FirstName) == "" || strings.TrimSpace(child.LastName) == "" || strings.TrimSpace(child.DOB) == "" || strings.TrimSpace(child.Grade) == "" {
+			return fmt.Errorf("child %d: first_name, last_name, dob, and grade are required", i+1)
+		}
+		if strings.TrimSpace(child.Gender) == "" {
+			return fmt.Errorf("child %d: gender is required", i+1)
+		}
+		if strings.TrimSpace(child.Relationship) == "" {
+			return fmt.Errorf("child %d: relationship is required", i+1)
+		}
+		if len(child.FirstName) > 100 {
+			return fmt.Errorf("child %d: first_name must be at most 100 characters", i+1)
+		}
+		if len(child.LastName) > 100 {
+			return fmt.Errorf("child %d: last_name must be at most 100 characters", i+1)
+		}
+		if len(child.DOB) != 10 {
+			return fmt.Errorf("child %d: dob must be YYYY-MM-DD", i+1)
+		}
+		if _, ok := allowedGrades[child.Grade]; !ok {
+			return fmt.Errorf("child %d: grade must be one of None, Pre-K, Kindergarten, 1st, 2nd, 3rd, 4th, 5th, 6th, 7th, 8th, 9th, 10th, 11th, 12th", i+1)
+		}
+		if _, ok := allowedGenders[child.Gender]; !ok {
+			return fmt.Errorf("child %d: gender must be Boy or Girl", i+1)
+		}
+		if _, ok := allowedRelationships[child.Relationship]; !ok {
+			return fmt.Errorf("child %d: relationship must be one of Parent, Guardian, Grandparent, Other", i+1)
+		}
+		if len(child.DietaryRestrictions) > 500 {
+			return fmt.Errorf("child %d: dietary_restrictions must be at most 500 characters", i+1)
+		}
+		if len(child.SpecialNeeds) > 500 {
+			return fmt.Errorf("child %d: special_needs must be at most 500 characters", i+1)
+		}
+		dob, err := time.ParseInLocation("2006-01-02", child.DOB, time.Local)
+		if err != nil {
+			return fmt.Errorf("child %d: dob must be YYYY-MM-DD", i+1)
+		}
+		if dob.After(time.Now()) {
+			return fmt.Errorf("child %d: dob cannot be in the future", i+1)
+		}
+	}
+	return nil
+}
+
+func (controller *Controller) CreateSubmission(c *fiber.Ctx) error {
+	contentType := c.Get("Content-Type")
+	if contentType == "" {
+		return fiber.NewError(fiber.StatusUnsupportedMediaType, "unsupported media type")
+	}
+	mediaType, _, err := mime.ParseMediaType(contentType)
+	if err != nil || mediaType != fiber.MIMEApplicationJSON {
+		return fiber.NewError(fiber.StatusUnsupportedMediaType, "unsupported media type")
+	}
+
+	var payload createSubmissionPayload
+	if err := json.Unmarshal(c.Body(), &payload); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "invalid JSON")
+	}
+	if err := validateCreateSubmissionPayload(payload); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, err.Error())
+	}
+
+	parent := guestsubmission.Parent{
+		FirstName: payload.Parent.FirstName,
+		LastName:  payload.Parent.LastName,
+		Phone:     payload.Parent.Phone,
+		Email:     payload.Parent.Email,
+		Address1:  payload.Parent.Address1,
+		Address2:  payload.Parent.Address2,
+		City:      payload.Parent.City,
+		State:     strings.ToUpper(strings.TrimSpace(payload.Parent.State)),
+		Zip:       strings.TrimSpace(payload.Parent.Zip),
+	}
+	children := make([]guestsubmission.Child, 0, len(payload.Children))
+	for _, child := range payload.Children {
+		children = append(children, guestsubmission.Child{
+			FirstName:           child.FirstName,
+			LastName:            child.LastName,
+			DOB:                 child.DOB,
+			Grade:               child.Grade,
+			Gender:              child.Gender,
+			DietaryRestrictions: child.DietaryRestrictions,
+			SpecialNeeds:        child.SpecialNeeds,
+			Relationship:        child.Relationship,
+		})
+	}
+
+	submission, err := controller.submissionRepo.CreateSubmission(c.Context(), parent, children, payload.SafetyAck)
+	if err != nil {
+		slog.Error("failed to create submission", "error", err)
+		return fiber.NewError(fiber.StatusInternalServerError, "internal error")
+	}
+
+	return c.Status(fiber.StatusCreated).JSON(submissionToResponse(submission))
+}
+
+func (controller *Controller) ListSubmissions(c *fiber.Ctx) error {
+	filter, err := buildFilter(c)
+	if err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, err.Error())
+	}
+	if filter.Status == "" {
+		filter.Status = guestsubmission.StatusPending
+	}
+
+	submissions, err := controller.submissionRepo.ListSubmissions(c.Context(), filter)
+	if err != nil {
+		slog.Error("failed to list submissions", "error", err)
+		return fiber.NewError(fiber.StatusInternalServerError, "internal error")
+	}
+
+	return c.JSON(submissionsToSummary(submissions))
+}
+
+func (controller *Controller) AdminListSubmissions(c *fiber.Ctx) error {
+	filter, err := buildFilter(c)
+	if err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, err.Error())
+	}
+
+	page := 1
+	if p := c.Query("page"); p != "" {
+		n, err := strconv.Atoi(p)
+		if err != nil || n <= 0 {
+			return fiber.NewError(fiber.StatusBadRequest, "invalid page")
+		}
+		page = n
+	}
+
+	filter.Limit = adminGuestPageSize
+	filter.Offset = (page - 1) * adminGuestPageSize
+
+	submissions, err := controller.submissionRepo.ListSubmissions(c.Context(), filter)
+	if err != nil {
+		slog.Error("failed to list admin submissions", "error", err)
+		return fiber.NewError(fiber.StatusInternalServerError, "internal error")
+	}
+
+	total, err := controller.submissionRepo.CountSubmissions(c.Context(), filter)
+	if err != nil {
+		slog.Error("failed to count admin submissions", "error", err)
+		return fiber.NewError(fiber.StatusInternalServerError, "internal error")
+	}
+
+	return c.JSON(SubmissionPage{
+		Items:      submissionsToResponse(submissions),
+		Total:      total,
+		Page:       page,
+		PageSize:   adminGuestPageSize,
+		TotalPages: (total + adminGuestPageSize - 1) / adminGuestPageSize,
+	})
+}
+
+func (controller *Controller) PatchSubmissionStatus(c *fiber.Ctx) error {
+	publicID := c.Params("public_id")
+	if publicID == "" {
+		return fiber.NewError(fiber.StatusBadRequest, "public_id is required")
+	}
+
+	contentType := c.Get("Content-Type")
+	if contentType == "" {
+		return fiber.NewError(fiber.StatusUnsupportedMediaType, "unsupported media type")
+	}
+	mediaType, _, err := mime.ParseMediaType(contentType)
+	if err != nil || mediaType != fiber.MIMEApplicationJSON {
+		return fiber.NewError(fiber.StatusUnsupportedMediaType, "unsupported media type")
+	}
+
+	type statusPayload struct {
+		Status string `json:"status"`
+	}
+	var payload statusPayload
+	decoder := json.NewDecoder(bytes.NewReader(c.Body()))
+	if err := decoder.Decode(&payload); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "invalid JSON")
+	}
+	if payload.Status == "" {
+		return fiber.NewError(fiber.StatusBadRequest, "status is required")
+	}
+
+	submissions, err := controller.submissionRepo.ListSubmissions(c.Context(), guestsubmission.Filter{PublicID: publicID})
+	if err != nil {
+		slog.Error("failed to list submissions for patch", "error", err)
+		return fiber.NewError(fiber.StatusInternalServerError, "internal error")
+	}
+	if len(submissions) == 0 {
+		return fiber.NewError(fiber.StatusNotFound, "submission not found")
+	}
+	submission := submissions[0]
+
+	sess, _ := controller.sessionStore.Get(c)
+	role, _ := sess.Get("role").(string)
+	isAdmin := role == "admin"
+
+	if !isValidTransition(isAdmin, submission.Status, payload.Status) {
+		return fiber.NewError(fiber.StatusBadRequest, "invalid status transition")
+	}
+
+	if payload.Status == guestsubmission.StatusApproved {
+		err = controller.submissionRepo.ApproveSubmission(c.Context(), publicID, time.Now().UTC())
+	} else {
+		err = controller.submissionRepo.UpdateSubmissionStatus(c.Context(), publicID, payload.Status, time.Now().UTC())
+	}
+	if err != nil {
+		if errors.Is(err, repo.ErrNotFound) {
+			return fiber.NewError(fiber.StatusNotFound, "submission not found")
+		}
+		if errors.Is(err, guestsubmission.ErrConflict) {
+			return fiber.NewError(fiber.StatusBadRequest, "submission status changed, please retry")
+		}
+		if errors.Is(err, guestsubmission.ErrInvalidStatus) || errors.Is(err, guestsubmission.ErrInvalidSubmission) {
+			return fiber.NewError(fiber.StatusBadRequest, err.Error())
+		}
+		slog.Error("failed to update submission status", "public_id", publicID, "error", err)
+		return fiber.NewError(fiber.StatusInternalServerError, "internal error")
+	}
+
+	updated, err := controller.submissionRepo.ListSubmissions(c.Context(), guestsubmission.Filter{PublicID: publicID})
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "internal error")
+	}
+	if len(updated) == 0 {
+		return fiber.NewError(fiber.StatusInternalServerError, "submission not found after update")
+	}
+	return c.JSON(submissionToSummary(updated[0]))
+}
+
+func (controller *Controller) CreateSubmissionCheckins(c *fiber.Ctx) error {
+	publicID := c.Params("public_id")
+	if publicID == "" {
+		return fiber.NewError(fiber.StatusBadRequest, "public_id is required")
+	}
+
+	err := controller.submissionRepo.CreateManualCheckins(c.Context(), publicID)
+	if err != nil {
+		if errors.Is(err, repo.ErrNotFound) {
+			return fiber.NewError(fiber.StatusNotFound, "submission not found")
+		}
+		if errors.Is(err, guestsubmission.ErrInvalidStatus) || errors.Is(err, guestsubmission.ErrInvalidSubmission) {
+			return fiber.NewError(fiber.StatusBadRequest, err.Error())
+		}
+		slog.Error("failed to create manual checkins", "error", err)
+		return fiber.NewError(fiber.StatusInternalServerError, "internal error")
+	}
+
+	updated, err := controller.submissionRepo.ListSubmissions(c.Context(), guestsubmission.Filter{PublicID: publicID})
+	if err != nil {
+		slog.Error("failed to list submissions after checkin creation", "error", err)
+		return fiber.NewError(fiber.StatusInternalServerError, "internal error")
+	}
+	if len(updated) == 0 {
+		return fiber.NewError(fiber.StatusInternalServerError, "submission not found after update")
+	}
+	return c.JSON(submissionToSummary(updated[0]))
+}
+
+func buildFilter(c *fiber.Ctx) (guestsubmission.Filter, error) {
+	filter := guestsubmission.Filter{}
+	if status := c.Query("status"); status != "" {
+		parts := strings.Split(status, ",")
+		normalized := make([]string, 0, len(parts))
+		for _, p := range parts {
+			p = strings.TrimSpace(p)
+			if p == "" {
+				return guestsubmission.Filter{}, fiber.NewError(fiber.StatusBadRequest, "invalid status")
+			}
+			switch p {
+			case guestsubmission.StatusPending, guestsubmission.StatusApproved, guestsubmission.StatusRejected, guestsubmission.StatusEntered:
+			default:
+				return guestsubmission.Filter{}, fiber.NewError(fiber.StatusBadRequest, "invalid status")
+			}
+			normalized = append(normalized, p)
+		}
+		filter.Status = strings.Join(normalized, ",")
+	}
+	if id := c.Query("public_id"); id != "" {
+		filter.PublicID = id
+	}
+	if q := c.Query("without_manual_checkins"); q == "true" || q == "1" {
+		filter.WithoutManualCheckins = true
+	}
+	if s := c.Query("limit"); s != "" {
+		n, err := strconv.Atoi(s)
+		if err != nil || n <= 0 {
+			return guestsubmission.Filter{}, fiber.NewError(fiber.StatusBadRequest, "invalid limit")
+		}
+		// limit capped at 200
+		if n > 200 {
+			n = 200
+		}
+		filter.Limit = n
+	} else {
+		// default 100 when unset
+		filter.Limit = 100
+	}
+	return filter, nil
+}
+
+func isValidTransition(isAdmin bool, from, to string) bool {
+	switch {
+	case from == guestsubmission.StatusPending && to == guestsubmission.StatusApproved:
+		return true
+	case from == guestsubmission.StatusPending && to == guestsubmission.StatusRejected:
+		return true
+	case isAdmin && from == guestsubmission.StatusPending && to == guestsubmission.StatusEntered:
+		return true
+	case isAdmin && from == guestsubmission.StatusApproved && to == guestsubmission.StatusEntered:
+		return true
+	default:
+		return false
+	}
+}

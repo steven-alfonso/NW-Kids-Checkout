@@ -125,24 +125,22 @@ func Test_sqliteRepo_ListDailyMetrics_unconfirmed(t *testing.T) {
 	assert.Equal(t, float64(0), dm.AvgConfirmMinutes)
 }
 
-func Test_sqliteRepo_ListDailyMetrics_manual_merged(t *testing.T) {
+func Test_sqliteRepo_ListDailyMetrics_excludes_manual(t *testing.T) {
 	f := newFixture(t)
 
 	checkedOut := time.Now().UTC().Add(-10 * time.Minute)
 	f.insertCheckin(t, "chk_manual", checkedOut, nil)
 	f.insertManualCheckin(t)
-	f.insertManualCheckin(t)
 
 	repo := NewRepo(f.testDB)
 	daily, err := repo.ListDailyMetrics(t.Context(), Filter{Days: 14})
 	require.NoError(t, err)
 
-	dm := findMetric(t, daily, "Kids Service")
-	require.NotEmpty(t, dm, "expected a Kids Service metric row")
-	assert.Equal(t, 2, dm.ManualCount, "manual count should merge into the PC row for the same day")
+	require.Len(t, daily, 1, "manual checkins are not tied to an event and must not appear in daily metrics")
+	assert.Equal(t, "Kids Service", daily[0].EventName)
 }
 
-func Test_sqliteRepo_ListDailyMetrics_manual_only_day(t *testing.T) {
+func Test_sqliteRepo_ListDailyMetrics_excludes_manual_only_days(t *testing.T) {
 	f := newFixture(t)
 
 	f.insertManualCheckin(t)
@@ -151,10 +149,7 @@ func Test_sqliteRepo_ListDailyMetrics_manual_only_day(t *testing.T) {
 	daily, err := repo.ListDailyMetrics(t.Context(), Filter{Days: 14})
 	require.NoError(t, err)
 
-	dm := findMetric(t, daily, "Manual Check-Ins")
-	require.NotEmpty(t, dm, "expected a Manual Check-Ins metric row")
-	assert.Equal(t, today(t), dm.Date)
-	assert.Equal(t, 1, dm.ManualCount)
+	require.Empty(t, daily, "days with only manual checkins must not appear in daily metrics")
 }
 
 func Test_sqliteRepo_ListDailyMetrics_days_filter(t *testing.T) {
@@ -238,6 +233,88 @@ func Test_sqliteRepo_ListFetchLatency_excludes_null_and_negative(t *testing.T) {
 	require.NotEmpty(t, fm, "expected a latency row for today")
 	assert.Equal(t, 1, fm.Count, "NULL fetched_at and negative deltas should be excluded")
 	assert.InDelta(t, 2000, fm.AvgMs, 0.01)
+}
+
+func (f fixture) insertGuestSubmission(t *testing.T, publicID string, createdAt time.Time, kids int, approvedAt, rejectedAt, enteredAt *time.Time) {
+	t.Helper()
+	res, err := squirrel.Insert("parents").
+		RunWith(f.testDB).
+		Columns("first_name", "last_name", "phone", "email", "address1", "address2", "city", "state", "zip", "created_at").
+		Values("Guest", "Parent", "1234567", "guest@example.com", "123 Main St", "", "Seattle", "WA", "98101", createdAt).
+		ExecContext(t.Context())
+	require.NoError(t, err)
+	parentID, err := res.LastInsertId()
+	require.NoError(t, err)
+
+	for range kids {
+		_, err := squirrel.Insert("children").
+			RunWith(f.testDB).
+			Columns("parent_id", "first_name", "last_name", "dob", "grade", "gender", "dietary_restrictions", "special_needs", "relationship", "created_at").
+			Values(parentID, "Kid", "One", "2020-01-01", "k", "Boy", "", "", "Parent", createdAt).
+			ExecContext(t.Context())
+		require.NoError(t, err)
+	}
+
+	_, err = squirrel.Insert("guest_submissions").
+		RunWith(f.testDB).
+		Columns("public_id", "parent_id", "approved_at", "rejected_at", "entered_at", "created_at").
+		Values(publicID, parentID, approvedAt, rejectedAt, enteredAt, createdAt).
+		ExecContext(t.Context())
+	require.NoError(t, err)
+}
+
+func findGuestMetric(t *testing.T, rows []GuestMetric, date string) GuestMetric {
+	t.Helper()
+	for _, gm := range rows {
+		if gm.Date == date {
+			return gm
+		}
+	}
+	return GuestMetric{}
+}
+
+func Test_sqliteRepo_ListGuestMetrics_status_breakdown(t *testing.T) {
+	f := newFixture(t)
+
+	now := time.Now().UTC()
+	f.insertGuestSubmission(t, "sub_entered", now, 2, nil, nil, &now)
+	f.insertGuestSubmission(t, "sub_approved", now, 1, &now, nil, nil)
+	f.insertGuestSubmission(t, "sub_rejected", now, 3, nil, &now, nil)
+	f.insertGuestSubmission(t, "sub_pending", now, 2, nil, nil, nil)
+	f.insertGuestSubmission(t, "sub_entered_and_approved", now, 1, &now, nil, &now)
+
+	repo := NewRepo(f.testDB)
+	rows, err := repo.ListGuestMetrics(t.Context(), Filter{Days: 14})
+	require.NoError(t, err)
+
+	gm := findGuestMetric(t, rows, today(t))
+	require.NotEmpty(t, gm, "expected a guest metric row for today")
+	assert.Equal(t, 5, gm.Submissions)
+	assert.Equal(t, 9, gm.Children)
+	assert.Equal(t, 2, gm.Entered, "entered-beats-approved precedence should count both entered rows")
+	assert.Equal(t, 1, gm.Approved)
+	assert.Equal(t, 1, gm.Rejected)
+	assert.Equal(t, 1, gm.Pending)
+}
+
+func Test_sqliteRepo_ListGuestMetrics_days_filter(t *testing.T) {
+	f := newFixture(t)
+
+	now := time.Now().UTC()
+	f.insertGuestSubmission(t, "sub_today", now, 1, nil, nil, nil)
+	old := now.AddDate(0, 0, -3)
+	f.insertGuestSubmission(t, "sub_old", old, 1, nil, nil, nil)
+
+	repo := NewRepo(f.testDB)
+
+	rows, err := repo.ListGuestMetrics(t.Context(), Filter{Days: 0})
+	require.NoError(t, err)
+	require.Len(t, rows, 2, "Days:0 should default to 14 and include both rows")
+
+	rows, err = repo.ListGuestMetrics(t.Context(), Filter{Days: 1})
+	require.NoError(t, err)
+	require.Len(t, rows, 1, "Days:1 should exclude the 3-day-old row")
+	assert.Equal(t, today(t), rows[0].Date)
 }
 
 func Test_sqliteRepo_ListFetchLatency_days_filter(t *testing.T) {

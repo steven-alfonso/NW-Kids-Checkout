@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NW Kids - Check In</title>
+    <link rel="icon" type="image/x-icon" href="/favicon.ico"/>
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"/>
+    <link rel="stylesheet" href="/static/css/tailwind.css?v=dev">
+    <style>
+        /* Make native form controls match the styled text inputs, especially
+           Safari's date input and select, which otherwise render with their
+           own box model and ignore Tailwind sizing/padding. */
+        .kiosk-field input,
+        .kiosk-field select {
+            -webkit-appearance: none;
+            appearance: none;
+            box-sizing: border-box;
+            font-family: inherit;
+            font-size: 1rem;
+            line-height: 1.5rem;
+            min-height: 2.75rem;
+        }
+
+        .kiosk-field input[type="date"] {
+            text-align: left;
+        }
+
+        .kiosk-field select {
+            padding-right: 2.25rem;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%2364748b' stroke-width='2'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' d='M19 9l-7 7-7-7'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 0.65rem center;
+            background-size: 1.1rem 1.1rem;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body class="min-h-screen bg-slate-50 text-slate-900">
+<div class="mx-auto w-full px-6 py-10" style="max-width: 720px;">
+    <header class="flex flex-col items-center gap-4 mb-8">
+        <img src="/static/img/NWKids-logo.svg" alt="NWKids Logo" class="h-16 w-auto">
+        <h1 class="text-2xl font-semibold text-center">Guest Check-In</h1>
+        <p class="text-sm text-slate-600 text-center">Share your family's info and we'll take care of the rest.</p>
+    </header>
+
+    <form id="kiosk-form" class="space-y-6 rounded-xl border border-slate-200 bg-white p-6 shadow-sm" autocomplete="off">
+        <section class="kiosk-field rounded-lg border border-slate-200 bg-slate-50 p-5">
+            <h2 class="mb-4 text-lg font-semibold text-slate-800">Parent / Guardian</h2>
+            <div class="grid gap-3 sm:grid-cols-2">
+                <div>
+                    <label for="parent-first-name" class="block text-sm font-semibold text-gray-700">First name <span class="text-red-600">*</span></label>
+                    <input id="parent-first-name" name="parent_first_name" type="text" autocomplete="off" required maxlength="100"
+                           class="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-base text-gray-900 shadow-sm focus:border-gray-500 focus:outline-none">
+                </div>
+                <div>
+                    <label for="parent-last-name" class="block text-sm font-semibold text-gray-700">Last name <span class="text-red-600">*</span></label>
+                    <input id="parent-last-name" name="parent_last_name" type="text" autocomplete="off" required maxlength="100"
+                           class="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-base text-gray-900 shadow-sm focus:border-gray-500 focus:outline-none">
+                </div>
+                <div>
+                    <label for="parent-phone" class="block text-sm font-semibold text-gray-700">Phone <span class="text-red-600">*</span></label>
+                    <input id="parent-phone" name="parent_phone" type="tel" autocomplete="off" required maxlength="30"
+                           class="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-base text-gray-900 shadow-sm focus:border-gray-500 focus:outline-none">
+                </div>
+                <div>
+                    <label for="parent-email" class="block text-sm font-semibold text-gray-700">Email</label>
+                    <input id="parent-email" name="parent_email" type="email" autocomplete="off" maxlength="254"
+                           class="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-base text-gray-900 shadow-sm focus:border-gray-500 focus:outline-none">
+                </div>
+                <div class="sm:col-span-2">
+                    <label for="parent-address1" class="block text-sm font-semibold text-gray-700">Address <span class="text-red-600">*</span></label>
+                    <input id="parent-address1" name="parent_address1" type="text" autocomplete="off" required maxlength="200"
+                           class="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-base text-gray-900 shadow-sm focus:border-gray-500 focus:outline-none">
+                </div>
+                <div class="sm:col-span-2">
+                    <label for="parent-address2" class="block text-sm font-semibold text-gray-700">Address line 2</label>
+                    <input id="parent-address2" name="parent_address2" type="text" autocomplete="off" maxlength="200"
+                           class="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-base text-gray-900 shadow-sm focus:border-gray-500 focus:outline-none">
+                </div>
+                <div>
+                    <label for="parent-city" class="block text-sm font-semibold text-gray-700">City <span class="text-red-600">*</span></label>
+                    <input id="parent-city" name="parent_city" type="text" autocomplete="off" required maxlength="100"
+                           class="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-base text-gray-900 shadow-sm focus:border-gray-500 focus:outline-none">
+                </div>
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label for="parent-state" class="block text-sm font-semibold text-gray-700">State <span class="text-red-600">*</span></label>
+                        <select id="parent-state" name="parent_state" required
+                                class="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-base text-gray-900 shadow-sm focus:border-gray-500 focus:outline-none">
+                            <option value="">Select</option>
+                            <option value="AL">AL</option>
+                            <option value="AK">AK</option>
+                            <option value="AZ">AZ</option>
+                            <option value="AR">AR</option>
+                            <option value="CA">CA</option>
+                            <option value="CO">CO</option>
+                            <option value="CT">CT</option>
+                            <option value="DE">DE</option>
+                            <option value="FL">FL</option>
+                            <option value="GA">GA</option>
+                            <option value="HI">HI</option>
+                            <option value="ID">ID</option>
+                            <option value="IL">IL</option>
+                            <option value="IN">IN</option>
+                            <option value="IA">IA</option>
+                            <option value="KS">KS</option>
+                            <option value="KY">KY</option>
+                            <option value="LA">LA</option>
+                            <option value="ME">ME</option>
+                            <option value="MD">MD</option>
+                            <option value="MA">MA</option>
+                            <option value="MI">MI</option>
+                            <option value="MN">MN</option>
+                            <option value="MS">MS</option>
+                            <option value="MO">MO</option>
+                            <option value="MT">MT</option>
+                            <option value="NE">NE</option>
+                            <option value="NV">NV</option>
+                            <option value="NH">NH</option>
+                            <option value="NJ">NJ</option>
+                            <option value="NM">NM</option>
+                            <option value="NY">NY</option>
+                            <option value="NC">NC</option>
+                            <option value="ND">ND</option>
+                            <option value="OH">OH</option>
+                            <option value="OK">OK</option>
+                            <option value="OR">OR</option>
+                            <option value="PA">PA</option>
+                            <option value="RI">RI</option>
+                            <option value="SC">SC</option>
+                            <option value="SD">SD</option>
+                            <option value="TN">TN</option>
+                            <option value="TX">TX</option>
+                            <option value="UT">UT</option>
+                            <option value="VT">VT</option>
+                            <option value="VA">VA</option>
+                            <option value="WA">WA</option>
+                            <option value="WV">WV</option>
+                            <option value="WI">WI</option>
+                            <option value="WY">WY</option>
+                            <option value="DC">DC</option>
+                            <option value="AS">AS</option>
+                            <option value="GU">GU</option>
+                            <option value="MP">MP</option>
+                            <option value="PR">PR</option>
+                            <option value="VI">VI</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label for="parent-zip" class="block text-sm font-semibold text-gray-700">Zip <span class="text-red-600">*</span></label>
+                        <input id="parent-zip" name="parent_zip" type="text" autocomplete="off" required maxlength="10" pattern="\d{5}(-\d{4})?"
+                               class="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-base text-gray-900 shadow-sm focus:border-gray-500 focus:outline-none">
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section class="space-y-4">
+            <h2 class="text-lg font-semibold text-slate-800">Children</h2>
+            <label class="inline-flex cursor-pointer items-center gap-3 text-sm font-medium text-slate-700 select-none">
+                <span class="relative inline-flex h-5 w-9 items-center">
+                    <input id="use-parent-last-name" type="checkbox" class="peer absolute opacity-0 w-0 h-0">
+                    <span id="use-parent-last-name-toggle-bg" class="toggle-bg h-5 w-9 rounded-full" style="background-color: var(--color-slate-200)"></span>
+                    <span id="use-parent-last-name-toggle-knob" class="toggle-knob absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white shadow" style="transform: translateX(0)"></span>
+                </span>
+                Use same last name for all children
+            </label>
+            <div id="children-container" class="space-y-4"></div>
+            <button id="add-child" type="button"
+                    class="inline-flex items-center justify-center rounded-md border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent">
+                + Add child
+            </button>
+            <p id="add-child-hint" class="hidden text-sm text-slate-500">You've added the maximum of 10 children — we're all set!</p>
+        </section>
+
+        <label class="flex gap-3 rounded-md border border-slate-200 bg-slate-50 p-4 cursor-pointer">
+            <input id="safety-ack" name="safety_ack" type="checkbox" required class="mt-1 h-4 w-4 shrink-0 rounded border-gray-300 text-slate-900 focus:ring-slate-500">
+            <span class="text-xs font-semibold leading-5 text-slate-700">FOR SAFETY PURPOSES, I MUST PRESENT SAFETY CLAIM TAG ASSIGNED TO CHILD OR A VALID ID UPON CHECKOUT TO OBTAIN MY CHILD. <span class="text-red-600">*</span></span>
+        </label>
+
+        <div id="kiosk-error" class="hidden rounded-md bg-red-50 px-3 py-2 text-sm text-red-700"></div>
+
+        <button id="kiosk-submit" type="submit"
+                class="inline-flex w-full items-center justify-center rounded-md bg-slate-900 px-4 py-3 text-base font-semibold text-white shadow-sm hover:bg-slate-800 focus:outline-none cursor-pointer">
+            Submit
+        </button>
+    </form>
+
+    <div id="welcome-panel" class="hidden rounded-xl border border-slate-200 bg-white p-8 text-center shadow-sm">
+        <h2 class="text-2xl font-semibold text-slate-900 mb-3">Welcome! We're so glad you're here.</h2>
+        <p class="text-slate-600 mb-6">Our team will take it from here. A staff member will check in your family.</p>
+        <button id="new-submission-button" type="button"
+                class="inline-flex items-center justify-center rounded-md border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer">
+            Create new submission
+        </button>
+        <p id="countdown-text" class="mt-4 text-sm text-slate-500"></p>
+    </div>
+</div>
+<script src="/static/js/api.js?v=dev"></script>
+<script src="/static/pages/guest-checkin/guest-checkin.js?v=dev"></script>
+</body>
+</html>

@@ -1,38 +1,15 @@
 const API_URL = '';
 
-function parseErrorBody(data, fallback) {
-  if (data && typeof data === 'object') {
-    return data.message || data.error || data.sorry || fallback;
-  }
-  if (typeof data === 'string' && data.trim()) return data.trim();
-  return fallback;
-}
-
-async function fetchJsonWithError(url, fallbackPrefix) {
-  const response = await fetch(url, { credentials: 'same-origin' });
-  if (!response.ok) {
-    const text = await response.text().catch(() => '');
-    let data;
-    try { data = JSON.parse(text); } catch (_) { data = text; }
-    throw new Error(parseErrorBody(data, `${fallbackPrefix} (${response.status})`));
-  }
-  try {
-    return await response.json();
-  } catch (e) {
-    const text = await response.text().catch(() => '');
-    if (text && text.trim().startsWith('<')) {
-      throw new Error(`${fallbackPrefix}: received HTML instead of JSON (maybe not authenticated)`);
-    }
-    throw new Error(`${fallbackPrefix}: invalid JSON response`);
-  }
-}
-
 async function loadMetrics(days) {
-  return fetchJsonWithError(`${API_URL}/v1/admin/metrics?days=${days}`, 'failed to load metrics');
+  return fetchJson(`${API_URL}/v1/admin/metrics?days=${days}`);
 }
 
 async function loadFetchLatency(days) {
-  return fetchJsonWithError(`${API_URL}/v1/admin/metrics/fetch-latency?days=${days}`, 'failed to load fetch latency');
+  return fetchJson(`${API_URL}/v1/admin/metrics/fetch-latency?days=${days}`);
+}
+
+async function loadGuestMetrics(days) {
+  return fetchJson(`${API_URL}/v1/admin/metrics/guest?days=${days}`);
 }
 
 function escapeHtml(value) {
@@ -56,11 +33,32 @@ function renderMetrics(data) {
           <td class="px-4 py-3 text-slate-800">${m.confirmed}</td>
           <td class="px-4 py-3 text-slate-600">${m.unconfirmed}</td>
           <td class="px-4 py-3 text-slate-600">${m.avg_confirm_minutes}</td>
-          <td class="px-4 py-3 text-slate-600">${m.manual_count}</td>
         </tr>`,
     )
     .join('');
   if (data.daily.length === 0) {
+    body.innerHTML = '<tr><td colspan="6" class="px-4 py-8 text-center text-slate-500">No data yet.</td></tr>';
+  }
+}
+
+function renderGuestMetrics(data) {
+  const body = document.getElementById('guest-body');
+  if (!body) return;
+  body.innerHTML = data.rows
+    .map(
+      (m) => `
+        <tr class="border-b border-slate-100">
+          <td class="px-4 py-3 text-slate-600">${escapeHtml(m.date)}</td>
+          <td class="px-4 py-3 text-slate-800">${m.submissions}</td>
+          <td class="px-4 py-3 text-slate-800">${m.children}</td>
+          <td class="px-4 py-3 text-slate-800">${m.entered}</td>
+          <td class="px-4 py-3 text-slate-800">${m.approved}</td>
+          <td class="px-4 py-3 text-slate-600">${m.rejected}</td>
+          <td class="px-4 py-3 text-slate-600">${m.pending}</td>
+        </tr>`,
+    )
+    .join('');
+  if (data.rows.length === 0) {
     body.innerHTML = '<tr><td colspan="7" class="px-4 py-8 text-center text-slate-500">No data yet.</td></tr>';
   }
 }
@@ -129,14 +127,29 @@ async function main() {
   const daysEl = document.getElementById('metrics-days');
   const tabDaily = document.getElementById('tab-daily');
   const tabLatency = document.getElementById('tab-fetch-latency');
+  const tabGuest = document.getElementById('tab-guest');
   const viewDaily = document.getElementById('view-daily');
   const viewLatency = document.getElementById('view-fetch-latency');
+  const viewGuest = document.getElementById('view-guest');
 
-  const setTab = (latency) => {
-    if (tabDaily) tabDaily.setAttribute('aria-selected', String(!latency));
-    if (tabLatency) tabLatency.setAttribute('aria-selected', String(latency));
-    if (viewDaily) viewDaily.classList.toggle('hidden', latency);
-    if (viewLatency) viewLatency.classList.toggle('hidden', !latency);
+  const setActiveTab = (name) => {
+    const tabs = [
+      ['tab-daily', 'view-daily', 'daily'],
+      ['tab-guest', 'view-guest', 'guest'],
+      ['tab-fetch-latency', 'view-fetch-latency', 'latency'],
+    ];
+    for (const [tabId, viewId, key] of tabs) {
+      const tab = document.getElementById(tabId);
+      const view = document.getElementById(viewId);
+      if (tab) tab.setAttribute('aria-selected', String(key === name));
+      if (view) view.classList.toggle('hidden', key !== name);
+    }
+  };
+
+  const currentView = () => {
+    if (tabLatency && tabLatency.getAttribute('aria-selected') === 'true') return 'latency';
+    if (tabGuest && tabGuest.getAttribute('aria-selected') === 'true') return 'guest';
+    return 'daily';
   };
 
   const showError = (msg) => {
@@ -150,30 +163,42 @@ async function main() {
     statusEl.classList.add('hidden');
   };
 
-  const load = async (latency) => {
+  const load = async (view) => {
     try {
-      if (latency) {
+      if (view === 'latency') {
         const data = await loadFetchLatency(daysEl ? daysEl.value : 14);
         renderFetchLatency(data);
+      } else if (view === 'guest') {
+        const data = await loadGuestMetrics(daysEl ? daysEl.value : 14);
+        renderGuestMetrics(data);
       } else {
         const data = await loadMetrics(daysEl ? daysEl.value : 14);
         renderMetrics(data);
       }
       clearError();
     } catch (error) {
+      if (error instanceof window.SessionExpiredError) {
+        window.location.href = '/login?next=' + encodeURIComponent(
+          window.location.pathname + window.location.search
+        );
+        return;
+      }
       showError(error.message || String(error));
       // Keep body from staying in perpetual "Loading..." state
-      const body = document.getElementById(latency ? 'fetch-latency-body' : 'metrics-body');
+      const bodyId = view === 'latency' ? 'fetch-latency-body' : view === 'guest' ? 'guest-body' : 'metrics-body';
+      const body = document.getElementById(bodyId);
       if (body && body.textContent.includes('Loading')) {
-        body.innerHTML = `<tr><td colspan="${latency ? 5 : 7}" class="px-4 py-6 text-center text-red-500">Failed to load. ${escapeHtml(error.message || '')}</td></tr>`;
+        const col = view === 'latency' ? 5 : view === 'guest' ? 7 : 6;
+        body.innerHTML = `<tr><td colspan="${col}" class="px-4 py-6 text-center text-red-500">Failed to load. ${escapeHtml(error.message || '')}</td></tr>`;
       }
     }
   };
 
-  if (tabDaily) tabDaily.addEventListener('click', () => { setTab(false); load(false); });
-  if (tabLatency) tabLatency.addEventListener('click', () => { setTab(true); load(true); });
-  if (daysEl) daysEl.addEventListener('change', () => load(tabLatency && tabLatency.getAttribute('aria-selected') === 'true'));
-  await load(false);
+  if (tabDaily) tabDaily.addEventListener('click', () => { setActiveTab('daily'); load('daily'); });
+  if (tabLatency) tabLatency.addEventListener('click', () => { setActiveTab('latency'); load('latency'); });
+  if (tabGuest) tabGuest.addEventListener('click', () => { setActiveTab('guest'); load('guest'); });
+  if (daysEl) daysEl.addEventListener('change', () => load(currentView()));
+  await load(currentView());
 }
 
 if (document.readyState === 'loading') {
@@ -182,4 +207,4 @@ if (document.readyState === 'loading') {
   main();
 }
 
-window.__test = { renderMetrics, renderFetchLatency, renderFetchLatencyRows, loadMetrics, loadFetchLatency, parseErrorBody, fetchJsonWithError };
+window.__test = { renderMetrics, renderFetchLatency, renderFetchLatencyRows, loadMetrics, loadFetchLatency, renderGuestMetrics, loadGuestMetrics };

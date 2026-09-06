@@ -2,6 +2,7 @@ package manualcheckin
 
 import (
 	"database/sql"
+	"errors"
 	"log"
 	"os"
 	"testing"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/Masterminds/squirrel"
 	"github.com/google/uuid"
+	"github.com/mattn/go-sqlite3"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -153,6 +155,22 @@ func Test_sqliteRepo_CreateManualCheckin(t *testing.T) {
 	s := NewRepo(testDB)
 	_, err := squirrel.Delete("manual_checkins").RunWith(testDB).ExecContext(t.Context())
 	require.NoError(t, err)
+	_, err = squirrel.Delete("children").RunWith(testDB).ExecContext(t.Context())
+	require.NoError(t, err)
+	_, err = squirrel.Delete("parents").RunWith(testDB).ExecContext(t.Context())
+	require.NoError(t, err)
+
+	// Seed a valid parent/child for FK-constrained cases.
+	res, err := squirrel.Insert("parents").Columns("first_name", "last_name", "phone", "email", "address1", "address2", "city", "state", "zip", "created_at").
+		Values("Seed", "Parent", "555-0000", "seed@test.com", "123 Main St", "", "Seattle", "WA", "98101", time.Now().UTC()).RunWith(testDB).ExecContext(t.Context())
+	require.NoError(t, err)
+	seedParentID, err := res.LastInsertId()
+	require.NoError(t, err)
+	res, err = squirrel.Insert("children").Columns("parent_id", "first_name", "last_name", "dob", "grade", "gender", "dietary_restrictions", "special_needs", "relationship", "created_at").
+		Values(seedParentID, "Seed", "Child", "2020-01-01", "k", "Boy", "", "", "Parent", time.Now().UTC()).RunWith(testDB).ExecContext(t.Context())
+	require.NoError(t, err)
+	seedChildID, err := res.LastInsertId()
+	require.NoError(t, err)
 
 	tests := []struct {
 		name      string
@@ -179,12 +197,67 @@ func Test_sqliteRepo_CreateManualCheckin(t *testing.T) {
 				CheckedOutConfirmedAt: time.Time{},
 			},
 		},
+		{
+			name: "create manual checkin with child id",
+			arg: ManualCheckin{
+				FirstName: "somefirstname",
+				LastName:  "somelastname",
+				ChildID:   seedChildID,
+			},
+		},
+		{
+			name: "reject missing first name",
+			arg: ManualCheckin{
+				LastName: "somelastname",
+			},
+			expectErr: true,
+		},
+		{
+			name: "reject missing last name",
+			arg: ManualCheckin{
+				FirstName: "somefirstname",
+			},
+			expectErr: true,
+		},
+		{
+			name: "reject whitespace first name",
+			arg: ManualCheckin{
+				FirstName: "   ",
+				LastName:  "somelastname",
+			},
+			expectErr: true,
+		},
+		{
+			name: "reject missing names and child id",
+			arg: ManualCheckin{
+				ChildID: 0,
+			},
+			expectErr: true,
+		},
+		{
+			name: "reject blank first name with child id",
+			arg: ManualCheckin{
+				ChildID:   seedChildID,
+				FirstName: "   ",
+				LastName:  "somechild",
+			},
+			expectErr: true,
+		},
+		{
+			name: "reject blank last name with child id",
+			arg: ManualCheckin{
+				ChildID:   seedChildID,
+				FirstName: "somechild",
+				LastName:  "   ",
+			},
+			expectErr: true,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			actual, err := s.CreateManualCheckin(t.Context(), tt.arg)
 			if tt.expectErr {
-				assert.Error(t, err)
+				assert.ErrorIs(t, err, ErrInvalidManualCheckin)
 				return
 			}
 			require.NoError(t, err)
@@ -358,4 +431,78 @@ func Test_sqliteRepo_SetManualCheckedOutConfirmedAt(t *testing.T) {
 	updated, err = s.SetManualCheckedOutConfirmedAt(t.Context(), created.ID, false)
 	require.NoError(t, err)
 	assert.True(t, updated.CheckedOutConfirmedAt.IsZero())
+}
+
+func Test_sqliteRepo_CreateManualCheckinWithChildID(t *testing.T) {
+	_, err := squirrel.Delete("manual_checkins").RunWith(testDB).ExecContext(t.Context())
+	require.NoError(t, err)
+	_, err = squirrel.Delete("children").RunWith(testDB).ExecContext(t.Context())
+	require.NoError(t, err)
+	_, err = squirrel.Delete("parents").RunWith(testDB).ExecContext(t.Context())
+	require.NoError(t, err)
+
+	// Create a valid parent/child to satisfy FK constraint on child_id.
+	res, err := squirrel.Insert("parents").Columns("first_name", "last_name", "phone", "email", "address1", "address2", "city", "state", "zip", "created_at").
+		Values("Parent", "One", "555-0001", "parent1@test.com", "123 Main St", "", "Seattle", "WA", "98101", time.Now().UTC()).RunWith(testDB).ExecContext(t.Context())
+	require.NoError(t, err)
+	parentID, err := res.LastInsertId()
+	require.NoError(t, err)
+	res, err = squirrel.Insert("children").Columns("parent_id", "first_name", "last_name", "dob", "grade", "gender", "dietary_restrictions", "special_needs", "relationship", "created_at").
+		Values(parentID, "Timmy", "Smith", "2020-01-01", "k", "Boy", "", "", "Parent", time.Now().UTC()).RunWith(testDB).ExecContext(t.Context())
+	require.NoError(t, err)
+	childID, err := res.LastInsertId()
+	require.NoError(t, err)
+
+	s := NewRepo(testDB)
+	created, err := s.CreateManualCheckin(t.Context(), ManualCheckin{
+		ChildID:   childID,
+		FirstName: "timmy",
+		LastName:  "smith",
+	})
+	require.NoError(t, err)
+
+	rows, err := s.ListManualCheckins(t.Context(), Filter{ID: created.ID, Limit: 1})
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.Equal(t, childID, rows[0].ChildID)
+}
+
+func Test_sqliteRepo_CreateManualCheckin_GarbageChildID(t *testing.T) {
+	_, err := squirrel.Delete("manual_checkins").RunWith(testDB).ExecContext(t.Context())
+	require.NoError(t, err)
+	_, err = squirrel.Delete("children").RunWith(testDB).ExecContext(t.Context())
+	require.NoError(t, err)
+	_, err = squirrel.Delete("parents").RunWith(testDB).ExecContext(t.Context())
+	require.NoError(t, err)
+
+	s := NewRepo(testDB)
+
+	t.Run("garbage child id pre-check returns ErrInvalidManualCheckin", func(t *testing.T) {
+		_, err := s.CreateManualCheckin(t.Context(), ManualCheckin{
+			ChildID:   999999,
+			FirstName: "ghost",
+			LastName:  "kid",
+		})
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrInvalidManualCheckin)
+		assert.Contains(t, err.Error(), "999999")
+	})
+
+	t.Run("fk fallback also maps to ErrInvalidManualCheckin", func(t *testing.T) {
+		_, err := testDB.ExecContext(t.Context(),
+			`INSERT INTO manual_checkins (public_id, child_id, first_name, last_name) VALUES (?, ?, ?, ?)`,
+			uuid.NewString(), int64(999999), "ghost", "kid")
+		require.Error(t, err)
+		var sqliteErr sqlite3.Error
+		require.True(t, errors.As(err, &sqliteErr))
+		assert.Equal(t, sqlite3.ErrConstraintForeignKey, sqliteErr.ExtendedCode)
+
+		_, err = s.CreateManualCheckin(t.Context(), ManualCheckin{
+			ChildID:   999999,
+			FirstName: "ghost",
+			LastName:  "kid",
+		})
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrInvalidManualCheckin)
+	})
 }

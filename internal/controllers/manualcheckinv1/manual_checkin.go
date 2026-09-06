@@ -5,15 +5,18 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"io"
 	"mime"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"kids-checkin/internal/controllers/middleware"
 	"kids-checkin/internal/controllers/session"
 	"kids-checkin/internal/repo"
 	"kids-checkin/internal/repo/manualcheckin"
+	"kids-checkin/internal/web/menu"
 	"kids-checkin/internal/web/static"
 
 	"github.com/gofiber/fiber/v2"
@@ -101,6 +104,9 @@ func (controller *Controller) PostManualCheckin(c *fiber.Ctx) error {
 
 	created, err := controller.manualRepo.CreateManualCheckin(c.Context(), manualCheckin)
 	if err != nil {
+		if errors.Is(err, manualcheckin.ErrInvalidManualCheckin) {
+			return fiber.NewError(fiber.StatusBadRequest, err.Error())
+		}
 		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
 	}
 
@@ -218,8 +224,26 @@ func (controller *Controller) ManualCheckinsPage(c *fiber.Ctx) error {
 	}
 	defer f.Close()
 
+	content, err := io.ReadAll(f)
+	if err != nil {
+		return fiber.ErrInternalServerError
+	}
+
+	sess, err := controller.sessionStore.Get(c)
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "could not fetch session")
+	}
+	authenticated, _ := sess.Get("authenticated").(bool)
+	role, _ := sess.Get("role").(string)
+
+	menuHTML, err := menu.RenderHTML(authenticated, role)
+	if err != nil {
+		return fiber.ErrInternalServerError
+	}
+	html := strings.Replace(string(content), menu.Placeholder, menuHTML, 1)
+
 	c.Type("html")
-	return c.SendStream(f)
+	return c.Send([]byte(html))
 }
 
 func repoManualCheckinToOutput(manualCheckin manualcheckin.ManualCheckin) Checkin {

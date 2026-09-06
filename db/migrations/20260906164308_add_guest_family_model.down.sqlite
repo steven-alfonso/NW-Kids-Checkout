@@ -1,0 +1,25 @@
+CREATE TABLE manual_checkins_old (
+    id INTEGER PRIMARY KEY,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    public_id TEXT,
+    first_name TEXT NOT NULL,
+    last_name TEXT NOT NULL,
+    checked_out_at DATETIME DEFAULT NULL,
+    checked_out_confirmed_at DATETIME DEFAULT NULL
+);
+
+INSERT INTO manual_checkins_old (id, created_at, public_id, first_name, last_name, checked_out_at, checked_out_confirmed_at)
+SELECT id, created_at, public_id, first_name, last_name, checked_out_at, checked_out_confirmed_at
+FROM manual_checkins;
+
+DROP TABLE manual_checkins;
+ALTER TABLE manual_checkins_old RENAME TO manual_checkins;
+
+CREATE INDEX idx_manual_checked_out_at ON manual_checkins (checked_out_at);
+
+DROP INDEX IF EXISTS idx_manual_checkins_child_id;
+DROP INDEX IF EXISTS idx_guest_submissions_created_at;
+DROP INDEX IF EXISTS idx_guest_submissions_parent_id;
+DROP TABLE guest_submissions;
+DROP TABLE children;
+DROP TABLE parents;
