@@ -2,7 +2,6 @@ const API_URL = '';
 
 const manualCheckinsBody = document.getElementById('manual-checkins-body');
 const pageStatus = document.getElementById('page-status');
-const pendingFamiliesContainer = document.getElementById('pending-families');
 
 const modal = document.getElementById('manual-checkin-modal');
 const manualCheckinForm = document.getElementById('manual-checkin-form');
@@ -10,11 +9,9 @@ const manualFirstName = document.getElementById('manual-first-name');
 const manualLastName = document.getElementById('manual-last-name');
 const manualSubmitButton = document.getElementById('manual-checkin-submit');
 
-const PENDING_FAMILIES_REFRESH_INTERVAL_MS = 5000;
 const DEFAULT_CHECKED_OUT_AFTER = '-12h';
 const MANUAL_CHECKINS_REFRESH_INTERVAL_MS = 5000;
 let manualCheckinsController = null;
-let pendingFamiliesController = null;
 
 function setPageStatus(message, tone = 'info') {
     pageStatus.classList.remove('hidden');
@@ -205,143 +202,6 @@ async function loadManualCheckins() {
     }
 }
 
-function renderPendingFamilies(submissions) {
-    if (!pendingFamiliesContainer) return;
-    if (!submissions.length) {
-        pendingFamiliesContainer.innerHTML = '<p class="text-sm text-slate-500">No pending families.</p>';
-        return;
-    }
-    pendingFamiliesContainer.innerHTML = '';
-    submissions.forEach(sub => {
-        const childrenHtml = sub.children
-            .map(child => `<span class="block">${escapeHtml(child.first_name)} ${escapeHtml(child.last_name)}</span>`)
-            .join('');
-        const isEntered = sub.status === 'entered';
-        const card = document.createElement('div');
-        card.className = isEntered
-            ? 'rounded-md border border-emerald-200 bg-emerald-50 p-4'
-            : 'rounded-md border border-amber-200 bg-amber-50 p-4';
-        card.innerHTML = `
-            <p class="font-semibold text-slate-900">
-                ${escapeHtml(sub.parent.first_name)} ${escapeHtml(sub.parent.last_name)}
-                ${isEntered ? '<span class="ml-2 inline-flex items-center rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-semibold text-emerald-700">Entered</span>' : ''}
-            </p>
-            <div class="text-sm text-slate-600">${childrenHtml}</div>
-            <p class="text-xs text-slate-400">${formatCreatedAt(sub.created_at)}</p>
-            ${isEntered
-                ? `<div class="mt-3 flex gap-2">
-                    <button data-create-checkins="${escapeHtml(sub.public_id)}" class="rounded-md border border-slate-700 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100 cursor-pointer">Create manual check-in</button>
-                </div>`
-                : `<div class="mt-3 flex gap-2">
-                    <button data-approve="${escapeHtml(sub.public_id)}" class="rounded-md border border-emerald-600 px-3 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-50 cursor-pointer">Approve</button>
-                    <button data-reject="${escapeHtml(sub.public_id)}" class="rounded-md border border-red-600 px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-50 cursor-pointer">Reject</button>
-                </div>`}`;
-        pendingFamiliesContainer.appendChild(card);
-    });
-}
-
-async function loadPendingFamilies() {
-    if (!pendingFamiliesContainer) return;
-    if (pendingFamiliesController) {
-        pendingFamiliesController.abort();
-    }
-    const controller = new AbortController();
-    pendingFamiliesController = controller;
-    try {
-        const [pending, entered] = await Promise.all([
-            globalThis.fetchJson(`${API_URL}/v1/checkins/guest-submissions?status=pending&limit=200`, {signal: controller.signal}),
-            globalThis.fetchJson(`${API_URL}/v1/checkins/guest-submissions?status=entered&without_manual_checkins=true&limit=200`, {signal: controller.signal})
-        ]);
-        if (controller.signal.aborted) return;
-        if (pendingFamiliesController !== controller) return;
-        const pendingArr = Array.isArray(pending) ? pending : [];
-        const enteredArr = Array.isArray(entered) ? entered : [];
-        const merged = [...pendingArr, ...enteredArr]
-            .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-        renderPendingFamilies(merged);
-        if (pendingArr.length === 200 || enteredArr.length === 200) {
-            const notice = document.createElement('p');
-            notice.className = 'text-xs text-amber-600 mt-2';
-            notice.textContent = 'Showing first 200 results — more may exist.';
-            pendingFamiliesContainer.appendChild(notice);
-        }
-    } catch (error) {
-        if (error?.name === 'AbortError') return;
-        if (error instanceof window.SessionExpiredError) {
-            window.location.href = '/login?next=' + encodeURIComponent(
-                window.location.pathname + window.location.search
-            );
-            return;
-        }
-        pendingFamiliesContainer.innerHTML = '<p class="text-sm text-red-600">Failed to load pending families.</p>';
-    } finally {
-        if (pendingFamiliesController === controller) {
-            pendingFamiliesController = null;
-        }
-    }
-}
-
-async function setSubmissionStatus(publicId, status) {
-    await globalThis.fetchJson(`${API_URL}/v1/checkins/guest-submissions/${publicId}/status`, {
-        method: 'PATCH',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({status})
-    });
-}
-
-async function approveSubmission(publicId) {
-    await setSubmissionStatus(publicId, 'approved');
-    await loadPendingFamilies();
-    await loadManualCheckins();
-}
-
-async function rejectSubmission(publicId) {
-    await setSubmissionStatus(publicId, 'rejected');
-    await loadPendingFamilies();
-}
-
-async function createManualCheckins(publicId) {
-    await globalThis.fetchJson(`${API_URL}/v1/checkins/guest-submissions/${publicId}/checkins`, {
-        method: 'POST'
-    });
-    await loadPendingFamilies();
-    await loadManualCheckins();
-}
-
-// event delegation
-if (pendingFamiliesContainer) {
-    pendingFamiliesContainer.addEventListener('click', async (event) => {
-        const target = event.target;
-        if (!(target instanceof HTMLButtonElement)) return;
-        const id = target.dataset.approve || target.dataset.reject || target.dataset.createCheckins;
-        if (!id || target.disabled) return;
-        target.disabled = true;
-        try {
-            if (target.dataset.approve) {
-                await approveSubmission(id);
-            } else if (target.dataset.reject) {
-                await rejectSubmission(id);
-            } else {
-                await createManualCheckins(id);
-            }
-        } catch (error) {
-            if (error instanceof window.SessionExpiredError) {
-                window.location.href = '/login?next=' + encodeURIComponent(
-                    window.location.pathname + window.location.search
-                );
-                return;
-            }
-            setPageStatus(`Failed to update: ${error.message}`, 'error');
-            target.disabled = false;
-        }
-    });
-}
-
-window.renderPendingFamilies = renderPendingFamilies;
-window.loadPendingFamilies = loadPendingFamilies;
-window.approveSubmission = approveSubmission;
-window.rejectSubmission = rejectSubmission;
-window.createManualCheckins = createManualCheckins;
 window.createManualCheckin = createManualCheckin;
 window.toggleManualCheckinModal = toggleManualCheckinModal;
 window.setManualCheckinError = setManualCheckinError;
@@ -463,7 +323,4 @@ document.addEventListener('DOMContentLoaded', () => {
 
     loadManualCheckins();
     setInterval(loadManualCheckins, MANUAL_CHECKINS_REFRESH_INTERVAL_MS);
-
-    loadPendingFamilies();
-    setInterval(loadPendingFamilies, PENDING_FAMILIES_REFRESH_INTERVAL_MS);
 });

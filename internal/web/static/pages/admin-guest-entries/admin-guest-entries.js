@@ -1,58 +1,47 @@
 const entriesContainer = document.getElementById('entries-container');
 const pageStatus = document.getElementById('page-status');
 
-const STATUS_ORDER = ['needs-entry', 'entered', 'rejected'];
+const STATUS_ORDER = ['needs-entry', 'entered'];
 const STATUS_TO_BUCKET = {
-    approved: 'needs-entry',
     pending: 'needs-entry',
-    entered: 'entered',
-    rejected: 'rejected'
+    entered: 'entered'
 };
 const BUCKET_FETCH_STATUSES = {
-    'needs-entry': ['pending', 'approved'],
-    entered: ['entered'],
-    rejected: ['rejected']
+    'needs-entry': ['pending'],
+    entered: ['entered']
 };
 const TAB_IDS = {
     'needs-entry': 'tab-needs-entry',
-    entered: 'tab-entered',
-    rejected: 'tab-rejected'
+    entered: 'tab-entered'
 };
 const VIEW_IDS = {
     'needs-entry': 'view-needs-entry',
-    entered: 'view-entered',
-    rejected: 'view-rejected'
+    entered: 'view-entered'
 };
 const ENTRIES_IDS = {
     'needs-entry': 'entries-needs-entry',
-    entered: 'entries-entered',
-    rejected: 'entries-rejected'
+    entered: 'entries-entered'
 };
 const PAGINATION_TOP_IDS = {
     'needs-entry': 'pagination-needs-entry-top',
-    entered: 'pagination-entered-top',
-    rejected: 'pagination-rejected-top'
+    entered: 'pagination-entered-top'
 };
 const PAGINATION_BOTTOM_IDS = {
     'needs-entry': 'pagination-needs-entry-bottom',
-    entered: 'pagination-entered-bottom',
-    rejected: 'pagination-rejected-bottom'
+    entered: 'pagination-entered-bottom'
 };
-const pageState = { 'needs-entry': 1, entered: 1, rejected: 1 };
+const pageState = { 'needs-entry': 1, entered: 1 };
 const STATUS_LABELS = {
     'needs-entry': 'Needs Planning Center Entry',
-    entered: 'Entered',
-    rejected: 'Rejected'
+    entered: 'Entered'
 };
 const STATUS_BADGE_CLASS = {
     'needs-entry': 'bg-amber-100 text-amber-800',
-    entered: 'bg-emerald-100 text-emerald-700',
-    rejected: 'bg-red-100 text-red-700'
+    entered: 'bg-emerald-100 text-emerald-700'
 };
 const STATUS_LEFT_BAR_CLASS = {
     'needs-entry': 'border-l-amber-400',
-    entered: 'border-l-emerald-400',
-    rejected: 'border-l-red-400'
+    entered: 'border-l-emerald-400'
 };
 
 const TOAST_ANIM_MS = 300;

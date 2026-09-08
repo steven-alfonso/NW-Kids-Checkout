@@ -57,12 +57,11 @@ func NewController(db *sql.DB, sessionStore session.Storer) *Controller {
 }
 
 func (controller *Controller) RegisterRoutes(app *fiber.App) {
-	// Setup
-	checkinGroup := app.Group("/v1/checkins")
-	checkinGroup.Use(middleware.AuthRequired(controller.sessionStore, ""))
-
-	checkinGroup.Get("/checkouts", controller.Checkouts)
-	checkinGroup.Patch("/:planning_center_id/checked_out_confirmed", controller.PatchCheckedOutConfirmed)
+	// Use per-route auth (not Group.Use with prefix "/v1/checkins") to avoid
+	// covering the public POST /v1/checkins/guest-submissions.
+	authRequired := middleware.AuthRequired(controller.sessionStore, "")
+	app.Get("/v1/checkins/checkouts", authRequired, controller.Checkouts)
+	app.Patch("/v1/checkins/:planning_center_id/checked_out_confirmed", authRequired, controller.PatchCheckedOutConfirmed)
 }
 
 func (controller *Controller) Checkouts(c *fiber.Ctx) error {

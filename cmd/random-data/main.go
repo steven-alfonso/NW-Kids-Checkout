@@ -320,19 +320,11 @@ func seedGuestSubmissions(ctx context.Context, database *sql.DB, count int) erro
 
 		r := rand.Float32()
 		switch {
-		case r < 0.4:
-			// leave pending
 		case r < 0.6:
-			if err := repo.ApproveSubmission(ctx, sub.PublicID, time.Now().UTC()); err != nil {
-				slog.Warn("failed to approve guest submission", slog.String("public_id", sub.PublicID), slog.String("error", err.Error()))
-			}
-		case r < 0.8:
+			// leave pending
+		default:
 			if err := repo.UpdateSubmissionStatus(ctx, sub.PublicID, guestsubmission.StatusEntered, time.Now().UTC()); err != nil {
 				slog.Warn("failed to mark entered", slog.String("public_id", sub.PublicID), slog.String("error", err.Error()))
-			}
-		default:
-			if err := repo.UpdateSubmissionStatus(ctx, sub.PublicID, guestsubmission.StatusRejected, time.Now().UTC()); err != nil {
-				slog.Warn("failed to reject guest submission", slog.String("public_id", sub.PublicID), slog.String("error", err.Error()))
 			}
 		}
 

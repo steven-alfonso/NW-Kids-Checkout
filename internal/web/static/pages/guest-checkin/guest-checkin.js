@@ -238,19 +238,11 @@ function startCountdown() {
 }
 
 async function postSubmission(payload) {
-    try {
-        const data = await globalThis.fetchJson('/v1/checkins/guest-submissions', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        });
-        return data;
-    } catch (error) {
-        if (error instanceof window.SessionExpiredError) {
-            throw new Error('Please ask a staff member to sign in');
-        }
-        throw error;
-    }
+    return globalThis.fetchJson('/v1/checkins/guest-submissions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+    });
 }
 
 function showForm() {

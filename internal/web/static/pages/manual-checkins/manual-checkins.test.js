@@ -18,7 +18,6 @@ function loadWindow({ url = 'http://localhost/' } = {}) {
         <html>
         <body>
             <div id="page-status" class="hidden"></div>
-            <div id="pending-families"></div>
             <table><tbody id="manual-checkins-body"></tbody></table>
             <button id="open-manual-checkin"></button>
             <div id="manual-checkin-modal" class="hidden" aria-hidden="true">
@@ -129,89 +128,7 @@ describe('manual-checkins', () => {
     });
 })
 
-describe('manual-checkins approvals', () => {
-    it('renders pending family cards with buttons', () => {
-        const window = loadWindow();
-        window.renderPendingFamilies([
-            {
-                public_id: 'sub-1',
-                status: 'pending',
-                parent: {first_name: 'John', last_name: 'Smith'},
-                children: [{first_name: 'Timmy', last_name: 'Smith'}, {first_name: 'Sara', last_name: 'Smith'}]
-            }
-        ]);
-        const container = window.document.getElementById('pending-families');
-        expect(container.innerHTML).toContain('John Smith');
-        expect(container.innerHTML).toContain('Timmy');
-        expect(container.querySelectorAll('[data-approve]').length).toBe(1);
-    });
-
-    it('renders entered family cards with a badge and a create-check-in button', () => {
-        const window = loadWindow();
-        window.renderPendingFamilies([
-            {
-                public_id: 'sub-2',
-                status: 'entered',
-                parent: {first_name: 'Jane', last_name: 'Doe'},
-                children: [{first_name: 'Sam', last_name: 'Doe'}]
-            }
-        ]);
-        const container = window.document.getElementById('pending-families');
-        expect(container.innerHTML).toContain('Jane Doe');
-        expect(container.innerHTML).toContain('Entered');
-        expect(container.querySelector('[data-approve]')).toBeNull();
-        expect(container.querySelector('[data-reject]')).toBeNull();
-        const btn = container.querySelector('[data-create-checkins]');
-        expect(btn).not.toBeNull();
-        expect(btn.dataset.createCheckins).toBe('sub-2');
-        expect(btn.textContent).toContain('manual check-in');
-    });
-
-    it('creates manual check-ins for an entered submission', async () => {
-        const window = loadWindow();
-        let posted = null;
-        window.fetch = async (url, opts = {}) => {
-            const u = String(url);
-            if (u.includes('/checkins') && (opts.method || 'GET') === 'POST') {
-                posted = u;
-                return {ok: true, status: 200, json: async () => ({public_id: 'sub-2', status: 'entered'})};
-            }
-            return {ok: true, status: 200, json: async () => []};
-        };
-        await window.createManualCheckins('sub-2');
-        expect(posted).toContain('/v1/checkins/guest-submissions/sub-2/checkins');
-    });
-
-    it('loads both pending and entered submissions', async () => {
-        const window = loadWindow();
-        const calls = [];
-        window.fetch = async (url) => {
-            if (typeof url === 'string' && url.includes('status=pending')) {
-                calls.push(url);
-                return {ok: true, status: 200, json: async () => [{public_id: 'p', status: 'pending', parent: {first_name: 'A', last_name: 'B'}, children: [], created_at: '2026-01-01T00:00:00Z'}]};
-            }
-            if (typeof url === 'string' && url.includes('status=entered')) {
-                calls.push(url);
-                return {ok: true, status: 200, json: async () => [{public_id: 'e', status: 'entered', parent: {first_name: 'C', last_name: 'D'}, children: [], created_at: '2026-01-02T00:00:00Z'}]};
-            }
-            return {ok: true, status: 200, json: async () => []};
-        };
-        calls.length = 0;
-        await window.loadPendingFamilies();
-        const requested = calls.map(u => String(u));
-        expect(requested.some(u => u.includes('status=pending'))).toBe(true);
-        expect(requested.some(u => u.includes('status=entered') && u.includes('without_manual_checkins=true'))).toBe(true);
-        const container = window.document.getElementById('pending-families');
-        expect(container.innerHTML).toContain('A B');
-        expect(container.innerHTML).toContain('C D');
-    });
-
-    it('shows an empty state', () => {
-        const window = loadWindow();
-        window.renderPendingFamilies([]);
-        expect(window.document.getElementById('pending-families').textContent).toContain('No pending families');
-    });
-
+describe('manual-checkins modal', () => {
     it('toggles the manual check-in modal and resets form state', () => {
         const window = loadWindow();
         const modal = window.document.getElementById('manual-checkin-modal');
@@ -284,63 +201,6 @@ describe('manual-checkins approvals', () => {
         expect(modal.classList.contains('hidden')).toBe(false);
     });
 
-    it('shows parsed sorry message when status update fails', async () => {
-        const window = loadWindow();
-        window.renderPendingFamilies([
-            {
-                public_id: 'sub-err',
-                status: 'pending',
-                parent: {first_name: 'Err', last_name: 'Case'},
-                children: [{first_name: 'Kid', last_name: 'Case'}]
-            }
-        ]);
-        window.fetch = async () => ({
-            ok: false,
-            status: 400,
-            redirected: false,
-            url: 'http://localhost/v1/checkins/guest-submissions/sub-err/status',
-            headers: {get: () => 'application/json'},
-            json: async () => ({sorry: 'invalid status transition'})
-        });
-        const btn = window.document.querySelector('[data-approve]');
-        expect(btn).not.toBeNull();
-        btn.click();
-        await new Promise(resolve => setTimeout(resolve, 0));
-        await new Promise(resolve => setTimeout(resolve, 0));
-        const statusEl = window.document.getElementById('page-status');
-        expect(statusEl.textContent).toContain('invalid status transition');
-        expect(statusEl.textContent).not.toContain('{"sorry"');
-        expect(statusEl.textContent).toContain('Failed to update');
-        expect(btn.disabled).toBe(false);
-    });
-
-    it('surfaces conflict retry message without raw JSON', async () => {
-        const window = loadWindow();
-        window.renderPendingFamilies([
-            {
-                public_id: 'sub-conflict',
-                status: 'pending',
-                parent: {first_name: 'Conflict', last_name: 'Case'},
-                children: [{first_name: 'Kid', last_name: 'Case'}]
-            }
-        ]);
-        window.fetch = async () => ({
-            ok: false,
-            status: 400,
-            redirected: false,
-            url: 'http://localhost/v1/checkins/guest-submissions/sub-conflict/status',
-            headers: {get: () => 'application/json'},
-            json: async () => ({sorry: 'submission status changed, please retry'})
-        });
-        const btn = window.document.querySelector('[data-approve]');
-        btn.click();
-        await new Promise(resolve => setTimeout(resolve, 0));
-        await new Promise(resolve => setTimeout(resolve, 0));
-        const statusEl = window.document.getElementById('page-status');
-        expect(statusEl.textContent).toBe('Failed to update: submission status changed, please retry');
-        expect(statusEl.textContent).not.toContain('{"sorry"');
-    });
-
     it('redirects to login when loadManualCheckins session expires (redirected)', async () => {
         const window = loadWindow();
         window.fetch = async () => ({ok: true, redirected: true, url: 'http://localhost/login', status: 200, headers: {get: () => 'text/html'}, json: async () => { throw new Error('should not be called'); }});
@@ -355,15 +215,6 @@ describe('manual-checkins approvals', () => {
         const statusEl = window.document.getElementById('page-status');
         expect(statusEl.textContent).not.toContain('Unexpected token');
         expect(statusEl.textContent).not.toContain('<');
-    });
-
-    it('redirects to login when loadPendingFamilies session expires (HTML content-type)', async () => {
-        const window = loadWindow();
-        window.fetch = async () => ({ok: false, redirected: false, url: 'http://localhost/v1/checkins/guest-submissions?status=pending&limit=200', status: 200, headers: {get: () => 'text/html; charset=utf-8'}, json: async () => { throw new Error('no json'); }});
-        // loadPendingFamilies uses fetchJson which will throw SessionExpiredError
-        await expect(window.fetchJson('/v1/checkins/guest-submissions?status=pending&limit=200')).rejects.toThrow('Session expired');
-        const container = window.document.getElementById('pending-families');
-        expect(container.innerHTML).not.toContain('Unexpected token');
     });
 
     it('loadManualCheckins does not show cryptic JSON parse error on session expiry', async () => {

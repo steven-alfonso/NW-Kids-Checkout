@@ -590,7 +590,7 @@ describe('kiosk form', () => {
         });
         await window.submitKioskForm();
         const errorEl = window.document.getElementById('kiosk-error');
-        expect(errorEl.textContent).toBe('Please ask a staff member to sign in');
+        expect(errorEl.textContent).toBe('Session expired');
         expect(window.document.getElementById('parent-first-name').value).toBe('John');
         expect(window.document.getElementById('welcome-panel').classList.contains('hidden')).toBe(true);
         expect(window.document.getElementById('kiosk-submit').disabled).toBe(false);

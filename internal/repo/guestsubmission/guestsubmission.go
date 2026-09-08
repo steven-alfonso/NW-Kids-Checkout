@@ -15,10 +15,8 @@ import (
 )
 
 const (
-	StatusPending  = "pending"
-	StatusApproved = "approved"
-	StatusRejected = "rejected"
-	StatusEntered  = "entered"
+	StatusPending = "pending"
+	StatusEntered = "entered"
 )
 
 type Parent struct {
@@ -54,8 +52,6 @@ type Submission struct {
 	PublicID             string
 	ParentID             int64
 	Status               string
-	ApprovedAt           time.Time
-	RejectedAt           time.Time
 	EnteredAt            time.Time
 	CheckinsBackfilledAt time.Time
 	SafetyAck            bool
@@ -77,14 +73,9 @@ type Repo interface {
 	ListSubmissions(ctx context.Context, filter Filter) ([]Submission, error)
 	CountSubmissions(ctx context.Context, filter Filter) (int, error)
 	UpdateSubmissionStatus(ctx context.Context, publicID string, status string, now time.Time) error
-	// ApproveSubmission creates one manual_checkins row per child of the
-	// (pending) submission and transitions it to approved in a single
-	// transaction. Returns repo.ErrNotFound if publicID is unknown.
-	ApproveSubmission(ctx context.Context, publicID string, now time.Time) error
 	// CreateManualCheckins creates one manual_checkins row per child of the
 	// submission without changing its status. If rows already exist for the
-	// submission's children, this is a no-op (returns nil). Returns an error
-	// unless the submission is approved or entered (not pending/rejected).
+	// submission's children, this is a no-op (returns nil).
 	CreateManualCheckins(ctx context.Context, publicID string) error
 }
 
@@ -94,38 +85,17 @@ var (
 	ErrInvalidSubmission = errors.New("invalid submission")
 )
 
-func statusFromTimestamps(approved, rejected, entered bool) string {
-	switch {
-	case entered:
+func statusFromTimestamps(entered bool) string {
+	if entered {
 		return StatusEntered
-	case approved:
-		return StatusApproved
-	case rejected:
-		return StatusRejected
-	default:
-		return StatusPending
 	}
+	return StatusPending
 }
 
 func statusPredicate(status string) (squirrel.Sqlizer, error) {
 	switch status {
 	case StatusPending:
-		return squirrel.And{
-			squirrel.Eq{"approved_at": nil},
-			squirrel.Eq{"rejected_at": nil},
-			squirrel.Eq{"entered_at": nil},
-		}, nil
-	case StatusApproved:
-		return squirrel.And{
-			squirrel.NotEq{"approved_at": nil},
-			squirrel.Eq{"entered_at": nil},
-		}, nil
-	case StatusRejected:
-		return squirrel.And{
-			squirrel.NotEq{"rejected_at": nil},
-			squirrel.Eq{"approved_at": nil},
-			squirrel.Eq{"entered_at": nil},
-		}, nil
+		return squirrel.Eq{"entered_at": nil}, nil
 	case StatusEntered:
 		return squirrel.NotEq{"entered_at": nil}, nil
 	default:
@@ -236,6 +206,20 @@ func (s *sqliteRepo) CreateSubmission(ctx context.Context, parent Parent, childr
 		return Submission{}, fmt.Errorf("getting submission id: %w", err)
 	}
 
+	// Auto-create manual_checkins for each child
+	for _, child := range createdChildren {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO manual_checkins (public_id, child_id, first_name, last_name, checked_out_at, checked_out_confirmed_at) VALUES (?, ?, ?, ?, NULL, NULL)`,
+			uuid.New().String(), child.ID, child.FirstName, child.LastName); err != nil {
+			return Submission{}, fmt.Errorf("inserting manual checkin for child %d: %w", child.ID, err)
+		}
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE guest_submissions SET checkins_backfilled_at = ? WHERE id = ?`,
+		now, subID); err != nil {
+		return Submission{}, fmt.Errorf("updating checkins_backfilled_at: %w", err)
+	}
+
 	if err := tx.Commit(); err != nil {
 		return Submission{}, fmt.Errorf("commit tx: %w", err)
 	}
@@ -244,21 +228,23 @@ func (s *sqliteRepo) CreateSubmission(ctx context.Context, parent Parent, childr
 	parent.CreatedAt = now
 
 	return Submission{
-		ID:        subID,
-		PublicID:  publicID,
-		ParentID:  parentID,
-		Status:    StatusPending,
-		SafetyAck: safetyAck,
-		CreatedAt: now,
-		Parent:    parent,
-		Children:  createdChildren,
+		ID:                   subID,
+		PublicID:             publicID,
+		ParentID:             parentID,
+		Status:               StatusPending,
+		EnteredAt:            time.Time{},
+		CheckinsBackfilledAt: now,
+		SafetyAck:            safetyAck,
+		CreatedAt:            now,
+		Parent:               parent,
+		Children:             createdChildren,
 	}, nil
 }
 
 func (s *sqliteRepo) ListSubmissions(ctx context.Context, filter Filter) ([]Submission, error) {
 	builder := squirrel.Select(
 		"id", "public_id", "parent_id",
-		"approved_at", "rejected_at", "entered_at", "checkins_backfilled_at", "safety_ack", "created_at",
+		"entered_at", "checkins_backfilled_at", "safety_ack", "created_at",
 	).From("guest_submissions")
 
 	builder, err := applyFilter(builder, filter)
@@ -283,21 +269,19 @@ func (s *sqliteRepo) ListSubmissions(ctx context.Context, filter Filter) ([]Subm
 	parentIDs := make([]int64, 0)
 	for rows.Next() {
 		var sub Submission
-		var approvedAt, rejectedAt, enteredAt, checkinsBackfilledAt sql.NullTime
+		var enteredAt, checkinsBackfilledAt sql.NullTime
 		var safetyAck sql.NullInt64
 		err := rows.Scan(
 			&sub.ID, &sub.PublicID, &sub.ParentID,
-			&approvedAt, &rejectedAt, &enteredAt, &checkinsBackfilledAt, &safetyAck, &sub.CreatedAt,
+			&enteredAt, &checkinsBackfilledAt, &safetyAck, &sub.CreatedAt,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("scanning guest submission: %w", err)
 		}
-		sub.ApprovedAt = approvedAt.Time
-		sub.RejectedAt = rejectedAt.Time
 		sub.EnteredAt = enteredAt.Time
 		sub.CheckinsBackfilledAt = checkinsBackfilledAt.Time
 		sub.SafetyAck = safetyAck.Valid && safetyAck.Int64 != 0
-		sub.Status = statusFromTimestamps(approvedAt.Valid, rejectedAt.Valid, enteredAt.Valid)
+		sub.Status = statusFromTimestamps(enteredAt.Valid)
 		submissions = append(submissions, sub)
 		parentIDs = append(parentIDs, sub.ParentID)
 	}
@@ -374,30 +358,13 @@ func (s *sqliteRepo) CountSubmissions(ctx context.Context, filter Filter) (int, 
 }
 
 func (s *sqliteRepo) UpdateSubmissionStatus(ctx context.Context, publicID string, status string, now time.Time) error {
-	if status == StatusApproved {
-		return fmt.Errorf("%w: use ApproveSubmission to approve guest submissions", ErrInvalidStatus)
-	}
 	builder := squirrel.Update("guest_submissions").Where(squirrel.Eq{"public_id": publicID})
 
 	switch status {
-	case StatusRejected:
-		builder = builder.
-			Set("rejected_at", now.UTC()).Set("approved_at", nil).Set("entered_at", nil).
-			Where(squirrel.And{
-				squirrel.Eq{"approved_at": nil},
-				squirrel.Eq{"rejected_at": nil},
-				squirrel.Eq{"entered_at": nil},
-			})
 	case StatusEntered:
 		builder = builder.
-			Set("entered_at", now.UTC()).Set("approved_at", nil).Set("rejected_at", nil).
-			Where(squirrel.And{
-				squirrel.Eq{"entered_at": nil},
-				squirrel.Or{
-					squirrel.And{squirrel.Eq{"approved_at": nil}, squirrel.Eq{"rejected_at": nil}},
-					squirrel.NotEq{"approved_at": nil},
-				},
-			})
+			Set("entered_at", now.UTC()).
+			Where(squirrel.Eq{"entered_at": nil})
 	default:
 		return fmt.Errorf("unknown status: %s", status)
 	}
@@ -426,65 +393,6 @@ func (s *sqliteRepo) UpdateSubmissionStatus(ctx context.Context, publicID string
 	return nil
 }
 
-func (s *sqliteRepo) ApproveSubmission(ctx context.Context, publicID string, now time.Time) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin tx: %w", err)
-	}
-	defer tx.Rollback()
-
-	var parentID int64
-	var approvedAt, rejectedAt, enteredAt sql.NullTime
-	err = squirrel.Select("parent_id", "approved_at", "rejected_at", "entered_at").
-		From("guest_submissions").
-		Where(squirrel.Eq{"public_id": publicID}).
-		RunWith(tx).
-		QueryRowContext(ctx).
-		Scan(&parentID, &approvedAt, &rejectedAt, &enteredAt)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return repo.ErrNotFound
-		}
-		return fmt.Errorf("querying guest submission: %w", err)
-	}
-	if approvedAt.Valid || rejectedAt.Valid || enteredAt.Valid {
-		return fmt.Errorf("%w: cannot approve submission in status %s", ErrConflict, statusFromTimestamps(approvedAt.Valid, rejectedAt.Valid, enteredAt.Valid))
-	}
-
-	if err := s.insertManualCheckins(ctx, tx, parentID); err != nil {
-		return err
-	}
-
-	res, err := squirrel.Update("guest_submissions").
-		Set("approved_at", now.UTC()).
-		Set("rejected_at", nil).
-		Set("entered_at", nil).
-		Set("checkins_backfilled_at", now.UTC()).
-		Where(squirrel.Eq{"public_id": publicID}).
-		Where(squirrel.And{
-			squirrel.Eq{"approved_at": nil},
-			squirrel.Eq{"rejected_at": nil},
-			squirrel.Eq{"entered_at": nil},
-		}).
-		RunWith(tx).
-		ExecContext(ctx)
-	if err != nil {
-		return fmt.Errorf("updating submission status: %w", err)
-	}
-	ra, err := res.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("rows affected: %w", err)
-	}
-	if ra == 0 {
-		return ErrConflict
-	}
-
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit tx: %w", err)
-	}
-	return nil
-}
-
 func (s *sqliteRepo) CreateManualCheckins(ctx context.Context, publicID string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -493,25 +401,20 @@ func (s *sqliteRepo) CreateManualCheckins(ctx context.Context, publicID string) 
 	defer tx.Rollback()
 
 	var parentID int64
-	var approvedAt, rejectedAt, enteredAt sql.NullTime
-	err = squirrel.Select("parent_id", "approved_at", "rejected_at", "entered_at").
+	var enteredAt sql.NullTime
+	err = squirrel.Select("parent_id", "entered_at").
 		From("guest_submissions").
 		Where(squirrel.Eq{"public_id": publicID}).
 		RunWith(tx).
 		QueryRowContext(ctx).
-		Scan(&parentID, &approvedAt, &rejectedAt, &enteredAt)
+		Scan(&parentID, &enteredAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return repo.ErrNotFound
 		}
 		return fmt.Errorf("querying guest submission: %w", err)
 	}
-	if rejectedAt.Valid {
-		return fmt.Errorf("%w: cannot create manual check-ins for rejected submission", ErrInvalidStatus)
-	}
-	if !approvedAt.Valid && !enteredAt.Valid {
-		return fmt.Errorf("%w: cannot create manual check-ins for pending submission", ErrInvalidStatus)
-	}
+	_ = enteredAt
 
 	if err := s.insertManualCheckins(ctx, tx, parentID); err != nil {
 		return err

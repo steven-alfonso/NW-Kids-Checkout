@@ -334,7 +334,7 @@ func TestController_AdminListPaginated(t *testing.T) {
 	})
 }
 
-func TestController_StaffCannotMarkEntered(t *testing.T) {
+func TestController_StaffCanMarkEntered(t *testing.T) {
 	app, _, testDB := setupAuthedApp(t, "")
 	wipeSubmissionTables(t, testDB)
 
@@ -354,7 +354,7 @@ func TestController_StaffCannotMarkEntered(t *testing.T) {
 	req := httptest.NewRequest("PATCH", fmt.Sprintf("/v1/checkins/guest-submissions/%s/status", sub.PublicID), bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	resp, _ := app.Test(req)
-	assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
 }
 
 func TestController_AdminCanMarkEntered(t *testing.T) {
@@ -372,12 +372,6 @@ func TestController_AdminCanMarkEntered(t *testing.T) {
 		Gender:       "Boy",
 		Relationship: "Parent"}}, true)
 	require.NoError(t, err)
-
-	approveBody, _ := json.Marshal(map[string]any{"status": "approved"})
-	approveReq := httptest.NewRequest("PATCH", fmt.Sprintf("/v1/checkins/guest-submissions/%s/status", sub.PublicID), bytes.NewReader(approveBody))
-	approveReq.Header.Set("Content-Type", "application/json")
-	approveResp, _ := app.Test(approveReq)
-	require.Equal(t, fiber.StatusOK, approveResp.StatusCode)
 
 	body, _ := json.Marshal(map[string]any{"status": "entered"})
 	req := httptest.NewRequest("PATCH", fmt.Sprintf("/v1/checkins/guest-submissions/%s/status", sub.PublicID), bytes.NewReader(body))
@@ -416,13 +410,13 @@ func TestController_AdminCanEnterFromPending(t *testing.T) {
 
 	var enteredAtSet int
 	require.NoError(t, testDB.QueryRowContext(t.Context(),
-		"SELECT COUNT(*) FROM guest_submissions WHERE public_id = ? AND entered_at IS NOT NULL AND approved_at IS NULL", sub.PublicID).
+		"SELECT COUNT(*) FROM guest_submissions WHERE public_id = ? AND entered_at IS NOT NULL", sub.PublicID).
 		Scan(&enteredAtSet))
 	assert.Equal(t, 1, enteredAtSet)
 }
 
-func TestController_ApproveCreatesManualCheckins(t *testing.T) {
-	app, _, testDB := setupAuthedApp(t, "")
+func TestController_CreateSubmissionAutoCreatesManualCheckins(t *testing.T) {
+	_, _, testDB := setupAuthedApp(t, "")
 	wipeSubmissionTables(t, testDB)
 
 	repo := guestsubmission.NewRepo(testDB)
@@ -440,16 +434,15 @@ func TestController_ApproveCreatesManualCheckins(t *testing.T) {
 	}, true)
 	require.NoError(t, err)
 
-	body, _ := json.Marshal(map[string]any{"status": "approved"})
-	req := httptest.NewRequest("PATCH", fmt.Sprintf("/v1/checkins/guest-submissions/%s/status", sub.PublicID), bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	resp, _ := app.Test(req)
-	require.Equal(t, fiber.StatusOK, resp.StatusCode)
-
 	rows, err := manualcheckin.NewRepo(testDB).ListManualCheckins(t.Context(), manualcheckin.Filter{})
 	require.NoError(t, err)
 	require.Len(t, rows, 2)
 	assert.NotZero(t, rows[0].ChildID)
+	// verify they belong to created children
+	childIDs := map[int64]bool{sub.Children[0].ID: true, sub.Children[1].ID: true}
+	for _, r := range rows {
+		assert.True(t, childIDs[r.ChildID])
+	}
 }
 
 func TestController_PatchSubmissionStatusNamesOnly(t *testing.T) {
@@ -468,7 +461,7 @@ func TestController_PatchSubmissionStatusNamesOnly(t *testing.T) {
 		Relationship: "Parent"}}, true)
 	require.NoError(t, err)
 
-	body, _ := json.Marshal(map[string]any{"status": "approved"})
+	body, _ := json.Marshal(map[string]any{"status": "entered"})
 	req := httptest.NewRequest("PATCH", fmt.Sprintf("/v1/checkins/guest-submissions/%s/status", sub.PublicID), bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	resp, _ := app.Test(req)
@@ -554,27 +547,27 @@ func TestController_PatchSubmissionNotFound(t *testing.T) {
 	app, _, testDB := setupAuthedApp(t, "")
 	wipeSubmissionTables(t, testDB)
 
-	body, _ := json.Marshal(map[string]any{"status": "approved"})
+	body, _ := json.Marshal(map[string]any{"status": "entered"})
 	req := httptest.NewRequest("PATCH", "/v1/checkins/guest-submissions/does-not-exist/status", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	resp, _ := app.Test(req)
 	require.Equal(t, fiber.StatusNotFound, resp.StatusCode)
 }
 
-type conflictApproveRepo struct {
+type conflictEnteredRepo struct {
 	guestsubmission.Repo
 	submission guestsubmission.Submission
 }
 
-func (r *conflictApproveRepo) ListSubmissions(ctx context.Context, filter guestsubmission.Filter) ([]guestsubmission.Submission, error) {
+func (r *conflictEnteredRepo) ListSubmissions(ctx context.Context, filter guestsubmission.Filter) ([]guestsubmission.Submission, error) {
 	return []guestsubmission.Submission{r.submission}, nil
 }
 
-func (r *conflictApproveRepo) ApproveSubmission(ctx context.Context, publicID string, now time.Time) error {
+func (r *conflictEnteredRepo) UpdateSubmissionStatus(ctx context.Context, publicID string, status string, now time.Time) error {
 	return guestsubmission.ErrConflict
 }
 
-func TestController_ApproveConflictReturnsBadRequest(t *testing.T) {
+func TestController_EnteredConflictReturnsBadRequest(t *testing.T) {
 	app := fiber.New()
 	store := session.New()
 	app.Use(func(c *fiber.Ctx) error {
@@ -587,7 +580,7 @@ func TestController_ApproveConflictReturnsBadRequest(t *testing.T) {
 		return c.Next()
 	})
 	ctrl := Controller{
-		submissionRepo: &conflictApproveRepo{submission: guestsubmission.Submission{
+		submissionRepo: &conflictEnteredRepo{submission: guestsubmission.Submission{
 			PublicID: "abc123",
 			Status:   guestsubmission.StatusPending,
 		}},
@@ -595,7 +588,7 @@ func TestController_ApproveConflictReturnsBadRequest(t *testing.T) {
 	}
 	ctrl.RegisterRoutes(app)
 
-	body, _ := json.Marshal(map[string]any{"status": "approved"})
+	body, _ := json.Marshal(map[string]any{"status": "entered"})
 	req := httptest.NewRequest("PATCH", "/v1/checkins/guest-submissions/abc123/status", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	resp, _ := app.Test(req)
@@ -606,9 +599,8 @@ func TestController_CreateCheckinsInvalidStatusReturnsBadRequest(t *testing.T) {
 	app, _, testDB := setupAuthedApp(t, "")
 	wipeSubmissionTables(t, testDB)
 
-	repo := guestsubmission.NewRepo(testDB)
-
-	t.Run("pending returns 400 not 500", func(t *testing.T) {
+	t.Run("pending now succeeds (auto-created manual checkins)", func(t *testing.T) {
+		repo := guestsubmission.NewRepo(testDB)
 		sub, err := repo.CreateSubmission(t.Context(), guestsubmission.Parent{
 			FirstName: "A", LastName: "B", Phone: "1234567", Email: "a@b.com",
 
@@ -622,28 +614,8 @@ func TestController_CreateCheckinsInvalidStatusReturnsBadRequest(t *testing.T) {
 
 		req := httptest.NewRequest("POST", fmt.Sprintf("/v1/checkins/guest-submissions/%s/checkins", sub.PublicID), nil)
 		resp, _ := app.Test(req)
-		require.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
-		assert.NotEqual(t, fiber.StatusInternalServerError, resp.StatusCode)
-	})
-
-	t.Run("rejected returns 400 not 500", func(t *testing.T) {
-		wipeSubmissionTables(t, testDB)
-		sub, err := repo.CreateSubmission(t.Context(), guestsubmission.Parent{
-			FirstName: "E", LastName: "F", Phone: "1234567", Email: "e@f.com",
-
-			Address1: "123 Main St",
-			City:     "Seattle",
-			State:    "WA",
-			Zip:      "98101"}, []guestsubmission.Child{{FirstName: "G", LastName: "H", DOB: "2020-01-01", Grade: "1st",
-			Gender:       "Boy",
-			Relationship: "Parent"}}, true)
-		require.NoError(t, err)
-		require.NoError(t, repo.UpdateSubmissionStatus(t.Context(), sub.PublicID, guestsubmission.StatusRejected, time.Now().UTC()))
-
-		req := httptest.NewRequest("POST", fmt.Sprintf("/v1/checkins/guest-submissions/%s/checkins", sub.PublicID), nil)
-		resp, _ := app.Test(req)
-		require.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
-		assert.NotEqual(t, fiber.StatusInternalServerError, resp.StatusCode)
+		// Now pending should succeed (idempotent)
+		require.Equal(t, fiber.StatusOK, resp.StatusCode)
 	})
 }
 
@@ -704,7 +676,7 @@ func TestController_RequiresAuth(t *testing.T) {
 	})
 
 	t.Run("unauthenticated PATCH guest-submissions redirects to login", func(t *testing.T) {
-		body, _ := json.Marshal(map[string]any{"status": "approved"})
+		body, _ := json.Marshal(map[string]any{"status": "entered"})
 		req := httptest.NewRequest("PATCH", fmt.Sprintf("/v1/checkins/guest-submissions/%s/status", sub.PublicID), bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		resp, _ := app.Test(req)
@@ -804,7 +776,7 @@ func TestController_AdminRoutesRequireAdminRole(t *testing.T) {
 			Gender:       "Boy",
 			Relationship: "Parent"}}, true)
 		require.NoError(t, err)
-		body, _ := json.Marshal(map[string]any{"status": "approved"})
+		body, _ := json.Marshal(map[string]any{"status": "entered"})
 		req := httptest.NewRequest("PATCH", fmt.Sprintf("/v1/checkins/guest-submissions/%s/status", sub.PublicID), bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		resp, _ := app.Test(req)
@@ -876,7 +848,7 @@ func TestController_AuthEnforcementTableDriven(t *testing.T) {
 
 	unauthCases := []routeCase{
 		{"GET staff list", "GET", "/v1/checkins/guest-submissions", nil, "", fiber.StatusUnauthorized},
-		{"PATCH staff status", "PATCH", fmt.Sprintf("/v1/checkins/guest-submissions/%s/status", sub.PublicID), []byte(`{"status":"approved"}`), "application/json", fiber.StatusUnauthorized},
+		{"PATCH staff status", "PATCH", fmt.Sprintf("/v1/checkins/guest-submissions/%s/status", sub.PublicID), []byte(`{"status":"entered"}`), "application/json", fiber.StatusUnauthorized},
 		{"POST staff checkins", "POST", fmt.Sprintf("/v1/checkins/guest-submissions/%s/checkins", sub.PublicID), nil, "", fiber.StatusUnauthorized},
 		{"GET admin list", "GET", "/v1/admin/guest-submissions", nil, "", fiber.StatusUnauthorized},
 		{"GET admin page", "GET", "/admin/guest-entries", nil, "", fiber.StatusFound},

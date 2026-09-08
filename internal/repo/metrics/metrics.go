@@ -39,8 +39,6 @@ type GuestMetric struct {
 	Submissions int
 	Children    int
 	Entered     int
-	Approved    int
-	Rejected    int
 	Pending     int
 }
 
@@ -200,9 +198,7 @@ func (r *sqliteRepo) ListGuestMetrics(ctx context.Context, filter Filter) ([]Gue
 		"date(created_at) AS day",
 		"COUNT(*) AS submissions",
 		"COALESCE(SUM(CASE WHEN entered_at IS NOT NULL THEN 1 ELSE 0 END), 0) AS entered",
-		"COALESCE(SUM(CASE WHEN entered_at IS NULL AND approved_at IS NOT NULL THEN 1 ELSE 0 END), 0) AS approved",
-		"COALESCE(SUM(CASE WHEN entered_at IS NULL AND approved_at IS NULL AND rejected_at IS NOT NULL THEN 1 ELSE 0 END), 0) AS rejected",
-		"COALESCE(SUM(CASE WHEN entered_at IS NULL AND approved_at IS NULL AND rejected_at IS NULL THEN 1 ELSE 0 END), 0) AS pending",
+		"COALESCE(SUM(CASE WHEN entered_at IS NULL THEN 1 ELSE 0 END), 0) AS pending",
 	).
 		From("guest_submissions").
 		Where(squirrel.GtOrEq{"created_at": since}).
@@ -218,7 +214,7 @@ func (r *sqliteRepo) ListGuestMetrics(ctx context.Context, filter Filter) ([]Gue
 	guestByDay := map[string]GuestMetric{}
 	for submissionRows.Next() {
 		var gm GuestMetric
-		if err := submissionRows.Scan(&gm.Date, &gm.Submissions, &gm.Entered, &gm.Approved, &gm.Rejected, &gm.Pending); err != nil {
+		if err := submissionRows.Scan(&gm.Date, &gm.Submissions, &gm.Entered, &gm.Pending); err != nil {
 			return nil, fmt.Errorf("scanning guest metrics: %w", err)
 		}
 		guestByDay[gm.Date] = gm

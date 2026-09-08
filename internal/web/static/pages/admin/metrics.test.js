@@ -119,7 +119,7 @@ describe('admin/metrics', () => {
         window.__test.renderGuestMetrics({
             days: 14,
             rows: [
-                { date: '2026-08-18', submissions: 5, children: 9, entered: 2, approved: 1, rejected: 1, pending: 1 },
+                { date: '2026-08-18', submissions: 5, children: 9, entered: 2, pending: 3 },
             ],
         });
         let html = window.document.getElementById('guest-body').innerHTML;

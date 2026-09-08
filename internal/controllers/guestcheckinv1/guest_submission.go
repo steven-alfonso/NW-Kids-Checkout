@@ -42,24 +42,22 @@ func noStoreCache(c *fiber.Ctx) error {
 }
 
 func (controller *Controller) RegisterRoutes(app *fiber.App) {
-	publicGroup := app.Group("/v1/checkins")
-	publicGroup.Use(noStoreCache)
-	publicGroup.Post("/guest-submissions", controller.CreateSubmission)
+	// Kiosk form page and submission creation are fully public for unauthenticated families.
+	app.Post("/v1/checkins/guest-submissions", noStoreCache, controller.CreateSubmission)
+	app.Get("/guest-checkin", noStoreCache, controller.KioskPage)
 
-	group := app.Group("/v1/checkins")
-	group.Use(middleware.AuthRequired(controller.sessionStore, ""))
-	group.Use(noStoreCache)
-	group.Get("/guest-submissions", controller.ListSubmissions)
-	group.Patch("/guest-submissions/:public_id/status", controller.PatchSubmissionStatus)
-	group.Post("/guest-submissions/:public_id/checkins", controller.CreateSubmissionCheckins)
+	// All other guest submission endpoints require authentication.
+	// Use per-route middleware (not Group.Use) to avoid covering the public POST above,
+	// since Fiber's Group.Use with prefix "/v1/checkins" would match it regardless of registration order.
+	authRequired := middleware.AuthRequired(controller.sessionStore, "")
+	adminRequired := middleware.AuthRequired(controller.sessionStore, "admin")
 
-	adminGroup := app.Group("/v1/admin")
-	adminGroup.Use(middleware.AuthRequired(controller.sessionStore, "admin"))
-	adminGroup.Use(noStoreCache)
-	adminGroup.Get("/guest-submissions", controller.AdminListSubmissions)
+	app.Get("/v1/checkins/guest-submissions", authRequired, noStoreCache, controller.ListSubmissions)
+	app.Patch("/v1/checkins/guest-submissions/:public_id/status", authRequired, noStoreCache, controller.PatchSubmissionStatus)
+	app.Post("/v1/checkins/guest-submissions/:public_id/checkins", authRequired, noStoreCache, controller.CreateSubmissionCheckins)
 
-	app.Get("/guest-checkin", controller.KioskPage)
-	app.Get("/admin/guest-entries", middleware.AuthRequired(controller.sessionStore, "admin"), controller.AdminPage)
+	app.Get("/v1/admin/guest-submissions", adminRequired, noStoreCache, controller.AdminListSubmissions)
+	app.Get("/admin/guest-entries", adminRequired, controller.AdminPage)
 }
 
 func (controller *Controller) KioskPage(c *fiber.Ctx) error {
@@ -424,11 +422,7 @@ func (controller *Controller) PatchSubmissionStatus(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "invalid status transition")
 	}
 
-	if payload.Status == guestsubmission.StatusApproved {
-		err = controller.submissionRepo.ApproveSubmission(c.Context(), publicID, time.Now().UTC())
-	} else {
-		err = controller.submissionRepo.UpdateSubmissionStatus(c.Context(), publicID, payload.Status, time.Now().UTC())
-	}
+	err = controller.submissionRepo.UpdateSubmissionStatus(c.Context(), publicID, payload.Status, time.Now().UTC())
 	if err != nil {
 		if errors.Is(err, repo.ErrNotFound) {
 			return fiber.NewError(fiber.StatusNotFound, "submission not found")
@@ -493,7 +487,7 @@ func buildFilter(c *fiber.Ctx) (guestsubmission.Filter, error) {
 				return guestsubmission.Filter{}, fiber.NewError(fiber.StatusBadRequest, "invalid status")
 			}
 			switch p {
-			case guestsubmission.StatusPending, guestsubmission.StatusApproved, guestsubmission.StatusRejected, guestsubmission.StatusEntered:
+			case guestsubmission.StatusPending, guestsubmission.StatusEntered:
 			default:
 				return guestsubmission.Filter{}, fiber.NewError(fiber.StatusBadRequest, "invalid status")
 			}
@@ -524,17 +518,6 @@ func buildFilter(c *fiber.Ctx) (guestsubmission.Filter, error) {
 	return filter, nil
 }
 
-func isValidTransition(isAdmin bool, from, to string) bool {
-	switch {
-	case from == guestsubmission.StatusPending && to == guestsubmission.StatusApproved:
-		return true
-	case from == guestsubmission.StatusPending && to == guestsubmission.StatusRejected:
-		return true
-	case isAdmin && from == guestsubmission.StatusPending && to == guestsubmission.StatusEntered:
-		return true
-	case isAdmin && from == guestsubmission.StatusApproved && to == guestsubmission.StatusEntered:
-		return true
-	default:
-		return false
-	}
+func isValidTransition(_ bool, from, to string) bool {
+	return from == guestsubmission.StatusPending && to == guestsubmission.StatusEntered
 }

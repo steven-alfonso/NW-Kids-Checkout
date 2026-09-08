@@ -171,7 +171,7 @@ func TestController_GetGuestMetrics(t *testing.T) {
 		ListGuestMetricsFunc: func(ctx context.Context, filter metrics.Filter) ([]metrics.GuestMetric, error) {
 			assert.Equal(t, 14, filter.Days)
 			return []metrics.GuestMetric{
-				{Date: "2026-08-18", Submissions: 5, Children: 9, Entered: 2, Approved: 1, Rejected: 1, Pending: 1},
+				{Date: "2026-08-18", Submissions: 5, Children: 9, Entered: 2, Pending: 3},
 			}, nil
 		},
 	}
@@ -194,9 +194,7 @@ func TestController_GetGuestMetrics(t *testing.T) {
 		assert.Equal(t, 5, payload.Rows[0].Submissions)
 		assert.Equal(t, 9, payload.Rows[0].Children)
 		assert.Equal(t, 2, payload.Rows[0].Entered)
-		assert.Equal(t, 1, payload.Rows[0].Approved)
-		assert.Equal(t, 1, payload.Rows[0].Rejected)
-		assert.Equal(t, 1, payload.Rows[0].Pending)
+		assert.Equal(t, 3, payload.Rows[0].Pending)
 	})
 
 	t.Run("invalid days returns bad request", func(t *testing.T) {

@@ -52,14 +52,12 @@ function renderGuestMetrics(data) {
           <td class="px-4 py-3 text-slate-800">${m.submissions}</td>
           <td class="px-4 py-3 text-slate-800">${m.children}</td>
           <td class="px-4 py-3 text-slate-800">${m.entered}</td>
-          <td class="px-4 py-3 text-slate-800">${m.approved}</td>
-          <td class="px-4 py-3 text-slate-600">${m.rejected}</td>
           <td class="px-4 py-3 text-slate-600">${m.pending}</td>
         </tr>`,
     )
     .join('');
   if (data.rows.length === 0) {
-    body.innerHTML = '<tr><td colspan="7" class="px-4 py-8 text-center text-slate-500">No data yet.</td></tr>';
+    body.innerHTML = '<tr><td colspan="5" class="px-4 py-8 text-center text-slate-500">No data yet.</td></tr>';
   }
 }
 
@@ -188,7 +186,7 @@ async function main() {
       const bodyId = view === 'latency' ? 'fetch-latency-body' : view === 'guest' ? 'guest-body' : 'metrics-body';
       const body = document.getElementById(bodyId);
       if (body && body.textContent.includes('Loading')) {
-        const col = view === 'latency' ? 5 : view === 'guest' ? 7 : 6;
+        const col = view === 'latency' ? 5 : view === 'guest' ? 5 : 6;
         body.innerHTML = `<tr><td colspan="${col}" class="px-4 py-6 text-center text-red-500">Failed to load. ${escapeHtml(error.message || '')}</td></tr>`;
       }
     }

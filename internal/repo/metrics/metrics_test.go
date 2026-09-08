@@ -235,7 +235,7 @@ func Test_sqliteRepo_ListFetchLatency_excludes_null_and_negative(t *testing.T) {
 	assert.InDelta(t, 2000, fm.AvgMs, 0.01)
 }
 
-func (f fixture) insertGuestSubmission(t *testing.T, publicID string, createdAt time.Time, kids int, approvedAt, rejectedAt, enteredAt *time.Time) {
+func (f fixture) insertGuestSubmission(t *testing.T, publicID string, createdAt time.Time, kids int, enteredAt *time.Time) {
 	t.Helper()
 	res, err := squirrel.Insert("parents").
 		RunWith(f.testDB).
@@ -257,8 +257,8 @@ func (f fixture) insertGuestSubmission(t *testing.T, publicID string, createdAt 
 
 	_, err = squirrel.Insert("guest_submissions").
 		RunWith(f.testDB).
-		Columns("public_id", "parent_id", "approved_at", "rejected_at", "entered_at", "created_at").
-		Values(publicID, parentID, approvedAt, rejectedAt, enteredAt, createdAt).
+		Columns("public_id", "parent_id", "entered_at", "created_at").
+		Values(publicID, parentID, enteredAt, createdAt).
 		ExecContext(t.Context())
 	require.NoError(t, err)
 }
@@ -277,11 +277,9 @@ func Test_sqliteRepo_ListGuestMetrics_status_breakdown(t *testing.T) {
 	f := newFixture(t)
 
 	now := time.Now().UTC()
-	f.insertGuestSubmission(t, "sub_entered", now, 2, nil, nil, &now)
-	f.insertGuestSubmission(t, "sub_approved", now, 1, &now, nil, nil)
-	f.insertGuestSubmission(t, "sub_rejected", now, 3, nil, &now, nil)
-	f.insertGuestSubmission(t, "sub_pending", now, 2, nil, nil, nil)
-	f.insertGuestSubmission(t, "sub_entered_and_approved", now, 1, &now, nil, &now)
+	f.insertGuestSubmission(t, "sub_entered", now, 2, &now)
+	f.insertGuestSubmission(t, "sub_pending", now, 2, nil)
+	f.insertGuestSubmission(t, "sub_pending2", now, 1, nil)
 
 	repo := NewRepo(f.testDB)
 	rows, err := repo.ListGuestMetrics(t.Context(), Filter{Days: 14})
@@ -289,21 +287,19 @@ func Test_sqliteRepo_ListGuestMetrics_status_breakdown(t *testing.T) {
 
 	gm := findGuestMetric(t, rows, today(t))
 	require.NotEmpty(t, gm, "expected a guest metric row for today")
-	assert.Equal(t, 5, gm.Submissions)
-	assert.Equal(t, 9, gm.Children)
-	assert.Equal(t, 2, gm.Entered, "entered-beats-approved precedence should count both entered rows")
-	assert.Equal(t, 1, gm.Approved)
-	assert.Equal(t, 1, gm.Rejected)
-	assert.Equal(t, 1, gm.Pending)
+	assert.Equal(t, 3, gm.Submissions)
+	assert.Equal(t, 5, gm.Children)
+	assert.Equal(t, 1, gm.Entered)
+	assert.Equal(t, 2, gm.Pending)
 }
 
 func Test_sqliteRepo_ListGuestMetrics_days_filter(t *testing.T) {
 	f := newFixture(t)
 
 	now := time.Now().UTC()
-	f.insertGuestSubmission(t, "sub_today", now, 1, nil, nil, nil)
+	f.insertGuestSubmission(t, "sub_today", now, 1, nil)
 	old := now.AddDate(0, 0, -3)
-	f.insertGuestSubmission(t, "sub_old", old, 1, nil, nil, nil)
+	f.insertGuestSubmission(t, "sub_old", old, 1, nil)
 
 	repo := NewRepo(f.testDB)
 

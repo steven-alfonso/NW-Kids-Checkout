@@ -37,15 +37,15 @@ func NewController(db *sql.DB, sessionStore session.Storer) *Controller {
 }
 
 func (controller *Controller) RegisterRoutes(app *fiber.App) {
-	manualGroup := app.Group("/v1/checkins")
-	manualGroup.Use(middleware.AuthRequired(controller.sessionStore, ""))
+	// Use per-route auth to avoid covering the public POST /v1/checkins/guest-submissions
+	// (a Group.Use with prefix "/v1/checkins" would match that public route).
+	authRequired := middleware.AuthRequired(controller.sessionStore, "")
+	app.Get("/v1/checkins/manual-checkins", authRequired, controller.GetManualCheckins)
+	app.Post("/v1/checkins/manual-checkins", authRequired, controller.PostManualCheckin)
+	app.Patch("/v1/checkins/manual-checkins/:public_id/checked_out", authRequired, controller.PatchManualCheckedOut)
+	app.Patch("/v1/checkins/manual-checkins/:public_id/checked_out_confirmed", authRequired, controller.PatchManualCheckedOutConfirmed)
 
-	manualGroup.Get("/manual-checkins", controller.GetManualCheckins)
-	manualGroup.Post("/manual-checkins", controller.PostManualCheckin)
-	manualGroup.Patch("/manual-checkins/:public_id/checked_out", controller.PatchManualCheckedOut)
-	manualGroup.Patch("/manual-checkins/:public_id/checked_out_confirmed", controller.PatchManualCheckedOutConfirmed)
-
-	app.Get("/manual-checkins", middleware.AuthRequired(controller.sessionStore, ""), controller.ManualCheckinsPage)
+	app.Get("/manual-checkins", authRequired, controller.ManualCheckinsPage)
 }
 
 func (controller *Controller) GetManualCheckins(c *fiber.Ctx) error {

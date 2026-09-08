@@ -100,8 +100,6 @@ type GuestMetricResponse struct {
 	Submissions int    `json:"submissions"`
 	Children    int    `json:"children"`
 	Entered     int    `json:"entered"`
-	Approved    int    `json:"approved"`
-	Rejected    int    `json:"rejected"`
 	Pending     int    `json:"pending"`
 }
 
@@ -152,8 +150,6 @@ func (controller *Controller) GetGuestMetrics(c *fiber.Ctx) error {
 			Submissions: gm.Submissions,
 			Children:    gm.Children,
 			Entered:     gm.Entered,
-			Approved:    gm.Approved,
-			Rejected:    gm.Rejected,
 			Pending:     gm.Pending,
 		})
 	}
