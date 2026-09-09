@@ -10,7 +10,7 @@ The project is structured as a command-line application with commands:
 - `locations upsert-location`: Upserts a location from Planning Center.
 
 ## Requirements
-- [Golang](https://go.dev/) 1.25+
+- [Golang](https://go.dev/) 1.27+
 - [SQLite](https://www.sqlite.org/) 3.37+ (should be on macOS by default). If not, install via Brew.
 - [GNU make](https://www.gnu.org/software/make/) (should be on macOS by default)
 - [Node.js](https://nodejs.org/) 18+ (required for frontend assets and JS tests)
