@@ -63,7 +63,7 @@ func (controller *Controller) GetMetrics(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "days must be an integer between 1 and 90")
 	}
 
-	daily, err := controller.repo.ListDailyMetrics(c.Context(), metrics.Filter{Days: days})
+	daily, err := controller.repo.ListDailyMetrics(c.UserContext(), metrics.Filter{Days: days})
 	if err != nil {
 		return fmt.Errorf("listing daily metrics: %w", err)
 	}
@@ -114,7 +114,7 @@ func (controller *Controller) GetFetchLatency(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "days must be an integer between 1 and 90")
 	}
 
-	latency, err := controller.repo.ListFetchLatency(c.Context(), metrics.Filter{Days: days})
+	latency, err := controller.repo.ListFetchLatency(c.UserContext(), metrics.Filter{Days: days})
 	if err != nil {
 		return fmt.Errorf("listing fetch latency: %w", err)
 	}
@@ -138,7 +138,7 @@ func (controller *Controller) GetGuestMetrics(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "days must be an integer between 1 and 90")
 	}
 
-	guestMetrics, err := controller.repo.ListGuestMetrics(c.Context(), metrics.Filter{Days: days})
+	guestMetrics, err := controller.repo.ListGuestMetrics(c.UserContext(), metrics.Filter{Days: days})
 	if err != nil {
 		return fmt.Errorf("listing guest metrics: %w", err)
 	}

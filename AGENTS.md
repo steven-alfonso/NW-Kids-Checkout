@@ -142,6 +142,13 @@ This file guides coding agents working in this repo. Keep changes small, follow 
 - Do not log or commit secrets; use `.env` and `godotenv` when running locally.
 - Runtime configuration is typically via env vars (see `internal/cmd/*` flags).
 
+### OpenTelemetry (tracing + metrics)
+- Setup lives in `internal/telemetry` (`Setup`, used by both the API server and the checkout-fetcher worker).
+- Disabled (no-op, zero overhead) unless `OTEL_EXPORTER_OTLP_ENDPOINT` is set; otherwise traces and metrics export via OTLP gRPC. Standard `OTEL_*` env vars control endpoint, headers, sampling, timeout.
+- HTTP tracing uses `github.com/gofiber/contrib/otelfiber` (the v1 module targets Fiber v2); per-request HTTP metrics are in `internal/controllers/middleware/otelmetrics.go` and are the single source of HTTP metrics (otelfiber's own meter is pointed at a reader-less provider in `registerCoreMiddleware`). Middleware order matters: recover runs innermost so panics become 500s that the tracing/metrics/access-log middleware can observe.
+- DB connections run through an OTel-instrumented sqlite driver (`github.com/XSAM/otelsql`). When telemetry is enabled, open the DB with `db.InitDBInstrumented(dsn, tel.TracerProvider, tel.MeterProvider)` — it registers the driver and opens in one step, so ordering cannot get silently wrong; plain `db.InitDB` always uses the raw driver. Driver registration is process-global (`sync.Once`): the first registration wins. The test helper (`db.PrepareTestDB`) and the Fiber session store use unwrapped raw drivers.
+- Logs correlate with traces via `logger.NewTraceHandler` in `internal/logger` — every slog record written with an active span context gets `trace_id`/`span_id` attrs.
+
 ## Cursor/Copilot rules
 
 - No Cursor rules found in `.cursor/rules/` or `.cursorrules`.

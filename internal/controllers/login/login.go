@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 
+	"kids-checkin/internal/controllers/middleware"
 	"kids-checkin/internal/controllers/session"
 	"kids-checkin/internal/repo/location"
 
@@ -57,6 +58,7 @@ func (controller *Controller) PostLogin(c *fiber.Ctx) error {
 
 	// 2. Compare Bcrypt hash
 	if err := bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(password)); err != nil {
+		middleware.GetLogger(c).WarnContext(c.UserContext(), "login failed: invalid credentials", slog.String("username", username))
 		if redirectTo != "" {
 			return c.Redirect(fmt.Sprintf("/login?error=invalid&next=%s", url.QueryEscape(redirectTo)), http.StatusSeeOther)
 		}
@@ -74,6 +76,7 @@ func (controller *Controller) PostLogin(c *fiber.Ctx) error {
 	sess.Set("role", role)
 	err := sess.Save()
 	if err != nil {
+		middleware.GetLogger(c).ErrorContext(c.UserContext(), "login failed: could not save session", slog.String("username", username), slog.String("error", err.Error()))
 		return c.Status(http.StatusInternalServerError).SendString("Could not create user session")
 	}
 
@@ -90,11 +93,13 @@ func (controller *Controller) PostLogin(c *fiber.Ctx) error {
 func (controller *Controller) GetLogout(c *fiber.Ctx) error {
 	sess, err := controller.sessionStore.Get(c)
 	if err != nil {
+		middleware.GetLogger(c).ErrorContext(c.UserContext(), "logout failed: could not load session", slog.String("error", err.Error()))
 		return c.Status(http.StatusInternalServerError).SendString("Session error")
 	}
 
 	// This destroys the session in SQLite and clears the cookie on the client
 	if err := sess.Destroy(); err != nil {
+		middleware.GetLogger(c).ErrorContext(c.UserContext(), "logout failed: could not destroy session", slog.String("error", err.Error()))
 		return c.Status(http.StatusInternalServerError).SendString("Could not log out")
 	}
 

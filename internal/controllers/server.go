@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"kids-checkin/internal/controllers/admin"
 	"kids-checkin/internal/controllers/login"
 	"kids-checkin/internal/controllers/middleware"
+	"kids-checkin/internal/telemetry"
 	"log/slog"
 	"net/http"
 	"path/filepath"
@@ -29,15 +31,40 @@ import (
 	"kids-checkin/internal/web/menu"
 	"kids-checkin/internal/web/static"
 
+	"github.com/gofiber/contrib/otelfiber"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/filesystem"
 	"github.com/gofiber/fiber/v2/middleware/recover"
 	fibersession "github.com/gofiber/fiber/v2/middleware/session"
 	"github.com/gofiber/storage/sqlite3"
+	"go.opentelemetry.io/contrib/instrumentation/runtime"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 )
 
+const apiServiceName = "kids-checkin-api"
+
 func StartServer(port int, dbFilepath string) error {
-	database, err := db.InitDB(dbFilepath)
+	tel, err := telemetry.Setup(context.Background(), apiServiceName)
+	if err != nil {
+		return fmt.Errorf("setting up telemetry: %w", err)
+	}
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if shutdownErr := tel.Shutdown(shutdownCtx); shutdownErr != nil {
+			slog.Warn("telemetry shutdown failed", slog.String("error", shutdownErr.Error()))
+		}
+	}()
+
+	var database *sql.DB
+	if tel.Enabled() {
+		if runtimeErr := runtime.Start(); runtimeErr != nil {
+			slog.Warn("runtime metrics unavailable", slog.String("error", runtimeErr.Error()))
+		}
+		database, err = db.InitDBInstrumented(dbFilepath, tel.TracerProvider, tel.MeterProvider)
+	} else {
+		database, err = db.InitDB(dbFilepath)
+	}
 	if err != nil {
 		panic(err)
 	}
@@ -95,16 +122,16 @@ func StartServer(port int, dbFilepath string) error {
 			return nil
 		},
 	})
-	app.Use(middleware.RequestLogger())
-	app.Use(middleware.HTTPAccessLogger())
-	app.Use(recover.New())
+	if err := registerCoreMiddleware(app, tel); err != nil {
+		return fmt.Errorf("registering core middleware: %w", err)
+	}
 
 	registerRoutes(app, database, store, storage)
 
 	app.Get("manifest.webmanifest", func(c *fiber.Ctx) error {
 		f, err := static.EmbeddedFS.Open("manifest.webmanifest")
 		if err != nil {
-			middleware.GetLogger(c).WarnContext(c.Context(), "failed to open manifest.webmanifest", slog.String("error", err.Error()))
+			middleware.GetLogger(c).WarnContext(c.UserContext(), "failed to open manifest.webmanifest", slog.String("error", err.Error()))
 			return fiber.ErrInternalServerError
 		}
 		defer f.Close()
@@ -116,7 +143,7 @@ func StartServer(port int, dbFilepath string) error {
 	app.Get("apple-touch-icon.png", func(c *fiber.Ctx) error {
 		f, err := static.EmbeddedFS.Open("img/apple-touch-icon.png")
 		if err != nil {
-			middleware.GetLogger(c).WarnContext(c.Context(), "failed to open apple-touch-icon.png", slog.String("error", err.Error()))
+			middleware.GetLogger(c).WarnContext(c.UserContext(), "failed to open apple-touch-icon.png", slog.String("error", err.Error()))
 			return fiber.ErrInternalServerError
 		}
 		defer f.Close()
@@ -139,7 +166,7 @@ func StartServer(port int, dbFilepath string) error {
 	app.Get("favicon.ico", func(c *fiber.Ctx) error {
 		f, err := static.EmbeddedFS.Open("img/favicon.ico")
 		if err != nil {
-			middleware.GetLogger(c).WarnContext(c.Context(), "failed to open favicon.ico", slog.String("error", err.Error()))
+			middleware.GetLogger(c).WarnContext(c.UserContext(), "failed to open favicon.ico", slog.String("error", err.Error()))
 			return fiber.ErrInternalServerError
 		}
 		defer f.Close()
@@ -185,6 +212,34 @@ func StartServer(port int, dbFilepath string) error {
 	return nil
 }
 
+// registerCoreMiddleware wires the request-scoped middleware. Recover runs
+// innermost so panics are converted into 500 responses before the tracing,
+// metrics, and access-log middleware read the result; any other order makes
+// panics skip those middleware entirely.
+func registerCoreMiddleware(app *fiber.App, tel *telemetry.Telemetry) error {
+	app.Use(middleware.RequestLogger())
+	if tel.Enabled() {
+		// otelfiber exports its own http.server.* metrics by default; point
+		// it at a reader-less meter provider so HTTPMetrics below is the
+		// single source of HTTP metrics.
+		app.Use(otelfiber.Middleware(
+			otelfiber.WithTracerProvider(tel.TracerProvider),
+			otelfiber.WithMeterProvider(sdkmetric.NewMeterProvider()),
+			otelfiber.WithSpanNameFormatter(func(c *fiber.Ctx) string {
+				return c.Route().Path
+			}),
+		))
+		httpMetrics, err := middleware.HTTPMetrics(tel.Meter(apiServiceName))
+		if err != nil {
+			return fmt.Errorf("creating http metrics middleware: %w", err)
+		}
+		app.Use(httpMetrics)
+	}
+	app.Use(middleware.HTTPAccessLogger())
+	app.Use(recover.New())
+	return nil
+}
+
 func homePageHandler(sessionStore session.Storer) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		sess, err := sessionStore.Get(c)
@@ -193,7 +248,6 @@ func homePageHandler(sessionStore session.Storer) fiber.Handler {
 		}
 		authenticated, _ := sess.Get("authenticated").(bool)
 		role, _ := sess.Get("role").(string)
-
 		f, err := static.EmbeddedFS.Open("pages/home/index.html")
 		if err != nil {
 			return fiber.ErrInternalServerError
