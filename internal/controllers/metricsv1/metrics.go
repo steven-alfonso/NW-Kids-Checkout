@@ -138,7 +138,7 @@ func (controller *Controller) GetGuestMetrics(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "days must be an integer between 1 and 90")
 	}
 
-	guestMetrics, err := controller.repo.ListGuestMetrics(c.Context(), metrics.Filter{Days: days})
+	guestMetrics, err := controller.repo.ListGuestMetrics(c.UserContext(), metrics.Filter{Days: days})
 	if err != nil {
 		return fmt.Errorf("listing guest metrics: %w", err)
 	}
