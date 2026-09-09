@@ -24,10 +24,10 @@ CREATE TABLE children (
     last_name TEXT NOT NULL,
     dob TEXT NOT NULL,
     grade TEXT NOT NULL,
-    gender TEXT NOT NULL CHECK (gender IN ('Boy', 'Girl')),
+    gender TEXT NOT NULL CHECK (gender IN ('boy', 'girl')),
     dietary_restrictions TEXT NOT NULL DEFAULT '',
     special_needs TEXT NOT NULL DEFAULT '',
-    relationship TEXT NOT NULL CHECK (relationship IN ('Parent', 'Guardian', 'Grandparent', 'Other')),
+    relationship TEXT NOT NULL CHECK (relationship IN ('parent', 'guardian', 'grandparent', 'other')),
     created_at DATETIME NOT NULL
 );
 
