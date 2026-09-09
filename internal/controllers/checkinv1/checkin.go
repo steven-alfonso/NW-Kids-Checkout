@@ -15,12 +15,15 @@ import (
 	"strings"
 	"time"
 
+	fibersession "github.com/gofiber/fiber/v2/middleware/session"
+
 	"kids-checkin/internal/controllers/middleware"
 	"kids-checkin/internal/controllers/session"
 	"kids-checkin/internal/repo"
 	"kids-checkin/internal/repo/checkin"
 	"kids-checkin/internal/repo/location"
 	"kids-checkin/internal/repo/manualcheckin"
+	"kids-checkin/internal/web/menu"
 	"kids-checkin/internal/web/static"
 
 	"github.com/gofiber/contrib/websocket"
@@ -53,18 +56,25 @@ func NewController(db *sql.DB, sessionStore session.Storer) *Controller {
 }
 
 func (controller *Controller) RegisterRoutes(app *fiber.App) {
-	// Setup
-	checkinGroup := app.Group("/v1/checkins")
-	checkinGroup.Use(middleware.AuthRequired(controller.sessionStore, ""))
-
-	checkinGroup.Get("/checkouts", controller.Checkouts)
-	checkinGroup.Patch("/:planning_center_id/checked_out_confirmed", controller.PatchCheckedOutConfirmed)
+	// Use per-route auth (not Group.Use with prefix "/v1/checkins") to avoid
+	// covering the public POST /v1/checkins/guest-submissions.
+	authRequired := middleware.AuthRequired(controller.sessionStore, "")
+	app.Get("/v1/checkins/checkouts", authRequired, controller.Checkouts)
+	app.Patch("/v1/checkins/:planning_center_id/checked_out_confirmed", authRequired, controller.PatchCheckedOutConfirmed)
 }
 
 func (controller *Controller) Checkouts(c *fiber.Ctx) error {
-	sess, err := controller.sessionStore.Get(c)
-	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "could not fetch session")
+	var sess *fibersession.Session
+	var err error
+	if v := c.Locals("session"); v != nil {
+		sess, _ = v.(*fibersession.Session)
+	}
+	if sess == nil {
+		sess, err = controller.sessionStore.Get(c)
+		if err != nil {
+			return fiber.NewError(fiber.StatusInternalServerError, "could not fetch session")
+		}
+		c.Locals("session", sess)
 	}
 
 	c.Locals("allowed", sess.Get("allowed"))
@@ -88,14 +98,36 @@ func (controller *Controller) checkoutsWeb(c *fiber.Ctx) error {
 		}
 		defer f.Close()
 
-		var htmlStream io.Reader = f
-		if static.IsDev() {
-			content, readErr := io.ReadAll(f)
-			if readErr != nil {
-				return fiber.ErrInternalServerError
+		content, err := io.ReadAll(f)
+		if err != nil {
+			return fiber.ErrInternalServerError
+		}
+
+		html := string(content)
+		var sess *fibersession.Session
+		if v := c.Locals("session"); v != nil {
+			sess, _ = v.(*fibersession.Session)
+		}
+		if sess == nil {
+			var fetchErr error
+			sess, fetchErr = controller.sessionStore.Get(c)
+			if fetchErr != nil {
+				return fiber.NewError(fiber.StatusInternalServerError, "could not fetch session")
 			}
+		}
+		authenticated, _ := sess.Get("authenticated").(bool)
+		role, _ := sess.Get("role").(string)
+
+		menuHTML, err := menu.RenderHTML(authenticated, role)
+		if err != nil {
+			return fiber.ErrInternalServerError
+		}
+		html = strings.Replace(html, menu.Placeholder, menuHTML, 1)
+
+		var htmlStream io.Reader = strings.NewReader(html)
+		if static.IsDev() {
 			htmlStream = bytes.NewReader([]byte(strings.Replace(
-				string(content),
+				html,
 				"</body>",
 				`<script src="/static/dev/preview.js"></script></body>`,
 				1,
@@ -127,13 +159,16 @@ func (controller *Controller) checkoutsWeb(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
 	}
 
-	manualCheckins, err := controller.manualRepo.ListManualCheckins(c.UserContext(), manualFilter)
-	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
+	var manualCheckins []manualcheckin.ManualCheckin
+	if !isLocationGroupFilterEmpty(c, filter) {
+		manualCheckins, err = controller.manualRepo.ListManualCheckins(c.UserContext(), manualFilter)
+		if err != nil {
+			return fiber.NewError(fiber.StatusInternalServerError, err.Error())
+		}
+		manualCheckins = sortManualCheckins(manualCheckins)
 	}
 
 	checkins = sortCheckins(checkins)
-	manualCheckins = sortManualCheckins(manualCheckins)
 
 	_, err = controller.locationRepo.ListLocations(c.UserContext(), location.LocationFilter{})
 	if err != nil {
@@ -275,7 +310,7 @@ func buildFilter(c *fiber.Ctx) (checkin.Filter, error) {
 	if locationGroupName != "" {
 		locationGroupName, err = url.QueryUnescape(locationGroupName)
 		if err != nil {
-			return checkin.Filter{}, errors.New("cannot parse location_group_id")
+			return checkin.Filter{}, errors.New("cannot parse location_group_name")
 		}
 	}
 
@@ -304,20 +339,19 @@ func buildFilter(c *fiber.Ctx) (checkin.Filter, error) {
 		filter.Limit = limitInt
 	}
 
-	if lgIDStr := c.Query("location_group_id"); lgIDStr != "" {
-		lgID, err := strconv.ParseInt(lgIDStr, 10, 64)
-		if err != nil {
-			return checkin.Filter{}, errors.New("cannot parse location_group_id")
-		}
-		if lgID < 0 {
-			return checkin.Filter{}, errors.New("location_group_id must be positive")
-		}
-		filter.LocationGroupID = lgID
+	if inc := c.Query("include_unassigned"); inc == "1" || inc == "true" {
+		filter.IncludeUnassigned = true
 	}
 
-	if lgName := c.Query("location_group_name"); lgName != "" {
-		filter.LocationGroupName = lgName
+	// parse repeated/comma location_group_id
+	ids, err := parseLocationGroupIDs(c)
+	if err != nil {
+		return checkin.Filter{}, err
 	}
+	if len(ids) == 1 {
+		filter.LocationGroupID = ids[0]
+	}
+	filter.LocationGroupIDs = ids
 
 	if cobStr := c.Query("checked_out_before"); cobStr != "" {
 		// try time.ParseDuration
@@ -351,6 +385,44 @@ func buildFilter(c *fiber.Ctx) (checkin.Filter, error) {
 	return filter, nil
 }
 
+func parseLocationGroupIDs(c *fiber.Ctx) ([]int64, error) {
+	var ids []int64
+	var parseErr error
+	c.Request().URI().QueryArgs().VisitAll(func(key, value []byte) {
+		if parseErr != nil || string(key) != "location_group_id" {
+			return
+		}
+		for _, part := range strings.Split(string(value), ",") {
+			part = strings.TrimSpace(part)
+			if part == "" {
+				continue
+			}
+			parsed, err := strconv.ParseInt(part, 10, 64)
+			if err != nil {
+				parseErr = errors.New("cannot parse location_group_id")
+				return
+			}
+			if parsed < 0 {
+				parseErr = errors.New("location_group_id must be positive")
+				return
+			}
+			if parsed > 0 {
+				ids = append(ids, parsed)
+			}
+		}
+	})
+	return ids, parseErr
+}
+
+func isLocationGroupFilterEmpty(c *fiber.Ctx, filter checkin.Filter) bool {
+	args := c.Request().URI().QueryArgs()
+	hasParam := args.Has("location_group_id") || args.Has("location_group_name") || args.Has("include_unassigned")
+	if !hasParam {
+		return false
+	}
+	return len(filter.LocationGroupIDs) == 0 && filter.LocationGroupName == "" && !filter.IncludeUnassigned
+}
+
 func repoCheckinToOutput(checkin checkin.Checkin) Checkin {
 	var coa *time.Time
 	if !checkin.CheckedOutAt.IsZero() {
@@ -363,6 +435,7 @@ func repoCheckinToOutput(checkin checkin.Checkin) Checkin {
 	return Checkin{
 		PlanningCenterID:      checkin.PlanningCenterID,
 		LocationID:            checkin.LocationID,
+		LocationGroupID:       checkin.LocationGroupID,
 		FirstName:             checkin.FirstName,
 		LastName:              checkin.LastName,
 		SecurityCode:          checkin.SecurityCode,
@@ -450,6 +523,7 @@ func manualFilterFromCheckinFilter(filter checkin.Filter) manualcheckin.Filter {
 type Checkin struct {
 	PlanningCenterID      string     `json:"planning_center_id"`
 	LocationID            int64      `json:"location_id"`
+	LocationGroupID       *int64     `json:"location_group_id"`
 	PublicID              string     `json:"public_id"`
 	FirstName             string     `json:"first_name"`
 	LastName              string     `json:"last_name"`

@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	dbschema "kids-checkin/db"
 	"kids-checkin/internal/db"
 	"kids-checkin/internal/repo"
 
@@ -620,4 +621,137 @@ func Test_sqliteRepo_ListCheckins_filter_by_EventID(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, list, 1)
 	assert.Equal(t, "plc_evt1", list[0].PlanningCenterID)
+}
+
+func Test_sqliteRepo_ListCheckins_includes_location_group_id(t *testing.T) {
+	tDB, err := sql.Open("sqlite3", ":memory:")
+	require.NoError(t, err)
+	_, err = tDB.Exec(dbschema.Schema)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = tDB.Close() })
+	s := NewRepo(tDB)
+
+	_, err = tDB.Exec(`INSERT INTO location_groups (id, name) VALUES (10, 'group-10')`)
+	require.NoError(t, err)
+
+	res, err := squirrel.Insert("locations").
+		RunWith(tDB).
+		Columns("name", "planning_center_id", "event_id", "location_group_id").
+		Values("loc-assigned", "plloc_10", 1, 10).
+		ExecContext(t.Context())
+	require.NoError(t, err)
+	locAssignedID, _ := res.LastInsertId()
+
+	_, err = tDB.Exec(`INSERT INTO locations (name, planning_center_id, event_id, location_group_id) VALUES ('loc-unassigned', 'plloc_null', 1, NULL)`)
+	require.NoError(t, err)
+	var locUnassignedID int64
+	err = tDB.QueryRowContext(t.Context(), `SELECT id FROM locations WHERE planning_center_id = 'plloc_null'`).Scan(&locUnassignedID)
+	require.NoError(t, err)
+
+	_, err = s.CreateCheckin(t.Context(), Checkin{
+		PlanningCenterID: "plc_inc_assigned",
+		LocationID:       locAssignedID,
+		FirstName:        "a",
+		LastName:         "a",
+		SecurityCode:     "A1",
+	})
+	require.NoError(t, err)
+	_, err = s.CreateCheckin(t.Context(), Checkin{
+		PlanningCenterID: "plc_inc_unassigned",
+		LocationID:       locUnassignedID,
+		FirstName:        "b",
+		LastName:         "b",
+		SecurityCode:     "B1",
+	})
+	require.NoError(t, err)
+
+	list, err := s.ListCheckins(t.Context(), Filter{})
+	require.NoError(t, err)
+	require.Len(t, list, 2)
+	byPC := map[string]Checkin{}
+	for _, c := range list {
+		byPC[c.PlanningCenterID] = c
+	}
+	assigned := byPC["plc_inc_assigned"]
+	require.NotNil(t, assigned.LocationGroupID)
+	assert.Equal(t, int64(10), *assigned.LocationGroupID)
+	unassigned := byPC["plc_inc_unassigned"]
+	assert.Nil(t, unassigned.LocationGroupID)
+}
+
+func Test_sqliteRepo_ListCheckins_filter_by_multiple_location_group_ids(t *testing.T) {
+	tDB, err := sql.Open("sqlite3", ":memory:")
+	require.NoError(t, err)
+	_, err = tDB.Exec(dbschema.Schema)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = tDB.Close() })
+	s := NewRepo(tDB)
+
+	_, err = tDB.Exec(`INSERT INTO location_groups (id, name) VALUES (10, 'group-10'), (20, 'group-20')`)
+	require.NoError(t, err)
+
+	res, err := squirrel.Insert("locations").
+		RunWith(tDB).
+		Columns("name", "planning_center_id", "event_id", "location_group_id").
+		Values("loc10", "plloc_10", 1, 10).
+		ExecContext(t.Context())
+	require.NoError(t, err)
+	loc10ID, _ := res.LastInsertId()
+	res, err = squirrel.Insert("locations").
+		RunWith(tDB).
+		Columns("name", "planning_center_id", "event_id", "location_group_id").
+		Values("loc20", "plloc_20", 1, 20).
+		ExecContext(t.Context())
+	require.NoError(t, err)
+	loc20ID, _ := res.LastInsertId()
+	_, err = tDB.Exec(`INSERT INTO locations (name, planning_center_id, event_id, location_group_id) VALUES ('loc-unassigned', 'plloc_null', 1, NULL)`)
+	require.NoError(t, err)
+	var locNullID int64
+	err = tDB.QueryRowContext(t.Context(), `SELECT id FROM locations WHERE planning_center_id = 'plloc_null'`).Scan(&locNullID)
+	require.NoError(t, err)
+
+	_, err = s.CreateCheckin(t.Context(), Checkin{PlanningCenterID: "plc_10", LocationID: loc10ID, FirstName: "f", LastName: "l", SecurityCode: "S1"})
+	require.NoError(t, err)
+	_, err = s.CreateCheckin(t.Context(), Checkin{PlanningCenterID: "plc_20", LocationID: loc20ID, FirstName: "f", LastName: "l", SecurityCode: "S2"})
+	require.NoError(t, err)
+	_, err = s.CreateCheckin(t.Context(), Checkin{PlanningCenterID: "plc_null", LocationID: locNullID, FirstName: "f", LastName: "l", SecurityCode: "S3"})
+	require.NoError(t, err)
+
+	t.Run("filter by multiple LocationGroupIDs returns 2", func(t *testing.T) {
+		list, err := s.ListCheckins(t.Context(), Filter{LocationGroupIDs: []int64{10, 20}})
+		require.NoError(t, err)
+		require.Len(t, list, 2)
+		ids := map[string]bool{}
+		for _, c := range list {
+			ids[c.PlanningCenterID] = true
+		}
+		assert.True(t, ids["plc_10"])
+		assert.True(t, ids["plc_20"])
+	})
+
+	t.Run("IncludeUnassigned true returns unassigned", func(t *testing.T) {
+		list, err := s.ListCheckins(t.Context(), Filter{IncludeUnassigned: true})
+		require.NoError(t, err)
+		require.Len(t, list, 1)
+		assert.Equal(t, "plc_null", list[0].PlanningCenterID)
+		assert.Nil(t, list[0].LocationGroupID)
+	})
+
+	t.Run("combined returns assigned+unassigned", func(t *testing.T) {
+		list, err := s.ListCheckins(t.Context(), Filter{LocationGroupIDs: []int64{10}, IncludeUnassigned: true})
+		require.NoError(t, err)
+		require.Len(t, list, 2)
+		ids := map[string]bool{}
+		for _, c := range list {
+			ids[c.PlanningCenterID] = true
+		}
+		assert.True(t, ids["plc_10"])
+		assert.True(t, ids["plc_null"])
+	})
+
+	t.Run("combined multiple plus unassigned returns 3", func(t *testing.T) {
+		list, err := s.ListCheckins(t.Context(), Filter{LocationGroupIDs: []int64{10, 20}, IncludeUnassigned: true})
+		require.NoError(t, err)
+		require.Len(t, list, 3)
+	})
 }

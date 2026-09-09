@@ -71,7 +71,6 @@ func (f filteredFS) Open(name string) (fs.File, error) {
 }
 
 var allowedExt = map[string]struct{}{
-	".html": {},
 	".css":  {},
 	".js":   {},
 	".svg":  {},

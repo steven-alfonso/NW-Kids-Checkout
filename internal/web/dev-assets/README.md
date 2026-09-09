@@ -72,6 +72,17 @@ It:
 
 Refresh the page to restore real data.
 
+### CLI equivalent: `checkins seed-preview`
+
+The same demo data can be seeded directly in SQLite (useful for API/manual-checkin tests or when not using the browser):
+
+```sh
+godotenv ./bin/kids-checkin checkins seed-preview --force
+godotenv ./bin/kids-checkin checkins seed-preview --force --db-file database/kids-checkin.db
+```
+
+This uses the `checkin`/`manualcheckin` Repos (`DeleteAllCheckins`/`DeleteAllManualCheckins` + `CreateCheckin`/`CreateManualCheckin`) to delete all rows in `checkins` and `manual_checkins` and insert 10 preview rows (5 `demo-*` + 5 `demo-m*`) at the same time offsets as `preview.js`. Requires `--force`. See `README.md` for details.
+
 ## Verifying
 
 Dev (`ENVIRONMENT=dev`):

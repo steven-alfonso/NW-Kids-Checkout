@@ -1,0 +1,22 @@
+-- Condense checkins indexes: composites cover singles via leftmost prefix + ORDER BY checked_out_at DESC (checkin.go:139, metrics.go:169)
+-- Drop redundant singles that are superseded (idempotent for prod which hasn't run prior version)
+DROP INDEX IF EXISTS idx_checked_out_at;
+DROP INDEX IF EXISTS idx_checkins_fetched_at;
+DROP INDEX IF EXISTS idx_checkins_event_id;
+DROP INDEX IF EXISTS idx_checkins_location_id;
+DROP INDEX IF EXISTS idx_locations_event_id;
+DROP INDEX IF EXISTS idx_locations_location_group_id;
+DROP INDEX IF EXISTS idx_events_location_group_id;
+
+-- Covering index for manual daily metrics (was SCAN on created_at) - metrics.go:92-100
+CREATE INDEX IF NOT EXISTS idx_manual_created_at ON manual_checkins (created_at);
+
+-- Composite covering index for fetch-latency and recent poll (checked_out_at is leftmost, covers fetched_at IS NOT NULL)
+-- Replaces idx_checked_out_at + idx_checkins_fetched_at; leftmost prefix serves WHERE checked_out_at>? + ORDER BY checked_out_at DESC
+CREATE INDEX IF NOT EXISTS idx_checkins_checked_out_at_fetched_at ON checkins (checked_out_at DESC, fetched_at);
+
+-- Composite replaces single idx_checkins_event_id - serves WHERE event_id=? and WHERE event_id=? AND checked_out_at>? ORDER BY checked_out_at DESC (checkin.go:135)
+CREATE INDEX IF NOT EXISTS idx_checkins_event_id_checked_out_at ON checkins (event_id, checked_out_at DESC);
+
+-- Composite replaces single idx_checkins_location_id - serves WHERE location_id=? and WHERE location_id=? AND checked_out_at>? ORDER BY checked_out_at DESC (checkin.go:131)
+CREATE INDEX IF NOT EXISTS idx_checkins_location_id_checked_out_at ON checkins (location_id, checked_out_at DESC);

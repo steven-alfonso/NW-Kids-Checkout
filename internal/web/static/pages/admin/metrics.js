@@ -1,21 +1,15 @@
 const API_URL = '';
 
 async function loadMetrics(days) {
-  const response = await fetch(`${API_URL}/v1/admin/metrics?days=${days}`);
-  if (!response.ok) {
-    const data = await response.json().catch(() => ({}));
-    throw new Error(data.message || `failed to load metrics (${response.status})`);
-  }
-  return response.json();
+  return fetchJson(`${API_URL}/v1/admin/metrics?days=${days}`);
 }
 
 async function loadFetchLatency(days) {
-  const response = await fetch(`${API_URL}/v1/admin/metrics/fetch-latency?days=${days}`);
-  if (!response.ok) {
-    const data = await response.json().catch(() => ({}));
-    throw new Error(data.message || `failed to load fetch latency (${response.status})`);
-  }
-  return response.json();
+  return fetchJson(`${API_URL}/v1/admin/metrics/fetch-latency?days=${days}`);
+}
+
+async function loadGuestMetrics(days) {
+  return fetchJson(`${API_URL}/v1/admin/metrics/guest?days=${days}`);
 }
 
 function escapeHtml(value) {
@@ -39,12 +33,31 @@ function renderMetrics(data) {
           <td class="px-4 py-3 text-slate-800">${m.confirmed}</td>
           <td class="px-4 py-3 text-slate-600">${m.unconfirmed}</td>
           <td class="px-4 py-3 text-slate-600">${m.avg_confirm_minutes}</td>
-          <td class="px-4 py-3 text-slate-600">${m.manual_count}</td>
         </tr>`,
     )
     .join('');
   if (data.daily.length === 0) {
-    body.innerHTML = '<tr><td colspan="7" class="px-4 py-8 text-center text-slate-500">No data yet.</td></tr>';
+    body.innerHTML = '<tr><td colspan="6" class="px-4 py-8 text-center text-slate-500">No data yet.</td></tr>';
+  }
+}
+
+function renderGuestMetrics(data) {
+  const body = document.getElementById('guest-body');
+  if (!body) return;
+  body.innerHTML = data.rows
+    .map(
+      (m) => `
+        <tr class="border-b border-slate-100">
+          <td class="px-4 py-3 text-slate-600">${escapeHtml(m.date)}</td>
+          <td class="px-4 py-3 text-slate-800">${m.submissions}</td>
+          <td class="px-4 py-3 text-slate-800">${m.children}</td>
+          <td class="px-4 py-3 text-slate-800">${m.entered}</td>
+          <td class="px-4 py-3 text-slate-600">${m.pending}</td>
+        </tr>`,
+    )
+    .join('');
+  if (data.rows.length === 0) {
+    body.innerHTML = '<tr><td colspan="5" class="px-4 py-8 text-center text-slate-500">No data yet.</td></tr>';
   }
 }
 
@@ -112,37 +125,84 @@ async function main() {
   const daysEl = document.getElementById('metrics-days');
   const tabDaily = document.getElementById('tab-daily');
   const tabLatency = document.getElementById('tab-fetch-latency');
+  const tabGuest = document.getElementById('tab-guest');
   const viewDaily = document.getElementById('view-daily');
   const viewLatency = document.getElementById('view-fetch-latency');
+  const viewGuest = document.getElementById('view-guest');
 
-  const setTab = (latency) => {
-    if (tabDaily) tabDaily.setAttribute('aria-selected', String(!latency));
-    if (tabLatency) tabLatency.setAttribute('aria-selected', String(latency));
-    if (viewDaily) viewDaily.classList.toggle('hidden', latency);
-    if (viewLatency) viewLatency.classList.toggle('hidden', !latency);
+  const setActiveTab = (name) => {
+    const tabs = [
+      ['tab-daily', 'view-daily', 'daily'],
+      ['tab-guest', 'view-guest', 'guest'],
+      ['tab-fetch-latency', 'view-fetch-latency', 'latency'],
+    ];
+    for (const [tabId, viewId, key] of tabs) {
+      const tab = document.getElementById(tabId);
+      const view = document.getElementById(viewId);
+      if (tab) tab.setAttribute('aria-selected', String(key === name));
+      if (view) view.classList.toggle('hidden', key !== name);
+    }
   };
 
-  const load = async (latency) => {
+  const currentView = () => {
+    if (tabLatency && tabLatency.getAttribute('aria-selected') === 'true') return 'latency';
+    if (tabGuest && tabGuest.getAttribute('aria-selected') === 'true') return 'guest';
+    return 'daily';
+  };
+
+  const showError = (msg) => {
+    if (!statusEl) return;
+    statusEl.textContent = msg;
+    statusEl.classList.remove('hidden');
+  };
+  const clearError = () => {
+    if (!statusEl) return;
+    statusEl.textContent = '';
+    statusEl.classList.add('hidden');
+  };
+
+  const load = async (view) => {
     try {
-      if (latency) {
+      if (view === 'latency') {
         const data = await loadFetchLatency(daysEl ? daysEl.value : 14);
         renderFetchLatency(data);
+      } else if (view === 'guest') {
+        const data = await loadGuestMetrics(daysEl ? daysEl.value : 14);
+        renderGuestMetrics(data);
       } else {
         const data = await loadMetrics(daysEl ? daysEl.value : 14);
         renderMetrics(data);
       }
-      if (statusEl) statusEl.textContent = '';
+      clearError();
     } catch (error) {
-      if (statusEl) statusEl.textContent = error.message;
+      if (error instanceof window.SessionExpiredError) {
+        window.location.href = '/login?next=' + encodeURIComponent(
+          window.location.pathname + window.location.search
+        );
+        return;
+      }
+      showError(error.message || String(error));
+      // Keep body from staying in perpetual "Loading..." state
+      const bodyId = view === 'latency' ? 'fetch-latency-body' : view === 'guest' ? 'guest-body' : 'metrics-body';
+      const body = document.getElementById(bodyId);
+      if (body && body.textContent.includes('Loading')) {
+        const col = view === 'latency' ? 5 : view === 'guest' ? 5 : 6;
+        body.innerHTML = `<tr><td colspan="${col}" class="px-4 py-6 text-center text-red-500">Failed to load. ${escapeHtml(error.message || '')}</td></tr>`;
+      }
     }
   };
 
-  if (tabDaily) tabDaily.addEventListener('click', () => { setTab(false); load(false); });
-  if (tabLatency) tabLatency.addEventListener('click', () => { setTab(true); load(true); });
-  if (daysEl) daysEl.addEventListener('change', () => load(tabLatency && tabLatency.getAttribute('aria-selected') === 'true'));
-  await load(false);
+  if (tabDaily) tabDaily.addEventListener('click', () => { setActiveTab('daily'); load('daily'); });
+  if (tabLatency) tabLatency.addEventListener('click', () => { setActiveTab('latency'); load('latency'); });
+  if (tabGuest) tabGuest.addEventListener('click', () => { setActiveTab('guest'); load('guest'); });
+  if (daysEl) daysEl.addEventListener('change', () => load(currentView()));
+  await load(currentView());
 }
 
-document.addEventListener('DOMContentLoaded', main);
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', main);
+} else {
+  main();
+}
 
-window.__test = { renderMetrics, renderFetchLatency, renderFetchLatencyRows, loadMetrics, loadFetchLatency };
+window.__test = { renderMetrics, renderFetchLatency, renderFetchLatencyRows, loadMetrics, loadFetchLatency, renderGuestMetrics, loadGuestMetrics };

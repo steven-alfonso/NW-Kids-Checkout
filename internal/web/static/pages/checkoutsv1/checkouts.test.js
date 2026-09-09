@@ -51,12 +51,26 @@ function pcChild(id) {
         first_name: id,
         last_name: 'X',
         security_code: id,
+        location_group_id: 1,
         checked_out_at: new Date().toISOString()
     };
 }
 
 function childrenListWindow() {
     return loadWindow({ html: '<!doctype html><html><body><div id="children-list"></div></body></html>' });
+}
+
+function locationGroupWindow() {
+    return loadWindow({ html: `<!doctype html><html><body>
+        <div id="children-list"></div>
+        <div id="location-group-filter">
+            <div class="flex items-center justify-between mb-2">
+                <span class="text-sm font-medium text-slate-700">Location groups</span>
+                <button id="location-group-select-all" type="button">Select all</button>
+            </div>
+            <div id="location-group-checkboxes"></div>
+        </div>
+    </body></html>` });
 }
 
 function cardFor(window, id) {
@@ -218,7 +232,9 @@ describe('checkoutsv1/checkouts', () => {
         expect(html).toContain('bg-gray-400');
         expect(html).toContain('bg-yellow-500');
         expect(html).toContain('transition-colors');
-        expect(html).not.toContain('background-color:');
+        // bar uses inline background-color; pill still uses bg-* classes
+        expect(html).toContain('background-color:');
+        expect(html).toContain('aria-hidden="true"');
     });
 
     it('renders empty state when no checkouts are active', () => {
@@ -433,6 +449,62 @@ describe('checkoutsv1/checkouts', () => {
         expect(Array.from(second)).toEqual(['pc:pc2']);
     });
 
+    it('does not flash children when the location group filter changes', async () => {
+        const w = loadWindow({
+            html: '<!doctype html><html><body><div id="children-list"></div></body></html>',
+            url: 'http://localhost/?location_group_id=1',
+            fetchImpl: async (url) => {
+                if (String(url).includes('location_group_id=1')) {
+                    return { ok: true, json: async () => [pcChild('a')] };
+                }
+                if (String(url).includes('location_group_id=2')) {
+                    return { ok: true, json: async () => [pcChild('b'), pcChild('c')] };
+                }
+                return { ok: true, json: async () => [] };
+            }
+        });
+        await w.fetchChildrenData();
+        expect(w.__test.getFlashChildIds().size).toBe(0);
+
+        w.history.replaceState(null, '', '?location_group_id=2');
+        await w.fetchChildrenData();
+
+        expect(w.__test.getFlashChildIds().size).toBe(0);
+        expect(w.document.querySelectorAll('.child-card-flash').length).toBe(0);
+    });
+
+    it('still flashes net-new children when the filter is unchanged', async () => {
+        const children = [pcChild('a'), pcChild('b')];
+        const w = loadWindow({
+            url: 'http://localhost/?location_group_id=1',
+            fetchImpl: async () => ({ ok: true, json: async () => children.slice() })
+        });
+        await w.fetchChildrenData();
+        expect(w.__test.getFlashChildIds().size).toBe(0);
+
+        children.push(pcChild('c'));
+        await w.fetchChildrenData();
+
+        expect(Array.from(w.__test.getFlashChildIds())).toEqual(['pc:c']);
+    });
+
+    it('clears an in-flight flash when the filter changes', async () => {
+        const children = [pcChild('a'), pcChild('b')];
+        const w = loadWindow({
+            html: '<!doctype html><html><body><div id="children-list"></div></body></html>',
+            url: 'http://localhost/?location_group_id=1',
+            fetchImpl: async () => ({ ok: true, json: async () => children.slice() })
+        });
+        await w.fetchChildrenData();
+        children.push(pcChild('d'));
+        await w.fetchChildrenData();
+        expect(Array.from(w.__test.getFlashChildIds())).toEqual(['pc:d']);
+
+        w.history.replaceState(null, '', '?location_group_id=2');
+        await w.fetchChildrenData();
+        expect(w.__test.getFlashChildIds().size).toBe(0);
+    });
+
     it('renders child-card-flash class for flashing ids', () => {
         const window = loadWindow();
         const child = pcChild('pc1');
@@ -490,5 +562,329 @@ describe('checkoutsv1/checkouts', () => {
         window.__test.setFlashChildIds(new Set(['pc:e']));
         window.__test.updateUI();
         expect(reflowCount).toBeGreaterThan(0);
+    });
+
+    it('maps location_group_id deterministically to Paul Tol muted, gray for null', () => {
+        const w = loadWindow();
+        expect(w.getLocationGroupColor(null)).toBe('#9CA3AF');
+        expect(w.getLocationGroupColor(undefined)).toBe('#9CA3AF');
+        const c1 = w.getLocationGroupColor(1);
+        expect(c1).toBe(w.getLocationGroupColor(1));
+        expect(w.PAUL_TOL_MUTED).not.toContain('#9CA3AF');
+        expect(w.getLocationGroupColor(2)).not.toBe(c1);
+    });
+
+    it('renders color bar matching location_group_id', () => {
+        const w = loadWindow();
+        const html = w.renderChildren([{ first_name: 'A', last_name: 'B', location_group_id: 1, planning_center_id: '1', checked_out_at_ms: Date.now() }], Date.now());
+        expect(html).toContain('background-color:' + w.getLocationGroupColor(1));
+        expect(html).toContain('width:6px');
+        expect(html).toContain('flex-shrink:0');
+        expect(html).toContain('aria-hidden="true"');
+        expect(html).toContain('rounded-l-lg');
+        expect(html).not.toContain('overflow-hidden');
+        expect(html).toContain('flex-1');
+        const htmlNull = w.renderChildren([{ first_name: 'C', last_name: 'D', location_group_id: null, planning_center_id: '2', checked_out_at_ms: Date.now() }], Date.now());
+        expect(htmlNull).toContain('#9CA3AF');
+        expect(htmlNull).toContain('background-color:#9CA3AF');
+    });
+
+    it('renders color bar with flash class on outer container', () => {
+        const w = loadWindow();
+        w.__test.setFlashChildIds(new Set(['pc:1']));
+        const html = w.renderChildren([{ first_name: 'A', last_name: 'B', location_group_id: 1, planning_center_id: '1', checked_out_at_ms: Date.now() }], Date.now());
+        expect(html).toContain('child-card-flash');
+        expect(html).toContain('flex child-card-flash');
+    });
+
+    it('syncLocationGroupUIFromURL Select All toggles text and hides/shows children', async () => {
+        const w = locationGroupWindow();
+        w.fetchChildrenData = async () => {};
+        w.__test.setChildrenData([
+            { source: 'planning_center', planning_center_id: '1', first_name: 'A', last_name: 'B', location_group_id: 1 },
+            { source: 'planning_center', planning_center_id: '2', first_name: 'C', last_name: 'D', location_group_id: 2 }
+        ]);
+        w.document.dispatchEvent(new w.Event('DOMContentLoaded'));
+        await new Promise(r=>setTimeout(r,10));
+
+        let btn = w.document.getElementById('location-group-select-all');
+        let checks = w.document.querySelectorAll('#location-group-checkboxes input');
+        // Initially all checked (no filter params) => text should be Deselect all
+        expect(btn.textContent.trim()).toBe('Deselect all');
+        expect([...checks].every(c=>c.checked)).toBe(true);
+        // isEmpty should be false when no params
+        expect(w.getSelectedFromURL().isEmpty).toBe(false);
+        // visible should show all children
+        expect(w.__test.getVisibleChildren().length).toBe(2);
+
+        // Click Deselect all
+        btn.click();
+        expect(btn.textContent.trim()).toBe('Select all');
+        expect(w.getSelectedFromURL().isEmpty).toBe(true);
+        expect(w.__test.getVisibleChildren().length).toBe(0);
+
+        // Click Select all
+        btn.click();
+        expect(btn.textContent.trim()).toBe('Deselect all');
+        expect(w.getSelectedFromURL().isEmpty).toBe(false);
+        expect(w.__test.getVisibleChildren().length).toBe(2);
+    });
+
+    it('manual checkbox uncheck all hides all children via sentinel URL', async () => {
+        const w = locationGroupWindow();
+        w.fetchChildrenData = async () => {};
+        w.__test.setChildrenData([
+            { source: 'planning_center', planning_center_id: '1', first_name: 'A', last_name: 'B', location_group_id: 1 },
+            { source: 'planning_center', planning_center_id: '2', first_name: 'C', last_name: 'D', location_group_id: 2 }
+        ]);
+        w.document.dispatchEvent(new w.Event('DOMContentLoaded'));
+        await new Promise(r=>setTimeout(r,10));
+
+        let btn = w.document.getElementById('location-group-select-all');
+        let checks = w.document.querySelectorAll('#location-group-checkboxes input');
+
+        // Uncheck all checkboxes manually
+        checks.forEach(c => { c.checked = false; c.dispatchEvent(new w.Event('change', {bubbles:true})); });
+        await new Promise(r=>setTimeout(r,10));
+
+        expect(btn.textContent.trim()).toBe('Select all');
+        expect(w.getSelectedFromURL().isEmpty).toBe(true);
+        expect(w.__test.getVisibleChildren().length).toBe(0);
+    });
+
+    it('select all when URL has empty location_group_id param shows Select all and hides all children', async () => {
+        const w = locationGroupWindow();
+        w.fetchChildrenData = async () => {};
+        w.window.history.replaceState(null, '', '?location_group_id=');
+        w.__test.setChildrenData([
+            { source: 'planning_center', planning_center_id: '1', first_name: 'A', last_name: 'B', location_group_id: 1 },
+            { source: 'planning_center', planning_center_id: '2', first_name: 'C', last_name: 'D', location_group_id: 2 }
+        ]);
+        w.document.dispatchEvent(new w.Event('DOMContentLoaded'));
+        await new Promise(r=>setTimeout(r,10));
+
+        let btn = w.document.getElementById('location-group-select-all');
+        let checks = w.document.querySelectorAll('#location-group-checkboxes input');
+        expect(btn.textContent.trim()).toBe('Select all');
+        expect([...checks].every(c=>c.checked)).toBe(false);
+        expect(w.getSelectedFromURL().isEmpty).toBe(true);
+        expect(w.__test.getVisibleChildren().length).toBe(0);
+    });
+
+    it('still fetches (unfiltered) while the location group selection is empty but hides filtered children', async () => {
+        let checkoutsFetchCount = 0;
+        const w = loadWindow({
+            html: '<!doctype html><html><body><div id="children-list"></div><button id="overdue-badge" class="hidden"></button><div id="overdue-sheet" class="translate-y-full"></div><div id="overdue-sheet-backdrop" class="hidden"></div><div id="overdue-sheet-list"></div><div id="toast-stack"></div></body></html>',
+            url: 'http://localhost/?location_group_id=',
+            fetchImpl: async (url) => {
+                if (String(url).includes('/v1/checkins/checkouts')) checkoutsFetchCount++;
+                return { ok: true, json: async () => [pcChild('a')] };
+            }
+        });
+        await w.fetchChildrenData();
+        // Single unfiltered poll: still hits the server so the overdue badge can be fed
+        expect(checkoutsFetchCount).toBe(1);
+        // Board is empty due to client-side isEmpty filter
+        expect(w.document.getElementById('children-list').textContent).toContain('No children called yet');
+        expect(w.__test.getVisibleChildren().length).toBe(0);
+        // But childrenData still holds the fetched record (for overdue badge)
+        expect(w.__test.getChildrenData().length).toBe(1);
+
+        await w.fetchChildrenData();
+        expect(checkoutsFetchCount).toBe(2);
+    });
+
+    const overdueChild = (id, minutesAgo) => ({
+        source: 'planning_center',
+        planning_center_id: id,
+        first_name: id,
+        last_name: 'X',
+        security_code: id,
+        checked_out_at_ms: Date.now() - minutesAgo * 60 * 1000,
+        checked_out_confirmed_at: null
+    });
+
+    function overdueBadgeWindow() {
+        return loadWindow({
+            html: '<!doctype html><html><body><div id="children-list"></div><button id="overdue-badge" class="hidden"></button><div id="overdue-sheet" class="translate-y-full"></div><div id="overdue-sheet-backdrop" class="hidden"></div><div id="overdue-sheet-list"></div></body></html>',
+            fetchImpl: async () => ({ ok: true, json: async () => [] })
+        });
+    }
+
+    it('jiggles the overdue badge when the overdue count increases', async () => {
+        const w = overdueBadgeWindow();
+        w.document.dispatchEvent(new w.Event('DOMContentLoaded'));
+        await new Promise(r=>setTimeout(r,10));
+
+        const badge = w.document.getElementById('overdue-badge');
+        w.__test.setChildrenData([overdueChild('a', 6)]);
+        w.updateOverdueUI();
+        expect(badge.classList.contains('hidden')).toBe(false);
+        expect(badge.textContent).toContain('1 overdue');
+        expect(badge.classList.contains('overdue-badge-jiggle')).toBe(true);
+
+        // Same count: animation must not restart
+        badge.classList.remove('overdue-badge-jiggle');
+        w.updateOverdueUI();
+        expect(badge.classList.contains('overdue-badge-jiggle')).toBe(false);
+
+        // Count increases again: jiggle restarts
+        w.__test.setChildrenData([overdueChild('a', 6), overdueChild('b', 7)]);
+        w.updateOverdueUI();
+        expect(badge.classList.contains('overdue-badge-jiggle')).toBe(true);
+    });
+
+    it('does not jiggle the overdue badge when the count decreases', async () => {
+        const w = overdueBadgeWindow();
+        w.document.dispatchEvent(new w.Event('DOMContentLoaded'));
+        await new Promise(r=>setTimeout(r,10));
+
+        const badge = w.document.getElementById('overdue-badge');
+        w.__test.setChildrenData([overdueChild('a', 6), overdueChild('b', 7)]);
+        w.updateOverdueUI();
+        expect(badge.classList.contains('overdue-badge-jiggle')).toBe(true);
+        badge.classList.remove('overdue-badge-jiggle');
+
+        w.__test.setChildrenData([overdueChild('a', 6)]);
+        w.updateOverdueUI();
+        expect(badge.classList.contains('overdue-badge-jiggle')).toBe(false);
+    });
+
+    it('closes the overdue sheet when clicking the backdrop', async () => {
+        const w = overdueBadgeWindow();
+        w.document.dispatchEvent(new w.Event('DOMContentLoaded'));
+        await new Promise(r=>setTimeout(r,10));
+
+        w.__test.setChildrenData([overdueChild('a', 6)]);
+        w.updateOverdueUI();
+        w.openOverdueSheet();
+
+        const sheet = w.document.getElementById('overdue-sheet');
+        const backdrop = w.document.getElementById('overdue-sheet-backdrop');
+        expect(sheet.classList.contains('translate-y-full')).toBe(false);
+        expect(backdrop.classList.contains('hidden')).toBe(false);
+        expect(w.document.body.style.overflow).toBe('hidden');
+
+        backdrop.dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
+
+        expect(sheet.classList.contains('translate-y-full')).toBe(true);
+        expect(backdrop.classList.contains('hidden')).toBe(true);
+        expect(w.document.body.style.overflow).toBe('');
+    });
+
+    it('updates the main-list pill color when confirming via the overdue sheet', async () => {
+        const w = overdueBadgeWindow();
+        w.document.dispatchEvent(new w.Event('DOMContentLoaded'));
+        await new Promise(r=>setTimeout(r,10));
+
+        const child = overdueChild('a', 9);
+        w.__test.setChildrenData([child]);
+        w.updateUI();
+        w.updateOverdueUI();
+
+        const mainPill = w.document.querySelector('#children-list .child-time[data-child-id="pc:a"]');
+        const sheetPill = w.document.querySelector('#overdue-sheet-list .child-time[data-child-id="pc:a"]');
+        expect(mainPill).not.toBeNull();
+        expect(sheetPill).not.toBeNull();
+        expect(mainPill.className).toContain('bg-red-500');
+        expect(sheetPill.className).toContain('bg-red-500');
+
+        const sheetCheckbox = w.document.querySelector('#overdue-sheet-list .child-confirmed-checkbox[data-child-id="pc:a"]');
+        sheetCheckbox.checked = true;
+        sheetCheckbox.dispatchEvent(new w.Event('change', { bubbles: true }));
+        await new Promise(r=>setTimeout(r,10));
+
+        // Main-list pill must flip to confirmed gray even though the cached
+        // single entry pointed at the sheet pill.
+        const updatedMainPill = w.document.querySelector('#children-list .child-time[data-child-id="pc:a"]');
+        expect(updatedMainPill.className).toContain('bg-gray-400');
+        expect(updatedMainPill.className).not.toContain('bg-red-500');
+    });
+
+    it('refetches and reseeds the flash baseline after re-selecting a group', async () => {
+        const w = loadWindow({
+            html: '<!doctype html><html><body><div id="children-list"></div></body></html>',
+            url: 'http://localhost/?location_group_id=',
+            fetchImpl: async () => ({ ok: true, json: async () => [pcChild('a')] })
+        });
+        await w.fetchChildrenData();
+        expect(w.__test.getFlashChildIds().size).toBe(0);
+
+        w.history.replaceState(null, '', '?location_group_id=1');
+        await w.fetchChildrenData();
+
+        expect(Array.from(w.__test.getFlashChildIds())).toEqual([]);
+        expect(w.document.querySelectorAll('.child-time').length).toBe(1);
+    });
+
+    it('unchecking all groups via the UI hides visible children but polling continues for overdue badge', async () => {
+        let checkoutsFetchCount = 0;
+        const w = locationGroupWindow();
+        w.window.fetch = async (url) => {
+            if (String(url).includes('/v1/checkins/checkouts')) checkoutsFetchCount++;
+            return { ok: true, json: async () => [] };
+        };
+        w.document.dispatchEvent(new w.Event('DOMContentLoaded'));
+        await new Promise(r=>setTimeout(r,10));
+
+        expect(checkoutsFetchCount).toBe(1); // initial children fetch
+        w.renderLocationGroupSettings([{ id: 1, name: 'A' }, { id: 2, name: 'B' }]);
+
+        const checks = w.document.querySelectorAll('#location-group-checkboxes input');
+        checks.forEach(c => { c.checked = false; c.dispatchEvent(new w.Event('change', {bubbles:true})); });
+        await new Promise(r=>setTimeout(r,10));
+
+        expect(w.getSelectedFromURL().isEmpty).toBe(true);
+        expect(w.__test.getVisibleChildren().length).toBe(0);
+
+        // While empty, scheduled polls still hit the API (so overdue badge sees all groups)
+        const before = checkoutsFetchCount;
+        await w.fetchChildrenData();
+        await w.fetchChildrenData();
+        expect(checkoutsFetchCount).toBe(before + 2);
+
+        // Re-selecting a group shows children again
+        w.document.querySelector('#location-group-checkboxes input[data-lg-id="1"]').checked = true;
+        w.document.querySelector('#location-group-checkboxes input[data-lg-id="1"]').dispatchEvent(new w.Event('change', {bubbles:true}));
+        await new Promise(r=>setTimeout(r,10));
+        expect(w.getSelectedFromURL().isEmpty).toBe(false);
+    });
+
+    it('resolves location_group_name filters to ids once groups are known', () => {
+        const w = loadWindow({
+            html: '<!doctype html><html><body><div id="location-group-checkboxes"></div></body></html>',
+            url: 'http://localhost/?location_group_name=Grace'
+        });
+        const sel = w.getSelectedFromURL();
+        expect(sel.names.has('Grace')).toBe(true);
+        expect(sel.ids.size).toBe(0);
+
+        w.renderLocationGroupSettings([{ id: 1, name: 'Grace' }, { id: 2, name: 'Ada' }]);
+
+        const resolved = w.getSelectedFromURL();
+        expect(resolved.ids.has(1)).toBe(true);
+        expect(resolved.ids.has(2)).toBe(false);
+    });
+
+    it('keeps name-filtered children visible when ids are also selected', () => {
+        const w = loadWindow({
+            html: '<!doctype html><html><body><div id="location-group-checkboxes"></div></body></html>',
+            url: 'http://localhost/?location_group_id=2&location_group_name=Grace'
+        });
+        w.renderLocationGroupSettings([{ id: 1, name: 'Grace' }, { id: 2, name: 'Ada' }]);
+        w.__test.setChildrenData([
+            { source: 'planning_center', planning_center_id: '1', location_group_id: 1 },
+            { source: 'planning_center', planning_center_id: '2', location_group_id: 2 }
+        ]);
+        const visible = w.__test.getVisibleChildren().map((c) => c.planning_center_id);
+        expect(visible).toEqual(['1', '2']);
+    });
+
+    it('escapes location group ids in the settings markup', () => {
+        const w = locationGroupWindow();
+        w.renderLocationGroupSettings([{ id: '1" onmouseover="alert(1)', name: 'Sneaky' }]);
+        const html = w.document.getElementById('location-group-checkboxes').innerHTML;
+        expect(html).not.toContain('data-lg-id="1" onmouseover=');
+        expect(html).toContain('&quot;');
     });
 });

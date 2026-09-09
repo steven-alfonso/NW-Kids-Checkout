@@ -1,0 +1,13 @@
+DROP INDEX IF EXISTS idx_manual_created_at;
+DROP INDEX IF EXISTS idx_checkins_checked_out_at_fetched_at;
+DROP INDEX IF EXISTS idx_checkins_event_id_checked_out_at;
+DROP INDEX IF EXISTS idx_checkins_location_id_checked_out_at;
+
+-- Recreate original singles for rollback (structure.sql pre-condensed)
+CREATE INDEX IF NOT EXISTS idx_checked_out_at ON checkins (checked_out_at);
+CREATE INDEX IF NOT EXISTS idx_checkins_fetched_at ON checkins (fetched_at);
+CREATE INDEX IF NOT EXISTS idx_checkins_event_id ON checkins (event_id);
+CREATE INDEX IF NOT EXISTS idx_checkins_location_id ON checkins (location_id);
+CREATE INDEX IF NOT EXISTS idx_locations_event_id ON locations (event_id);
+CREATE INDEX IF NOT EXISTS idx_locations_location_group_id ON locations (location_group_id);
+CREATE INDEX IF NOT EXISTS idx_events_location_group_id ON events (location_group_id);

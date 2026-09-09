@@ -18,6 +18,8 @@ type Filter struct {
 	EventID            int64
 	LocationName       string
 	LocationGroupID    int64
+	LocationGroupIDs   []int64
+	IncludeUnassigned  bool
 	LocationGroupName  string
 	FirstName          string
 	LastName           string
@@ -38,6 +40,7 @@ type Checkin struct {
 	CheckedOutAt          time.Time
 	FetchedAt             time.Time
 	CheckedOutConfirmedAt time.Time
+	LocationGroupID       *int64
 }
 
 type Repo interface {
@@ -46,6 +49,7 @@ type Repo interface {
 	SetCheckedOutConfirmedAt(ctx context.Context, planningCenterID string, confirmed bool) (Checkin, error)
 	RemoveOldCheckins(ctx context.Context, olderThan time.Time) (deletedCount int64, err error)
 	DeleteCheckin(ctx context.Context, id int64) error
+	DeleteAllCheckins(ctx context.Context) (int64, error)
 }
 
 type sqliteRepo struct {
@@ -71,11 +75,11 @@ func (s *sqliteRepo) ListCheckins(ctx context.Context, filter Filter) ([]Checkin
 		"checkins.checked_out_at",
 		"checkins.fetched_at",
 		"checkins.checked_out_confirmed_at",
-	).From("checkins")
+		"locations.location_group_id",
+	).From("checkins").LeftJoin("locations ON locations.id = checkins.location_id")
+	joinedTables["locations"] = true
 
 	if filter.LocationName != "" {
-		joinedTables["locations"] = true
-		builder = builder.Join("locations ON locations.id = checkins.location_id")
 		builder = builder.Where(squirrel.Eq{"locations.name": filter.LocationName})
 	}
 
@@ -83,19 +87,20 @@ func (s *sqliteRepo) ListCheckins(ctx context.Context, filter Filter) ([]Checkin
 		builder = builder.Where(squirrel.Eq{"checkins.id": filter.ID})
 	}
 
-	if filter.LocationGroupID > 0 {
-		if !joinedTables["locations"] {
-			builder = builder.Join("locations ON locations.id = checkins.location_id")
-			joinedTables["locations"] = true
-		}
+	if len(filter.LocationGroupIDs) > 0 && filter.IncludeUnassigned {
+		builder = builder.Where(squirrel.Or{
+			squirrel.Eq{"locations.location_group_id": filter.LocationGroupIDs},
+			squirrel.Eq{"locations.location_group_id": nil},
+		})
+	} else if len(filter.LocationGroupIDs) > 0 {
+		builder = builder.Where(squirrel.Eq{"locations.location_group_id": filter.LocationGroupIDs})
+	} else if filter.IncludeUnassigned {
+		builder = builder.Where(squirrel.Eq{"locations.location_group_id": nil})
+	} else if filter.LocationGroupID > 0 {
 		builder = builder.Where(squirrel.Eq{"locations.location_group_id": filter.LocationGroupID})
 	}
 
 	if filter.LocationGroupName != "" {
-		if !joinedTables["locations"] {
-			builder = builder.Join("locations ON locations.id = checkins.location_id")
-			joinedTables["locations"] = true
-		}
 		if !joinedTables["location_groups"] {
 			builder = builder.Join("location_groups ON location_groups.id = locations.location_group_id")
 			joinedTables["location_groups"] = true
@@ -150,6 +155,7 @@ func (s *sqliteRepo) ListCheckins(ctx context.Context, filter Filter) ([]Checkin
 		var checkedOutAt sql.NullTime
 		var fetchedAt sql.NullTime
 		var checkedOutConfirmedAt sql.NullTime
+		var lgID sql.NullInt64
 
 		err := rows.Scan(
 			&checkin.ID,
@@ -161,6 +167,7 @@ func (s *sqliteRepo) ListCheckins(ctx context.Context, filter Filter) ([]Checkin
 			&checkedOutAt,
 			&fetchedAt,
 			&checkedOutConfirmedAt,
+			&lgID,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("scanning checkin: %w", err)
@@ -176,6 +183,11 @@ func (s *sqliteRepo) ListCheckins(ctx context.Context, filter Filter) ([]Checkin
 
 		if checkedOutConfirmedAt.Valid {
 			checkin.CheckedOutConfirmedAt = checkedOutConfirmedAt.Time
+		}
+
+		if lgID.Valid {
+			v := lgID.Int64
+			checkin.LocationGroupID = &v
 		}
 
 		checkins = append(checkins, checkin)
@@ -314,4 +326,14 @@ func (s *sqliteRepo) DeleteCheckin(ctx context.Context, id int64) error {
 	}
 
 	return nil
+}
+
+func (s *sqliteRepo) DeleteAllCheckins(ctx context.Context) (int64, error) {
+	res, err := squirrel.Delete("checkins").RunWith(s.db).ExecContext(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("deleting all checkins: %w", err)
+	}
+
+	ra, _ := res.RowsAffected()
+	return ra, nil
 }

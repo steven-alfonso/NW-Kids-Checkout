@@ -3,14 +3,19 @@ package manualcheckin
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"kids-checkin/internal/repo"
 
 	"github.com/Masterminds/squirrel"
 	"github.com/google/uuid"
+	"github.com/mattn/go-sqlite3"
 )
+
+var ErrInvalidManualCheckin = errors.New("invalid manual checkin")
 
 type Filter struct {
 	ID                 int64
@@ -28,6 +33,7 @@ type ManualCheckin struct {
 	ID                    int64
 	CreatedAt             time.Time
 	PublicID              string
+	ChildID               int64
 	FirstName             string
 	LastName              string
 	CheckedOutAt          time.Time
@@ -40,6 +46,7 @@ type Repo interface {
 	SetManualCheckedOutAt(ctx context.Context, id int64, checkedOut bool) (ManualCheckin, error)
 	SetManualCheckedOutConfirmedAt(ctx context.Context, id int64, confirmed bool) (ManualCheckin, error)
 	RemoveOldManualCheckins(ctx context.Context, olderThan time.Time) (deletedCount int64, err error)
+	DeleteAllManualCheckins(ctx context.Context) (int64, error)
 }
 
 type sqliteRepo struct {
@@ -57,6 +64,7 @@ func (s *sqliteRepo) ListManualCheckins(ctx context.Context, filter Filter) ([]M
 		"manual_checkins.id",
 		"manual_checkins.created_at",
 		"manual_checkins.public_id",
+		"manual_checkins.child_id",
 		"manual_checkins.first_name",
 		"manual_checkins.last_name",
 		"manual_checkins.checked_out_at",
@@ -111,13 +119,16 @@ func (s *sqliteRepo) ListManualCheckins(ctx context.Context, filter Filter) ([]M
 	manualCheckins := make([]ManualCheckin, 0)
 	for rows.Next() {
 		var manualCheckin ManualCheckin
+		var publicID sql.NullString
 		var checkedOutAt sql.NullTime
 		var checkedOutConfirmedAt sql.NullTime
+		var childID sql.NullInt64
 
 		err := rows.Scan(
 			&manualCheckin.ID,
 			&manualCheckin.CreatedAt,
-			&manualCheckin.PublicID,
+			&publicID,
+			&childID,
 			&manualCheckin.FirstName,
 			&manualCheckin.LastName,
 			&checkedOutAt,
@@ -125,6 +136,14 @@ func (s *sqliteRepo) ListManualCheckins(ctx context.Context, filter Filter) ([]M
 		)
 		if err != nil {
 			return nil, fmt.Errorf("scanning manual checkin: %w", err)
+		}
+
+		if publicID.Valid {
+			manualCheckin.PublicID = publicID.String
+		}
+
+		if childID.Valid {
+			manualCheckin.ChildID = childID.Int64
 		}
 
 		if checkedOutAt.Valid {
@@ -142,6 +161,11 @@ func (s *sqliteRepo) ListManualCheckins(ctx context.Context, filter Filter) ([]M
 }
 
 func (s *sqliteRepo) CreateManualCheckin(ctx context.Context, manualCheckin ManualCheckin) (ManualCheckin, error) {
+	// Names required even with child_id to ensure standalone guest checkin data completeness; stricter than DB CHECK which permits blank names with child_id.
+	if strings.TrimSpace(manualCheckin.FirstName) == "" || strings.TrimSpace(manualCheckin.LastName) == "" {
+		return ManualCheckin{}, ErrInvalidManualCheckin
+	}
+
 	if manualCheckin.PublicID == "" {
 		manualCheckin.PublicID = uuid.New().String()
 	}
@@ -158,14 +182,33 @@ func (s *sqliteRepo) CreateManualCheckin(ctx context.Context, manualCheckin Manu
 		checkedOutConfirmedAt = &tt
 	}
 
+	var childID *int64
+	if manualCheckin.ChildID > 0 {
+		id := manualCheckin.ChildID
+		childID = &id
+
+		var exists int
+		err := squirrel.Select("1").From("children").Where(squirrel.Eq{"id": manualCheckin.ChildID}).RunWith(s.db).QueryRowContext(ctx).Scan(&exists)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return ManualCheckin{}, fmt.Errorf("%w: child %d not found", ErrInvalidManualCheckin, manualCheckin.ChildID)
+			}
+			return ManualCheckin{}, fmt.Errorf("validating child_id: %w", err)
+		}
+	}
+
 	builder := squirrel.Insert("manual_checkins").
 		RunWith(s.db).
-		Columns("public_id", "first_name", "last_name", "checked_out_at", "checked_out_confirmed_at").
-		Values(manualCheckin.PublicID, manualCheckin.FirstName, manualCheckin.LastName, checkedOutAt, checkedOutConfirmedAt)
+		Columns("public_id", "child_id", "first_name", "last_name", "checked_out_at", "checked_out_confirmed_at").
+		Values(manualCheckin.PublicID, childID, manualCheckin.FirstName, manualCheckin.LastName, checkedOutAt, checkedOutConfirmedAt)
 
 	res, err := builder.ExecContext(ctx)
 	if err != nil {
-		return ManualCheckin{}, err
+		var sqliteErr sqlite3.Error
+		if errors.As(err, &sqliteErr) && sqliteErr.ExtendedCode == sqlite3.ErrConstraintForeignKey {
+			return ManualCheckin{}, fmt.Errorf("%w: %w", ErrInvalidManualCheckin, err)
+		}
+		return ManualCheckin{}, fmt.Errorf("creating manual checkin: %w", err)
 	}
 
 	id, err := res.LastInsertId()
@@ -277,4 +320,14 @@ func (s *sqliteRepo) RemoveOldManualCheckins(ctx context.Context, olderThan time
 
 	ra, _ := res.RowsAffected()
 	return ra, err
+}
+
+func (s *sqliteRepo) DeleteAllManualCheckins(ctx context.Context) (int64, error) {
+	res, err := squirrel.Delete("manual_checkins").RunWith(s.db).ExecContext(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("deleting all manual checkins: %w", err)
+	}
+
+	ra, _ := res.RowsAffected()
+	return ra, nil
 }

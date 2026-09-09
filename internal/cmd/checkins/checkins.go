@@ -31,6 +31,22 @@ var Commands = []*cli.Command{
 		},
 		Action: deleteOlderThanCmd,
 	},
+	{
+		Name:  "seed-preview",
+		Usage: "Deletes all checkins/manual_checkins and seeds preview data mirroring preview.js",
+		Flags: []cli.Flag{
+			&cli.BoolFlag{
+				Name:  "force",
+				Usage: "Required to confirm destructive delete",
+			},
+			&cli.StringFlag{
+				Name:    "db-file",
+				Value:   "kids-checkin.db",
+				Sources: cli.NewValueSourceChain(cli.EnvVar("DB_FILE")),
+			},
+		},
+		Action: seedPreviewCmd,
+	},
 }
 
 func deleteOlderThanCmd(ctx context.Context, cmd *cli.Command) error {

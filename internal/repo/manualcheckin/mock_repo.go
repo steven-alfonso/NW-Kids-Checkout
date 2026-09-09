@@ -20,6 +20,9 @@ type MockRepo struct {
 
 	RemoveOldManualCheckinsFunc          func(ctx context.Context, olderThan time.Time) (deletedCount int64, err error)
 	RemoveOldManualCheckinsFuncCallCount int
+
+	DeleteAllManualCheckinsFunc          func(ctx context.Context) (int64, error)
+	DeleteAllManualCheckinsFuncCallCount int
 }
 
 func (repo *MockRepo) ListManualCheckins(ctx context.Context, filter Filter) ([]ManualCheckin, error) {
@@ -65,4 +68,13 @@ func (repo *MockRepo) RemoveOldManualCheckins(ctx context.Context, olderThan tim
 	}
 
 	panic("MockRepo.RemoveOldManualCheckins not implemented")
+}
+
+func (repo *MockRepo) DeleteAllManualCheckins(ctx context.Context) (int64, error) {
+	repo.DeleteAllManualCheckinsFuncCallCount++
+	if repo.DeleteAllManualCheckinsFunc != nil {
+		return repo.DeleteAllManualCheckinsFunc(ctx)
+	}
+
+	panic("MockRepo.DeleteAllManualCheckins not implemented")
 }
