@@ -36,7 +36,7 @@ This file guides coding agents working in this repo. Keep changes small, follow 
 
 ## Repo structure and key tech
 
-- Language: Go 1.25 (see `go.mod`).
+- Language: Go 1.27 (see `go.mod`).
 - Web framework: Fiber (`github.com/gofiber/fiber/v2`).
 - CLI: `urfave/cli/v3`.
 - Database: SQLite with `squirrel` query builder.

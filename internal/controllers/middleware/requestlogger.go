@@ -42,8 +42,7 @@ func HTTPAccessLogger() fiber.Handler {
 
 		status := c.Response().StatusCode()
 		if err != nil {
-			var e *fiber.Error
-			if errors.As(err, &e) {
+			if e, ok := errors.AsType[*fiber.Error](err); ok {
 				status = e.Code
 			}
 		}

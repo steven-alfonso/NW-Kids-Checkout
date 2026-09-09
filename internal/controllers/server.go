@@ -62,10 +62,9 @@ func StartServer(port int, dbFilepath string) error {
 			code := fiber.StatusInternalServerError
 
 			// Retrieve the custom status code if it's a *fiber.Error
-			var e *fiber.Error
 
 			message := ""
-			if errors.As(err, &e) {
+			if e, ok := errors.AsType[*fiber.Error](err); ok {
 				message = e.Message
 				code = e.Code
 			}

@@ -393,7 +393,7 @@ func parseLocationGroupIDs(c *fiber.Ctx) ([]int64, error) {
 		if parseErr != nil || string(key) != "location_group_id" {
 			return
 		}
-		for _, part := range strings.Split(string(value), ",") {
+		for part := range strings.SplitSeq(string(value), ",") {
 			part = strings.TrimSpace(part)
 			if part == "" {
 				continue

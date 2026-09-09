@@ -754,8 +754,7 @@ func (s *Service) processEventCheckouts(ctx context.Context, ev event.Event, now
 	checkouts, err := s.pcClient.GetCheckoutsForEvent(ctx, currentEvent.PlanningCenterID, timeToUse, 0)
 
 	if err != nil {
-		var timeoutErr *planningcenter.TimeoutError
-		if errors.As(err, &timeoutErr) {
+		if _, ok := errors.AsType[*planningcenter.TimeoutError](err); ok {
 			logger.FromContext(ctx).WarnContext(ctx, "timeout fetching checkouts for event", slog.String("event_id", currentEvent.PlanningCenterID), slog.String("error", err.Error()))
 			s.recordRetryFailure(ctx, currentEvent.ID, now, nil)
 			return errEventTimeout{eventID: currentEvent.PlanningCenterID, err: err}
