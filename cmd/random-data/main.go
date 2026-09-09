@@ -127,8 +127,8 @@ var lastNames = []string{
 var grades = []string{
 	"None", "Pre-K", "Kindergarten", "1st", "2nd", "3rd", "4th", "5th", "6th", "7th", "8th", "9th", "10th", "11th", "12th",
 }
-var genders = []string{"Boy", "Girl"}
-var relationships = []string{"Parent", "Guardian", "Grandparent", "Other"}
+var genders = []string{"boy", "girl"}
+var relationships = []string{"parent", "guardian", "grandparent", "other"}
 var cities = []string{"Seattle", "Bellevue", "Redmond", "Kirkland", "Renton", "Tacoma", "Everett", "Kent"}
 var states = []string{"WA", "OR", "CA", "ID", "NV"}
 

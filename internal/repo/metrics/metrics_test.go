@@ -250,7 +250,7 @@ func (f fixture) insertGuestSubmission(t *testing.T, publicID string, createdAt 
 		_, err := squirrel.Insert("children").
 			RunWith(f.testDB).
 			Columns("parent_id", "first_name", "last_name", "dob", "grade", "gender", "dietary_restrictions", "special_needs", "relationship", "created_at").
-			Values(parentID, "Kid", "One", "2020-01-01", "k", "Boy", "", "", "Parent", createdAt).
+			Values(parentID, "Kid", "One", "2020-01-01", "k", "boy", "", "", "parent", createdAt).
 			ExecContext(t.Context())
 		require.NoError(t, err)
 	}

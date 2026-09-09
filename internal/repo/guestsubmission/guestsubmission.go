@@ -148,9 +148,22 @@ func NewRepo(db *sql.DB) Repo {
 	return &sqliteRepo{db: db}
 }
 
+func normalizeGender(g string) string {
+	return strings.ToLower(strings.TrimSpace(g))
+}
+
+func normalizeRelationship(r string) string {
+	return strings.ToLower(strings.TrimSpace(r))
+}
+
 func (s *sqliteRepo) CreateSubmission(ctx context.Context, parent Parent, children []Child, safetyAck bool) (Submission, error) {
 	if len(children) == 0 {
 		return Submission{}, errors.New("at least one child is required")
+	}
+	// Normalize gender/relationship to lowercase to match DB CHECK constraints.
+	for i := range children {
+		children[i].Gender = normalizeGender(children[i].Gender)
+		children[i].Relationship = normalizeRelationship(children[i].Relationship)
 	}
 
 	tx, err := s.db.BeginTx(ctx, nil)

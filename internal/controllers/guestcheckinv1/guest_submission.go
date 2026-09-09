@@ -130,15 +130,15 @@ var allowedGrades = map[string]struct{}{
 }
 
 var allowedGenders = map[string]struct{}{
-	"Boy":  {},
-	"Girl": {},
+	"boy":  {},
+	"girl": {},
 }
 
 var allowedRelationships = map[string]struct{}{
-	"Parent":      {},
-	"Guardian":    {},
-	"Grandparent": {},
-	"Other":       {},
+	"parent":      {},
+	"guardian":    {},
+	"grandparent": {},
+	"other":       {},
 }
 
 var zipRegexp = regexp.MustCompile(`^\d{5}(-\d{4})?$`)
@@ -245,11 +245,11 @@ func validateCreateSubmissionPayload(p createSubmissionPayload) error {
 		if _, ok := allowedGrades[child.Grade]; !ok {
 			return fmt.Errorf("child %d: grade must be one of None, Pre-K, Kindergarten, 1st, 2nd, 3rd, 4th, 5th, 6th, 7th, 8th, 9th, 10th, 11th, 12th", i+1)
 		}
-		if _, ok := allowedGenders[child.Gender]; !ok {
-			return fmt.Errorf("child %d: gender must be Boy or Girl", i+1)
+		if _, ok := allowedGenders[strings.ToLower(strings.TrimSpace(child.Gender))]; !ok {
+			return fmt.Errorf("child %d: gender must be boy or girl", i+1)
 		}
-		if _, ok := allowedRelationships[child.Relationship]; !ok {
-			return fmt.Errorf("child %d: relationship must be one of Parent, Guardian, Grandparent, Other", i+1)
+		if _, ok := allowedRelationships[strings.ToLower(strings.TrimSpace(child.Relationship))]; !ok {
+			return fmt.Errorf("child %d: relationship must be one of parent, guardian, grandparent, other", i+1)
 		}
 		if len(child.DietaryRestrictions) > 500 {
 			return fmt.Errorf("child %d: dietary_restrictions must be at most 500 characters", i+1)
@@ -304,10 +304,10 @@ func (controller *Controller) CreateSubmission(c *fiber.Ctx) error {
 			LastName:            child.LastName,
 			DOB:                 child.DOB,
 			Grade:               child.Grade,
-			Gender:              child.Gender,
+			Gender:              strings.ToLower(strings.TrimSpace(child.Gender)),
 			DietaryRestrictions: child.DietaryRestrictions,
 			SpecialNeeds:        child.SpecialNeeds,
-			Relationship:        child.Relationship,
+			Relationship:        strings.ToLower(strings.TrimSpace(child.Relationship)),
 		})
 	}
 

@@ -167,7 +167,7 @@ func Test_sqliteRepo_CreateManualCheckin(t *testing.T) {
 	seedParentID, err := res.LastInsertId()
 	require.NoError(t, err)
 	res, err = squirrel.Insert("children").Columns("parent_id", "first_name", "last_name", "dob", "grade", "gender", "dietary_restrictions", "special_needs", "relationship", "created_at").
-		Values(seedParentID, "Seed", "Child", "2020-01-01", "k", "Boy", "", "", "Parent", time.Now().UTC()).RunWith(testDB).ExecContext(t.Context())
+		Values(seedParentID, "Seed", "Child", "2020-01-01", "k", "boy", "", "", "parent", time.Now().UTC()).RunWith(testDB).ExecContext(t.Context())
 	require.NoError(t, err)
 	seedChildID, err := res.LastInsertId()
 	require.NoError(t, err)
@@ -448,7 +448,7 @@ func Test_sqliteRepo_CreateManualCheckinWithChildID(t *testing.T) {
 	parentID, err := res.LastInsertId()
 	require.NoError(t, err)
 	res, err = squirrel.Insert("children").Columns("parent_id", "first_name", "last_name", "dob", "grade", "gender", "dietary_restrictions", "special_needs", "relationship", "created_at").
-		Values(parentID, "Timmy", "Smith", "2020-01-01", "k", "Boy", "", "", "Parent", time.Now().UTC()).RunWith(testDB).ExecContext(t.Context())
+		Values(parentID, "Timmy", "Smith", "2020-01-01", "k", "boy", "", "", "parent", time.Now().UTC()).RunWith(testDB).ExecContext(t.Context())
 	require.NoError(t, err)
 	childID, err := res.LastInsertId()
 	require.NoError(t, err)

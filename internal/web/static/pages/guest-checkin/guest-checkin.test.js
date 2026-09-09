@@ -72,8 +72,8 @@ function fillValidChild(window, rowIdx = 0) {
     const fn = row.querySelector('.child-first-name'); if (fn) fn.value = 'Timmy';
     const ln = row.querySelector('.child-last-name'); if (ln) ln.value = 'Smith';
     const dob = row.querySelector('.child-dob'); if (dob) dob.value = '2020-01-01';
-    const gender = row.querySelector('.child-gender'); if (gender) gender.value = 'Boy';
-    const rel = row.querySelector('.child-relationship'); if (rel) rel.value = 'Parent';
+    const gender = row.querySelector('.child-gender'); if (gender) gender.value = 'boy';
+    const rel = row.querySelector('.child-relationship'); if (rel) rel.value = 'parent';
 }
 
 afterEach(() => {
@@ -144,8 +144,8 @@ describe('kiosk form', () => {
         window.document.querySelector('.child-last-name').value = 'Smith';
         window.document.querySelector('.child-dob').value = '2020-01-01';
         window.document.querySelector('.child-grade').value = '1st';
-        window.document.querySelector('.child-gender').value = 'Boy';
-        window.document.querySelector('.child-relationship').value = 'Parent';
+        window.document.querySelector('.child-gender').value = 'boy';
+        window.document.querySelector('.child-relationship').value = 'parent';
 
         const payload = window.buildPayload();
         expect(payload.parent.first_name).toBe('John');
@@ -169,8 +169,8 @@ describe('kiosk form', () => {
         window.document.querySelector('.child-first-name').value = 'Timmy';
         window.document.querySelector('.child-last-name').value = 'Smith';
         window.document.querySelector('.child-dob').value = '2020-01-01';
-        window.document.querySelector('.child-gender').value = 'Boy';
-        window.document.querySelector('.child-relationship').value = 'Parent';
+        window.document.querySelector('.child-gender').value = 'boy';
+        window.document.querySelector('.child-relationship').value = 'parent';
         await window.submitKioskForm();
         expect(window.document.getElementById('welcome-panel').classList.contains('hidden')).toBe(false);
         expect(window.document.getElementById('parent-first-name').value).toBe('');
@@ -233,8 +233,8 @@ describe('kiosk form', () => {
         window.document.querySelector('.child-first-name').value = 'Timmy';
         window.document.querySelector('.child-last-name').value = 'Smith';
         window.document.querySelector('.child-dob').value = '2020-01-01';
-        window.document.querySelector('.child-gender').value = 'Boy';
-        window.document.querySelector('.child-relationship').value = 'Parent';
+        window.document.querySelector('.child-gender').value = 'boy';
+        window.document.querySelector('.child-relationship').value = 'parent';
 
         expect(window.validateForm()).toBe(false);
         expect(window.document.getElementById('parent-phone').validationMessage).toContain('7 digits');
@@ -264,8 +264,8 @@ describe('kiosk form', () => {
         window.document.querySelector('.child-first-name').value = 'Timmy';
         window.document.querySelector('.child-last-name').value = 'Smith';
         window.document.querySelector('.child-dob').value = '2020-01-01';
-        window.document.querySelector('.child-gender').value = 'Boy';
-        window.document.querySelector('.child-relationship').value = 'Parent';
+        window.document.querySelector('.child-gender').value = 'boy';
+        window.document.querySelector('.child-relationship').value = 'parent';
 
         expect(window.validateForm()).toBe(false);
         expect(window.document.getElementById('parent-phone').validationMessage).toContain('Phone is required');
@@ -285,8 +285,8 @@ describe('kiosk form', () => {
         window.document.querySelector('.child-first-name').value = 'Timmy';
         window.document.querySelector('.child-last-name').value = 'Smith';
         window.document.querySelector('.child-dob').value = '2020-01-01';
-        window.document.querySelector('.child-gender').value = 'Boy';
-        window.document.querySelector('.child-relationship').value = 'Parent';
+        window.document.querySelector('.child-gender').value = 'boy';
+        window.document.querySelector('.child-relationship').value = 'parent';
         expect(window.validateForm()).toBe(true);
     });
 
@@ -304,8 +304,8 @@ describe('kiosk form', () => {
         window.document.querySelector('.child-first-name').value = 'Timmy';
         window.document.querySelector('.child-last-name').value = 'Smith';
         window.document.querySelector('.child-dob').value = '2020-01-01';
-        window.document.querySelector('.child-gender').value = 'Boy';
-        window.document.querySelector('.child-relationship').value = 'Parent';
+        window.document.querySelector('.child-gender').value = 'boy';
+        window.document.querySelector('.child-relationship').value = 'parent';
         expect(window.validateForm()).toBe(false);
         expect(window.document.getElementById('parent-phone').validationMessage).toContain('Phone is required');
     });
@@ -387,8 +387,8 @@ describe('kiosk form', () => {
         window.document.querySelector('.child-first-name').value = 'Timmy';
         window.document.querySelector('.child-last-name').value = 'Smith';
         window.document.querySelector('.child-dob').value = '2020-01-01';
-        window.document.querySelector('.child-gender').value = 'Boy';
-        window.document.querySelector('.child-relationship').value = 'Parent';
+        window.document.querySelector('.child-gender').value = 'boy';
+        window.document.querySelector('.child-relationship').value = 'parent';
         expect(window.validateForm()).toBe(true);
     });
 
@@ -405,8 +405,8 @@ describe('kiosk form', () => {
         window.document.querySelector('.child-first-name').value = '';
         window.document.querySelector('.child-last-name').value = 'Smith';
         window.document.querySelector('.child-dob').value = '2020-01-01';
-        window.document.querySelector('.child-gender').value = 'Boy';
-        window.document.querySelector('.child-relationship').value = 'Parent';
+        window.document.querySelector('.child-gender').value = 'boy';
+        window.document.querySelector('.child-relationship').value = 'parent';
         expect(window.validateForm()).toBe(false);
         expect(window.document.querySelector('.child-first-name').validationMessage).toContain('First name is required');
     });
@@ -424,8 +424,8 @@ describe('kiosk form', () => {
         window.document.querySelector('.child-first-name').value = 'Timmy';
         window.document.querySelector('.child-last-name').value = '';
         window.document.querySelector('.child-dob').value = '2020-01-01';
-        window.document.querySelector('.child-gender').value = 'Boy';
-        window.document.querySelector('.child-relationship').value = 'Parent';
+        window.document.querySelector('.child-gender').value = 'boy';
+        window.document.querySelector('.child-relationship').value = 'parent';
         expect(window.validateForm()).toBe(false);
         expect(window.document.querySelector('.child-last-name').validationMessage).toContain('Last name is required');
     });
@@ -463,13 +463,13 @@ describe('kiosk form', () => {
         rows[0].querySelector('.child-first-name').value = 'Timmy';
         rows[0].querySelector('.child-last-name').value = 'Smith';
         rows[0].querySelector('.child-dob').value = '2020-01-01';
-        rows[0].querySelector('.child-gender').value = 'Boy';
-        rows[0].querySelector('.child-relationship').value = 'Parent';
+        rows[0].querySelector('.child-gender').value = 'boy';
+        rows[0].querySelector('.child-relationship').value = 'parent';
         rows[1].querySelector('.child-first-name').value = '';
         rows[1].querySelector('.child-last-name').value = 'Smith';
         rows[1].querySelector('.child-dob').value = '2020-01-01';
-        rows[1].querySelector('.child-gender').value = 'Boy';
-        rows[1].querySelector('.child-relationship').value = 'Parent';
+        rows[1].querySelector('.child-gender').value = 'boy';
+        rows[1].querySelector('.child-relationship').value = 'parent';
         expect(window.validateForm()).toBe(false);
         expect(rows[1].querySelector('.child-first-name').validationMessage).toContain('First name is required');
     });
@@ -526,8 +526,8 @@ describe('kiosk form', () => {
         expect(window.document.querySelector('.child-dob').validationMessage).toContain('Birthdate cannot be in the future');
         // past date should pass (phone required, etc. already satisfied)
         window.document.querySelector('.child-dob').value = '2020-01-01';
-        window.document.querySelector('.child-gender').value = 'Boy';
-        window.document.querySelector('.child-relationship').value = 'Parent';
+        window.document.querySelector('.child-gender').value = 'boy';
+        window.document.querySelector('.child-relationship').value = 'parent';
         expect(window.validateForm()).toBe(true);
     });
 
@@ -544,8 +544,8 @@ describe('kiosk form', () => {
         window.document.querySelector('.child-first-name').value = 'Timmy';
         window.document.querySelector('.child-last-name').value = 'Smith';
         window.document.querySelector('.child-dob').value = '2020-01-01';
-        window.document.querySelector('.child-gender').value = 'Boy';
-        window.document.querySelector('.child-relationship').value = 'Parent';
+        window.document.querySelector('.child-gender').value = 'boy';
+        window.document.querySelector('.child-relationship').value = 'parent';
         window.fetch = vi.fn().mockResolvedValue({
             ok: false,
             status: 400,
@@ -578,8 +578,8 @@ describe('kiosk form', () => {
         window.document.querySelector('.child-first-name').value = 'Timmy';
         window.document.querySelector('.child-last-name').value = 'Smith';
         window.document.querySelector('.child-dob').value = '2020-01-01';
-        window.document.querySelector('.child-gender').value = 'Boy';
-        window.document.querySelector('.child-relationship').value = 'Parent';
+        window.document.querySelector('.child-gender').value = 'boy';
+        window.document.querySelector('.child-relationship').value = 'parent';
         window.fetch = vi.fn().mockResolvedValue({
             ok: true,
             status: 200,
@@ -609,8 +609,8 @@ describe('kiosk form', () => {
         window.document.querySelector('.child-first-name').value = 'Timmy';
         window.document.querySelector('.child-last-name').value = 'Smith';
         window.document.querySelector('.child-dob').value = '2020-01-01';
-        window.document.querySelector('.child-gender').value = 'Boy';
-        window.document.querySelector('.child-relationship').value = 'Parent';
+        window.document.querySelector('.child-gender').value = 'boy';
+        window.document.querySelector('.child-relationship').value = 'parent';
         window.fetch = vi.fn().mockRejectedValue(new Error('Network error'));
         await window.submitKioskForm();
         const errorEl = window.document.getElementById('kiosk-error');
@@ -632,8 +632,8 @@ describe('kiosk form', () => {
         window.document.querySelector('.child-first-name').value = 'Timmy';
         window.document.querySelector('.child-last-name').value = 'Smith';
         window.document.querySelector('.child-dob').value = '2020-01-01';
-        window.document.querySelector('.child-gender').value = 'Boy';
-        window.document.querySelector('.child-relationship').value = 'Parent';
+        window.document.querySelector('.child-gender').value = 'boy';
+        window.document.querySelector('.child-relationship').value = 'parent';
         let resolveFetch;
         const fetchPromise = new Promise(resolve => { resolveFetch = resolve; });
         window.fetch = vi.fn().mockReturnValue(fetchPromise);
@@ -670,8 +670,8 @@ describe('kiosk form', () => {
         window.document.querySelector('.child-first-name').value = 'Timmy';
         window.document.querySelector('.child-last-name').value = 'Smith';
         window.document.querySelector('.child-dob').value = '2020-01-01';
-        window.document.querySelector('.child-gender').value = 'Boy';
-        window.document.querySelector('.child-relationship').value = 'Parent';
+        window.document.querySelector('.child-gender').value = 'boy';
+        window.document.querySelector('.child-relationship').value = 'parent';
         window.fetch = vi.fn().mockResolvedValue({
             ok: false,
             status: 500,

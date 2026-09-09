@@ -11,8 +11,16 @@ function setKioskError(message) {
 }
 
 const GRADE_OPTIONS = ['None', 'Pre-K', 'Kindergarten', '1st', '2nd', '3rd', '4th', '5th', '6th', '7th', '8th', '9th', '10th', '11th', '12th'];
-const GENDER_OPTIONS = ['Boy', 'Girl'];
-const RELATIONSHIP_OPTIONS = ['Parent', 'Guardian', 'Grandparent', 'Other'];
+const GENDER_OPTIONS = [
+    { value: 'boy', label: 'Boy' },
+    { value: 'girl', label: 'Girl' },
+];
+const RELATIONSHIP_OPTIONS = [
+    { value: 'parent', label: 'Parent' },
+    { value: 'guardian', label: 'Guardian' },
+    { value: 'grandparent', label: 'Grandparent' },
+    { value: 'other', label: 'Other' },
+];
 const MAX_CHILDREN = 10;
 
 const DIETARY_PRESETS = ['Peanut allergy', 'Tree nut allergy', 'Dairy allergy', 'Egg allergy', 'Soy allergy', 'Sesame allergy', 'Gluten free', 'Avoid food dye'];
@@ -69,8 +77,8 @@ function childRowTemplate() {
     const row = document.createElement('div');
     row.className = 'child-row rounded-lg border border-slate-200 bg-slate-50 p-5';
     const gradeOptions = GRADE_OPTIONS.map(grade => `<option value="${grade}">${grade}</option>`).join('');
-    const genderOptions = GENDER_OPTIONS.map(g => `<option value="${g}">${g}</option>`).join('');
-    const relationshipOptions = RELATIONSHIP_OPTIONS.map(r => `<option value="${r}">${r}</option>`).join('');
+    const genderOptions = GENDER_OPTIONS.map(o => `<option value="${o.value}">${o.label}</option>`).join('');
+    const relationshipOptions = RELATIONSHIP_OPTIONS.map(o => `<option value="${o.value}">${o.label}</option>`).join('');
     const dietaryHintId = `dietary-hint-${++dietaryHintIdCounter}`;
     row.innerHTML = `
         <div class="kiosk-field grid gap-3 sm:grid-cols-2">
