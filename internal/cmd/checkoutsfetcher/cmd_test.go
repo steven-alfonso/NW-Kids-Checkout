@@ -1191,15 +1191,13 @@ func Test_getEventMutex_boundedStripedPool(t *testing.T) {
 	var wg sync.WaitGroup
 	for i := range eventCount {
 		id := int64(i + 1)
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			if svc.getEventMutex(id) == nil {
 				errCh <- fmt.Errorf("getEventMutex(%d) returned nil", id)
 				return
 			}
 			errCh <- nil
-		}()
+		})
 	}
 	wg.Wait()
 	close(errCh)

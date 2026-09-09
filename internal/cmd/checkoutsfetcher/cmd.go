@@ -682,14 +682,8 @@ func (s *Service) recordRetryFailure(ctx context.Context, eventID int64, now tim
 	st := s.eventRetries[eventID]
 	st.consecutiveFailures++
 
-	shift := st.consecutiveFailures - 1
-	if shift > 8 {
-		shift = 8
-	}
-	delay := retryBackoffBase << shift
-	if delay > retryBackoffMax {
-		delay = retryBackoffMax
-	}
+	shift := min(st.consecutiveFailures-1, 8)
+	delay := min(retryBackoffBase<<shift, retryBackoffMax)
 	st.backoffUntil = now.Add(delay)
 	s.eventRetries[eventID] = st
 

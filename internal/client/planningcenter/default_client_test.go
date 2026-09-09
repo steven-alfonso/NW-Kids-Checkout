@@ -68,11 +68,11 @@ func Test_defaultClient_GetCheckoutsForEvent_Real(t *testing.T) {
 
 func Test_defaultClient_GetCheckoutsForEvent_Fake(t *testing.T) {
 	checkedOutAt := time.Now().UTC().Add(-1 * time.Minute).Round(time.Second)
-	var requestCount int64
+	var requestCount atomic.Int64
 
 	var server *httptest.Server
 	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt64(&requestCount, 1)
+		requestCount.Add(1)
 
 		w.Header().Set("Content-Type", "application/vnd.api+json")
 		w.WriteHeader(http.StatusOK)
@@ -98,7 +98,7 @@ func Test_defaultClient_GetCheckoutsForEvent_Fake(t *testing.T) {
 	assert.Equal(t, "User", checkouts[0].LastName)
 	assert.Equal(t, "ABC123", checkouts[0].SecurityCode)
 	assert.Equal(t, checkedOutAt, checkouts[0].CheckedOutAt)
-	assert.Equal(t, int64(1), atomic.LoadInt64(&requestCount))
+	assert.Equal(t, int64(1), requestCount.Load())
 }
 
 func Test_defaultClient_GetCheckoutsForEvent_paginatesBeyondLegacyTenPageCap(t *testing.T) {
@@ -125,7 +125,7 @@ func Test_defaultClient_GetCheckoutsForEvent_paginatesBeyondLegacyTenPageCap(t *
 		}
 
 		rows := make([]string, 0, rowsPerPage)
-		for i := 0; i < rowsPerPage; i++ {
+		for i := range rowsPerPage {
 			rows = append(rows, fmt.Sprintf(`{"type":"check_in","id":"%d_%d","attributes":{"first_name":"Test","last_name":"User","security_code":"ABC123","checked_out_at":"%s"}}`,
 				page, i, checkedOutAt.Format(time.RFC3339)))
 		}
@@ -227,11 +227,11 @@ func Test_defaultClient_GetLocation_Real(t *testing.T) {
 }
 
 func Test_defaultClient_GetEventByID(t *testing.T) {
-	var requestCount int64
+	var requestCount atomic.Int64
 
 	var server *httptest.Server
 	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt64(&requestCount, 1)
+		requestCount.Add(1)
 
 		w.Header().Set("Content-Type", "application/vnd.api+json")
 		w.WriteHeader(http.StatusOK)
@@ -250,7 +250,7 @@ func Test_defaultClient_GetEventByID(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "pc_evt_22", got.ID)
 	assert.Equal(t, "Kids Service", got.Name)
-	assert.Equal(t, int64(1), atomic.LoadInt64(&requestCount))
+	assert.Equal(t, int64(1), requestCount.Load())
 }
 
 func Test_defaultClient_GetEventByID_EmptyID(t *testing.T) {
@@ -314,11 +314,11 @@ func Test_defaultClient_GetLocationsForEvent(t *testing.T) {
 }
 
 func Test_defaultClient_GetEvents_EmptyNext(t *testing.T) {
-	var requestCount int64
+	var requestCount atomic.Int64
 
 	var server *httptest.Server
 	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt64(&requestCount, 1)
+		requestCount.Add(1)
 
 		w.Header().Set("Content-Type", "application/vnd.api+json")
 		w.WriteHeader(http.StatusOK)
@@ -341,15 +341,15 @@ func Test_defaultClient_GetEvents_EmptyNext(t *testing.T) {
 	assert.Equal(t, "event-1", events[0].ID)
 	assert.Equal(t, "Weekend Service", events[0].Name)
 	assert.Equal(t, "", nextURL)
-	assert.Equal(t, int64(1), atomic.LoadInt64(&requestCount))
+	assert.Equal(t, int64(1), requestCount.Load())
 }
 
 func Test_defaultClient_GetEventsFromNextURL(t *testing.T) {
-	var requestCount int64
+	var requestCount atomic.Int64
 
 	var server *httptest.Server
 	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt64(&requestCount, 1)
+		requestCount.Add(1)
 
 		w.Header().Set("Content-Type", "application/vnd.api+json")
 		w.WriteHeader(http.StatusOK)
@@ -373,7 +373,7 @@ func Test_defaultClient_GetEventsFromNextURL(t *testing.T) {
 	assert.Equal(t, "event-2", events[0].ID)
 	assert.Equal(t, "Sunday Service", events[0].Name)
 	assert.Equal(t, server.URL+"/next-page", nextURL)
-	assert.Equal(t, int64(1), atomic.LoadInt64(&requestCount))
+	assert.Equal(t, int64(1), requestCount.Load())
 }
 
 func Test_defaultClient_GetEventsFromNextURL_EmptyURL(t *testing.T) {

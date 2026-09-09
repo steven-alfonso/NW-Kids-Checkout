@@ -16,12 +16,15 @@ import (
 	"strings"
 	"time"
 
+	fibersession "github.com/gofiber/fiber/v2/middleware/session"
+
 	"kids-checkin/internal/controllers/middleware"
 	"kids-checkin/internal/controllers/session"
 	"kids-checkin/internal/repo"
 	"kids-checkin/internal/repo/checkin"
 	"kids-checkin/internal/repo/location"
 	"kids-checkin/internal/repo/manualcheckin"
+	"kids-checkin/internal/web/menu"
 	"kids-checkin/internal/web/static"
 
 	"github.com/gofiber/contrib/websocket"
@@ -54,18 +57,25 @@ func NewController(db *sql.DB, sessionStore session.Storer) *Controller {
 }
 
 func (controller *Controller) RegisterRoutes(app *fiber.App) {
-	// Setup
-	checkinGroup := app.Group("/v1/checkins")
-	checkinGroup.Use(middleware.AuthRequired(controller.sessionStore, ""))
-
-	checkinGroup.Get("/checkouts", controller.Checkouts)
-	checkinGroup.Patch("/:planning_center_id/checked_out_confirmed", controller.PatchCheckedOutConfirmed)
+	// Use per-route auth (not Group.Use with prefix "/v1/checkins") to avoid
+	// covering the public POST /v1/checkins/guest-submissions.
+	authRequired := middleware.AuthRequired(controller.sessionStore, "")
+	app.Get("/v1/checkins/checkouts", authRequired, controller.Checkouts)
+	app.Patch("/v1/checkins/:planning_center_id/checked_out_confirmed", authRequired, controller.PatchCheckedOutConfirmed)
 }
 
 func (controller *Controller) Checkouts(c *fiber.Ctx) error {
-	sess, err := controller.sessionStore.Get(c)
-	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "could not fetch session")
+	var sess *fibersession.Session
+	var err error
+	if v := c.Locals("session"); v != nil {
+		sess, _ = v.(*fibersession.Session)
+	}
+	if sess == nil {
+		sess, err = controller.sessionStore.Get(c)
+		if err != nil {
+			return fiber.NewError(fiber.StatusInternalServerError, "could not fetch session")
+		}
+		c.Locals("session", sess)
 	}
 
 	c.Locals("allowed", sess.Get("allowed"))
@@ -89,14 +99,36 @@ func (controller *Controller) checkoutsWeb(c *fiber.Ctx) error {
 		}
 		defer f.Close()
 
-		var htmlStream io.Reader = f
-		if static.IsDev() {
-			content, readErr := io.ReadAll(f)
-			if readErr != nil {
-				return fiber.ErrInternalServerError
+		content, err := io.ReadAll(f)
+		if err != nil {
+			return fiber.ErrInternalServerError
+		}
+
+		html := string(content)
+		var sess *fibersession.Session
+		if v := c.Locals("session"); v != nil {
+			sess, _ = v.(*fibersession.Session)
+		}
+		if sess == nil {
+			var fetchErr error
+			sess, fetchErr = controller.sessionStore.Get(c)
+			if fetchErr != nil {
+				return fiber.NewError(fiber.StatusInternalServerError, "could not fetch session")
 			}
+		}
+		authenticated, _ := sess.Get("authenticated").(bool)
+		role, _ := sess.Get("role").(string)
+
+		menuHTML, err := menu.RenderHTML(authenticated, role)
+		if err != nil {
+			return fiber.ErrInternalServerError
+		}
+		html = strings.Replace(html, menu.Placeholder, menuHTML, 1)
+
+		var htmlStream io.Reader = strings.NewReader(html)
+		if static.IsDev() {
 			htmlStream = bytes.NewReader([]byte(strings.Replace(
-				string(content),
+				html,
 				"</body>",
 				`<script src="/static/dev/preview.js"></script></body>`,
 				1,

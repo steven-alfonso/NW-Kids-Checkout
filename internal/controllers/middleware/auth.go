@@ -14,13 +14,22 @@ import (
 func AuthRequired(sessionStore session.Storer, allowedRoles ...string) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		sess, _ := sessionStore.Get(c)
+		if sess != nil {
+			c.Locals("session", sess)
+		}
 
 		// Check if logged in
 		if sess.Get("authenticated") != true {
 			// For API/JSON clients, return JSON instead of redirecting to login page
 			// (which would cause fetch to receive HTML and hang on JSON parse).
-			accepts := c.Accepts(fiber.MIMEApplicationJSON, fiber.MIMETextHTML)
-			isAPI := accepts == fiber.MIMEApplicationJSON
+			// Note: Fiber's Accepts returns the first offered type when no Accept header is sent,
+			// so we only use it when the header is present; otherwise treat as HTML.
+			acceptHeader := c.Get("Accept")
+			isAPI := false
+			if acceptHeader != "" {
+				accepts := c.Accepts(fiber.MIMEApplicationJSON, fiber.MIMETextHTML)
+				isAPI = accepts == fiber.MIMEApplicationJSON
+			}
 			// Also treat /v1/ and /api/ paths as API even if Accept is ambiguous
 			path := c.Path()
 			if !isAPI && len(path) >= 4 && path[:4] == "/v1/" {

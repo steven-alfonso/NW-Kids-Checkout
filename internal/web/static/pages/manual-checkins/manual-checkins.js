@@ -59,16 +59,10 @@ function toggleManualCheckinModal(open) {
     }
 }
 
-async function fetchJson(path, options = {}) {
-    const response = await fetch(`${API_URL}${path}`, options);
-    if (!response.ok) {
-        const message = await response.text();
-        throw new Error(message || `Request failed with status ${response.status}`);
-    }
-    if (response.status === 204) {
-        return null;
-    }
-    return response.json();
+function escapeHtml(value) {
+    const div = document.createElement('div');
+    div.textContent = String(value ?? '');
+    return div.innerHTML;
 }
 
 function buildManualCheckinsQuery() {
@@ -181,17 +175,23 @@ async function loadManualCheckins() {
     manualCheckinsController = controller;
     try {
         const query = buildManualCheckinsQuery();
-        const checkins = await fetchJson(`/v1/checkins/manual-checkins?${query}`, {
+        const checkins = await globalThis.fetchJson(`${API_URL}/v1/checkins/manual-checkins?${query}`, {
             signal: controller.signal
         });
         renderManualCheckins(Array.isArray(checkins) ? checkins : []);
     } catch (error) {
         if (error?.name === 'AbortError') return;
+        if (error instanceof window.SessionExpiredError) {
+            window.location.href = '/login?next=' + encodeURIComponent(
+                window.location.pathname + window.location.search
+            );
+            return;
+        }
         setPageStatus(`Failed to load manual check-ins: ${error.message}`, 'error');
         if (manualCheckinsBody) {
             manualCheckinsBody.innerHTML = `
                 <tr>
-                    <td class="px-4 py-6 text-center text-slate-500" colspan="4">Unable to load manual check-ins.</td>
+                    <td class="px-4 py-6 text-center text-slate-500" colspan="5">Unable to load manual check-ins.</td>
                 </tr>
             `;
         }
@@ -202,8 +202,12 @@ async function loadManualCheckins() {
     }
 }
 
+window.createManualCheckin = createManualCheckin;
+window.toggleManualCheckinModal = toggleManualCheckinModal;
+window.setManualCheckinError = setManualCheckinError;
+
 async function createManualCheckin(payload) {
-    return fetchJson('/v1/checkins/manual-checkins', {
+    return globalThis.fetchJson(`${API_URL}/v1/checkins/manual-checkins`, {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify(payload)
@@ -212,7 +216,7 @@ async function createManualCheckin(payload) {
 
 async function checkOutManualCheckin(publicId, checkedOut) {
     if (!publicId) return;
-    await fetchJson(`/v1/checkins/manual-checkins/${publicId}/checked_out`, {
+    await globalThis.fetchJson(`${API_URL}/v1/checkins/manual-checkins/${publicId}/checked_out`, {
         method: 'PATCH',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({checked_out: Boolean(checkedOut)})
@@ -220,6 +224,12 @@ async function checkOutManualCheckin(publicId, checkedOut) {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+    if (typeof window.initKebabMenu === "function") {
+        window.initKebabMenu();
+    } else if (window.NWKidsKebabMenu && typeof window.NWKidsKebabMenu.initKebabMenu === "function") {
+        window.NWKidsKebabMenu.initKebabMenu();
+    }
+
     const openManualCheckinButton = document.getElementById('open-manual-checkin');
 
     if (openManualCheckinButton) {
@@ -259,6 +269,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 toggleManualCheckinModal(false);
                 await loadManualCheckins();
             } catch (error) {
+                if (error instanceof window.SessionExpiredError) {
+                    window.location.href = '/login?next=' + encodeURIComponent(
+                        window.location.pathname + window.location.search
+                    );
+                    return;
+                }
                 setManualCheckinError(error.message || 'Unable to save manual check-in.');
             } finally {
                 if (manualSubmitButton) {
@@ -292,6 +308,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 await checkOutManualCheckin(publicId, nextCheckedOut);
                 await loadManualCheckins();
             } catch (error) {
+                if (error instanceof window.SessionExpiredError) {
+                    window.location.href = '/login?next=' + encodeURIComponent(
+                        window.location.pathname + window.location.search
+                    );
+                    return;
+                }
                 setPageStatus(`Failed to check out: ${error.message}`, 'error');
                 target.disabled = false;
                 target.textContent = currentlyCheckedOut ? 'Undo Checkout' : 'Check Out';

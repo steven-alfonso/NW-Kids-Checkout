@@ -5,15 +5,18 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"io"
 	"mime"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"kids-checkin/internal/controllers/middleware"
 	"kids-checkin/internal/controllers/session"
 	"kids-checkin/internal/repo"
 	"kids-checkin/internal/repo/manualcheckin"
+	"kids-checkin/internal/web/menu"
 	"kids-checkin/internal/web/static"
 
 	"github.com/gofiber/fiber/v2"
@@ -34,15 +37,15 @@ func NewController(db *sql.DB, sessionStore session.Storer) *Controller {
 }
 
 func (controller *Controller) RegisterRoutes(app *fiber.App) {
-	manualGroup := app.Group("/v1/checkins")
-	manualGroup.Use(middleware.AuthRequired(controller.sessionStore, ""))
+	// Use per-route auth to avoid covering the public POST /v1/checkins/guest-submissions
+	// (a Group.Use with prefix "/v1/checkins" would match that public route).
+	authRequired := middleware.AuthRequired(controller.sessionStore, "")
+	app.Get("/v1/checkins/manual-checkins", authRequired, controller.GetManualCheckins)
+	app.Post("/v1/checkins/manual-checkins", authRequired, controller.PostManualCheckin)
+	app.Patch("/v1/checkins/manual-checkins/:public_id/checked_out", authRequired, controller.PatchManualCheckedOut)
+	app.Patch("/v1/checkins/manual-checkins/:public_id/checked_out_confirmed", authRequired, controller.PatchManualCheckedOutConfirmed)
 
-	manualGroup.Get("/manual-checkins", controller.GetManualCheckins)
-	manualGroup.Post("/manual-checkins", controller.PostManualCheckin)
-	manualGroup.Patch("/manual-checkins/:public_id/checked_out", controller.PatchManualCheckedOut)
-	manualGroup.Patch("/manual-checkins/:public_id/checked_out_confirmed", controller.PatchManualCheckedOutConfirmed)
-
-	app.Get("/manual-checkins", middleware.AuthRequired(controller.sessionStore, ""), controller.ManualCheckinsPage)
+	app.Get("/manual-checkins", authRequired, controller.ManualCheckinsPage)
 }
 
 func (controller *Controller) GetManualCheckins(c *fiber.Ctx) error {
@@ -101,6 +104,9 @@ func (controller *Controller) PostManualCheckin(c *fiber.Ctx) error {
 
 	created, err := controller.manualRepo.CreateManualCheckin(c.Context(), manualCheckin)
 	if err != nil {
+		if errors.Is(err, manualcheckin.ErrInvalidManualCheckin) {
+			return fiber.NewError(fiber.StatusBadRequest, err.Error())
+		}
 		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
 	}
 
@@ -218,8 +224,26 @@ func (controller *Controller) ManualCheckinsPage(c *fiber.Ctx) error {
 	}
 	defer f.Close()
 
+	content, err := io.ReadAll(f)
+	if err != nil {
+		return fiber.ErrInternalServerError
+	}
+
+	sess, err := controller.sessionStore.Get(c)
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "could not fetch session")
+	}
+	authenticated, _ := sess.Get("authenticated").(bool)
+	role, _ := sess.Get("role").(string)
+
+	menuHTML, err := menu.RenderHTML(authenticated, role)
+	if err != nil {
+		return fiber.ErrInternalServerError
+	}
+	html := strings.Replace(string(content), menu.Placeholder, menuHTML, 1)
+
 	c.Type("html")
-	return c.SendStream(f)
+	return c.Send([]byte(html))
 }
 
 func repoManualCheckinToOutput(manualCheckin manualcheckin.ManualCheckin) Checkin {

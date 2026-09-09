@@ -3,6 +3,8 @@ package manualcheckinv1
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -12,6 +14,7 @@ import (
 
 	"github.com/Masterminds/squirrel"
 	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/recover"
 	"github.com/gofiber/fiber/v2/middleware/session"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -101,6 +104,26 @@ func TestController_PostManualCheckin(t *testing.T) {
 
 	t.Run("missing last name", func(t *testing.T) {
 		req := httptest.NewRequest("POST", "/v1/checkins/manual-checkins", bytes.NewBufferString("{\"first_name\":\"jane\"}"))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := app.Test(req)
+		require.NoError(t, err)
+		assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
+	})
+
+	t.Run("whitespace first name maps to 400 via ErrInvalidManualCheckin", func(t *testing.T) {
+		payload := map[string]any{"first_name": "   ", "last_name": "zeta"}
+		body, _ := json.Marshal(payload)
+		req := httptest.NewRequest("POST", "/v1/checkins/manual-checkins", bytes.NewBuffer(body))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := app.Test(req)
+		require.NoError(t, err)
+		assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
+	})
+
+	t.Run("whitespace last name maps to 400 via ErrInvalidManualCheckin", func(t *testing.T) {
+		payload := map[string]any{"first_name": "jane", "last_name": "   "}
+		body, _ := json.Marshal(payload)
+		req := httptest.NewRequest("POST", "/v1/checkins/manual-checkins", bytes.NewBuffer(body))
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := app.Test(req)
 		require.NoError(t, err)
@@ -302,6 +325,32 @@ func TestController_PatchManualCheckedOut(t *testing.T) {
 	})
 }
 
+func TestController_ManualCheckinsPage_ServerRenderedMenu(t *testing.T) {
+	app, store := setupAuthedApp()
+	controller := NewController(nil, store)
+	controller.RegisterRoutes(app)
+
+	req := httptest.NewRequest("GET", "/manual-checkins", nil)
+	req.Header.Set("Accept", "text/html")
+	resp, err := app.Test(req)
+	require.NoError(t, err)
+	require.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	html := string(body)
+
+	// setupAuthedApp sets role=admin, so admin and logout links are rendered.
+	assert.Contains(t, html, `id="menu-button"`)
+	assert.Contains(t, html, `id="kebab-menu"`)
+	assert.Contains(t, html, `id="guest-checkin-link"`)
+	assert.Contains(t, html, `id="manual-checkins-link"`)
+	assert.Contains(t, html, `id="admin-link"`)
+	assert.Contains(t, html, `id="logout-link"`)
+	assert.NotContains(t, html, `id="login-link"`)
+	assert.NotContains(t, html, "<!-- kebab-menu-links -->")
+}
+
 func setupAuthedApp() (*fiber.App, *session.Store) {
 	app := fiber.New()
 	store := session.New()
@@ -315,4 +364,29 @@ func setupAuthedApp() (*fiber.App, *session.Store) {
 		return c.Next()
 	})
 	return app, store
+}
+
+type errSessionStore struct{}
+
+func (e *errSessionStore) RegisterType(i any) {}
+func (e *errSessionStore) Get(c *fiber.Ctx) (*session.Session, error) {
+	return nil, errors.New("session error")
+}
+func (e *errSessionStore) Reset() error           { return nil }
+func (e *errSessionStore) Delete(id string) error { return nil }
+
+func TestManualCheckinsPage_SessionErrorReturns500(t *testing.T) {
+	app := fiber.New()
+	app.Use(recover.New())
+	testDB, cleanup, err := db.PrepareTestDB()
+	require.NoError(t, err)
+	t.Cleanup(cleanup)
+	controller := NewController(testDB, &errSessionStore{})
+	controller.RegisterRoutes(app)
+
+	req := httptest.NewRequest("GET", "/manual-checkins", nil)
+	req.Header.Set("Accept", "text/html")
+	resp, err := app.Test(req)
+	require.NoError(t, err)
+	assert.Equal(t, fiber.StatusInternalServerError, resp.StatusCode)
 }
