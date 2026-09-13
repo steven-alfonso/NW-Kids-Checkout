@@ -62,6 +62,18 @@ function getChildId(child) {
     return '';
 }
 
+// Total ordering for checkouts: recency first, stable child id as
+// tiebreaker. Ties are common (second-precision timestamps), and without the
+// tiebreaker the order follows whatever row order the API happened to return,
+// so a poll arriving after a confirm (which writes to the DB) can visibly
+// swap tied rows.
+function compareByCheckoutId(a, b) {
+    const aId = a._id || getChildId(a);
+    const bId = b._id || getChildId(b);
+    if (aId === bId) return 0;
+    return aId < bId ? -1 : 1;
+}
+
 function computeNewChildIds(children) {
     const currentIds = new Set(children.map(getChildId).filter(Boolean));
     const newlyAppeared = new Set();
@@ -216,7 +228,7 @@ function getOverdueChildren(nowMs) {
         if (!child.checked_out_at_ms) return false;
         if (isChildConfirmed(child)) return false;
         return now - child.checked_out_at_ms >= cutoff;
-    }).sort((a, b) => a.checked_out_at_ms - b.checked_out_at_ms);
+    }).sort((a, b) => (a.checked_out_at_ms - b.checked_out_at_ms) || compareByCheckoutId(a, b));
 }
 
 function getOverdueCount(nowMs) {
@@ -324,7 +336,7 @@ function updateOverdueUI() {
                 }
             });
             const drawerOverdue = [...overdue, ...retainedChildren].sort(
-                (a, b) => (a.checked_out_at_ms ?? 0) - (b.checked_out_at_ms ?? 0)
+                (a, b) => ((a.checked_out_at_ms ?? 0) - (b.checked_out_at_ms ?? 0)) || compareByCheckoutId(a, b)
             );
             renderOverdueSheet(drawerOverdue);
             const countEl = document.getElementById('overdue-sheet-count');
@@ -813,7 +825,7 @@ async function fetchChildrenData() {
         // Sort by checked_out_at (most recent first)
         const sortedData = combined
             .filter(child => child.checked_out_at_ms) // Only include children who have been called
-            .sort((a, b) => b.checked_out_at_ms - a.checked_out_at_ms);
+            .sort((a, b) => (b.checked_out_at_ms - a.checked_out_at_ms) || compareByCheckoutId(a, b));
 
         childrenData = sortedData;
         if (filterChanged) {
