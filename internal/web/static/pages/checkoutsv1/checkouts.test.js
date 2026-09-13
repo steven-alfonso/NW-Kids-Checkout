@@ -1,34 +1,20 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { JSDOM } from 'jsdom';
 
-const scriptPath = path.resolve(process.cwd(), 'internal/web/static/pages/checkoutsv1/checkouts.js');
+const root = process.cwd();
+const scriptPath = path.resolve(root, 'internal/web/static/pages/checkoutsv1/checkouts.js');
+const htmlPath = path.resolve(root, 'internal/web/static/pages/checkoutsv1/checkouts.html');
+const alpinePath = path.resolve(root, 'internal/web/static/js/alpine.min.js');
 const script = fs.readFileSync(scriptPath, 'utf8');
-const morphdomScriptPath = path.resolve(process.cwd(), 'internal/web/static/js/morphdom-umd.min.js');
-const morphdomScript = fs.readFileSync(morphdomScriptPath, 'utf8');
-const exposeInternals = `
-window.__test = {
-    setChildrenData: (value) => { childrenData = value; },
-    setDom: () => {
-        dom.childrenList = document.getElementById('children-list');
-    },
-    syncConfirmedStates: () => syncConfirmedStates(),
-    updateUI: () => updateUI(),
-    setConfirmationOverride: (childId, confirmed) => setConfirmationOverride(childId, confirmed),
-    setSearchQuery: (query) => setSearchQuery(query),
-    setHideConfirmed: (hidden) => setHideConfirmed(hidden),
-    getVisibleChildren: () => getVisibleChildren(),
-    getChildrenData: () => childrenData,
-    computeNewChildIds: (children) => computeNewChildIds(children),
-    getFlashChildIds: () => flashChildIds,
-    setFlashChildIds: (ids) => { flashChildIds = ids; },
-    clearFlashStyles: () => clearFlashStyles()
-};
-`;
+const html = fs.readFileSync(htmlPath, 'utf8');
+const alpineScript = fs.readFileSync(alpinePath, 'utf8');
 
-function loadWindow({ html, url = 'http://localhost/', fetchImpl } = {}) {
-    const dom = new JSDOM(html || '<!doctype html><html><body></body></html>', {
+// ---- eval harness (no Alpine): pure helpers + board factory ----
+
+function loadWindow({ html: bodyHtml, url = 'http://localhost/', fetchImpl } = {}) {
+    const dom = new JSDOM(bodyHtml || '<!doctype html><html><body></body></html>', {
         runScripts: 'dangerously',
         url
     });
@@ -39,12 +25,12 @@ function loadWindow({ html, url = 'http://localhost/', fetchImpl } = {}) {
     }));
     dom.window.setInterval = () => 0;
     dom.window.requestAnimationFrame = () => 0;
-    dom.window.eval(morphdomScript);
-    dom.window.eval(`${script}\n${exposeInternals}`);
+    dom.window.scrollTo = () => {};
+    dom.window.eval(script);
     return dom.window;
 }
 
-function pcChild(id) {
+function pcChild(id, overrides = {}) {
     return {
         source: 'planning_center',
         planning_center_id: id,
@@ -52,49 +38,58 @@ function pcChild(id) {
         last_name: 'X',
         security_code: id,
         location_group_id: 1,
-        checked_out_at: new Date().toISOString()
+        checked_out_at: new Date().toISOString(),
+        checked_out_confirmed_at: null,
+        ...overrides
     };
 }
 
-function childrenListWindow() {
-    return loadWindow({ html: '<!doctype html><html><body><div id="children-list"></div></body></html>' });
+function boardWith(w, children) {
+    const board = w.checkoutsBoardData();
+    board.children = children.map((c) => w.withChildMeta(c));
+    return board;
 }
 
-function locationGroupWindow() {
-    return loadWindow({ html: `<!doctype html><html><body>
-        <div id="children-list"></div>
-        <div id="location-group-filter">
-            <div class="flex items-center justify-between mb-2">
-                <span class="text-sm font-medium text-slate-700">Location groups</span>
-                <button id="location-group-select-all" type="button">Select all</button>
-            </div>
-            <div id="location-group-checkboxes"></div>
-        </div>
-    </body></html>` });
-}
+// ---- integration harness: real page + real Alpine ----
 
-function cardFor(window, id) {
-    return window.document.querySelector(`.child-time[data-child-id="${id}"]`).closest('.bg-white.rounded-lg');
-}
-
-function boardWithFlashedChild(window) {
-    window.__test.setChildrenData([pcChild('a'), pcChild('b')]);
-    window.__test.updateUI();
-    window.__test.setChildrenData([pcChild('d'), pcChild('a'), pcChild('b')]);
-    window.__test.setFlashChildIds(new Set(['pc:d']));
-    window.__test.updateUI();
-}
-
-describe('checkoutsv1/checkouts', () => {
-    it('exposes core helper functions', () => {
-        const window = loadWindow();
-        expect(typeof window.getChildId).toBe('function');
-        expect(typeof window.normalizeCheckoutsResponse).toBe('function');
-        expect(typeof window.getCheckedOutTimestamp).toBe('function');
-        expect(typeof window.calculateMinutesAgoFromTimestamp).toBe('function');
-        expect(typeof window.renderChildren).toBe('function');
+async function loadBoardPage({ url = 'http://localhost/', checkouts = [], groups = [], patchImpl } = {}) {
+    const dom = new JSDOM(html, {
+        url,
+        runScripts: 'outside-only',
+        pretendToBeVisual: true
     });
+    const w = dom.window;
+    const patches = [];
+    w.fetch = async (input, init = {}) => {
+        const target = String(input);
+        if (init.method === 'PATCH') {
+            patches.push({ url: target, body: init.body ? JSON.parse(init.body) : null });
+            if (patchImpl) return patchImpl(target, init);
+            return { ok: true, json: async () => ({}) };
+        }
+        if (target.includes('/v1/location_groups')) {
+            return { ok: true, json: async () => groups };
+        }
+        return { ok: true, json: async () => checkouts };
+    };
+    w.setInterval = () => 0;
+    w.scrollTo = () => {};
+    // Collect (don't swallow) Alpine warnings so tests can assert clean boot.
+    const warns = [];
+    w.console.warn = (msg) => { warns.push(String(msg)); };
+    w.eval(alpineScript);
+    w.eval(script);
+    try {
+        w.Alpine.start();
+    } catch (e) { /* already initialized — registration still applied */ }
+    w.document.dispatchEvent(new w.Event('DOMContentLoaded'));
+    await new Promise((r) => setTimeout(r, 100));
+    return { window: w, board: w.__checkoutsBoard, patches, warns };
+}
 
+const flush = () => new Promise((r) => setTimeout(r, 20));
+
+describe('checkoutsv1/checkouts helpers', () => {
     it('builds child ids by source', () => {
         const window = loadWindow();
         expect(window.getChildId({ source: 'manual', public_id: '123' })).toBe('manual:123');
@@ -106,807 +101,452 @@ describe('checkoutsv1/checkouts', () => {
 
     it('normalizes checkout payloads into a single list', () => {
         const window = loadWindow();
-        const combined = window.normalizeCheckoutsResponse({
+        expect(window.normalizeCheckoutsResponse({
             checkins: [{ id: 'a' }],
             manual_checkins: [{ id: 'b' }]
-        });
-        expect(combined).toEqual([{ id: 'a' }, { id: 'b' }]);
-
-        const nested = window.normalizeCheckoutsResponse({
+        })).toEqual([{ id: 'a' }, { id: 'b' }]);
+        expect(window.normalizeCheckoutsResponse({
             checkins: { checkins: [{ id: 'c' }] },
             manual_checkins: { checkins: [{ id: 'd' }] }
-        });
-        expect(nested).toEqual([{ id: 'c' }, { id: 'd' }]);
+        })).toEqual([{ id: 'c' }, { id: 'd' }]);
     });
 
-    it('parses timestamps and formats minutes ago', () => {
+    it('parses checkout timestamps and minute labels', () => {
         const window = loadWindow();
-        const ts = window.getCheckedOutTimestamp('2024-01-01T00:00:00Z');
-        expect(ts).toBe(Date.parse('2024-01-01T00:00:00Z'));
+        expect(window.getCheckedOutTimestamp('')).toBe(0);
         expect(window.getCheckedOutTimestamp('not-a-date')).toBe(0);
-        expect(window.calculateMinutesAgoFromTimestamp(0, 123)).toBe('0 min ago');
-        expect(window.calculateMinutesAgoFromTimestamp(2 * 60 * 1000, 5 * 60 * 1000)).toBe('3 min ago');
+        const now = Date.now();
+        expect(window.calculateMinutesAgoFromTimestamp(0, now)).toBe('0 min ago');
+        expect(window.calculateMinutesAgoFromTimestamp(now - 3 * 60 * 1000, now)).toBe('3 min ago');
     });
 
-    it('renders children with escaped text, ids, manual star, and timing', () => {
+    it('colors time pills by age and confirmation', () => {
         const window = loadWindow();
-        const html = window.renderChildren([
-            {
-                first_name: '<Ada>',
-                last_name: 'Lovelace',
-                security_code: '1234',
-                checked_out_at_ms: 3 * 60 * 1000,
-                checked_out_confirmed_at: '2024-01-01T00:05:00Z',
-                planning_center_id: 'pc-1',
-                public_id: 'pub-1',
-                source: 'manual'
-            },
-            {
-                first_name: 'Sam',
-                last_name: '<Test>',
-                security_code: '9999',
-                checked_out_at_ms: 60 * 1000,
-                planning_center_id: '11',
-                source: 'planning_center'
-            }
-        ], 5 * 60 * 1000);
-
-        expect(html).toContain('&lt;Ada&gt;');
-        expect(html).toContain('/static/img/star.svg');
-        expect(html).toContain('data-confirmed-state="confirmed"');
-        expect(html).toContain('data-child-id="manual:pub-1"');
-        expect(html).toContain('---');
-        expect(html).toContain('data-child-id="pc:11"');
-        expect(html).toContain('&lt;Test&gt;');
-        expect(html).toContain('2 min ago');
+        const now = Date.now();
+        expect(window.getTimePillClass(now - 60 * 1000, false, now)).toBe('bg-green-500');
+        expect(window.getTimePillClass(now - 5 * 60 * 1000, false, now)).toBe('bg-yellow-500');
+        expect(window.getTimePillClass(now - 9 * 60 * 1000, false, now)).toBe('bg-red-500');
+        expect(window.getTimePillClass(now - 9 * 60 * 1000, true, now)).toBe('bg-gray-400');
     });
 
-    it('steps pill color green to yellow at 4 min and red at 8 min', () => {
+    it('colors location groups deterministically with gray fallback', () => {
         const window = loadWindow();
-        const base = 1000;
-        const at = (minutes) => base + minutes * 60 * 1000;
-        expect(window.getTimePillClass(base, false, at(0))).toBe('bg-green-500');
-        expect(window.getTimePillClass(base, false, at(3))).toBe('bg-green-500');
-        expect(window.getTimePillClass(base, false, at(4))).toBe('bg-yellow-500');
-        expect(window.getTimePillClass(base, false, at(7))).toBe('bg-yellow-500');
-        expect(window.getTimePillClass(base, false, at(8))).toBe('bg-red-500');
-        expect(window.getTimePillClass(base, false, at(30))).toBe('bg-red-500');
+        expect(window.getLocationGroupColor(null)).toBe(window.GRAY_UNASSIGNED);
+        expect(window.getLocationGroupColor('nope')).toBe(window.GRAY_UNASSIGNED);
+        expect(window.getLocationGroupColor(1)).toBe(window.getLocationGroupColor(1));
+        expect(window.getLocationGroupColor(1)).not.toBe(window.GRAY_UNASSIGNED);
     });
 
-    it('uses gray for confirmed checkouts and green when no timestamp', () => {
+    it('reads the group filter from the URL, resolving names via groups', () => {
+        const window = loadWindow({ url: 'http://localhost/?location_group_id=2&location_group_name=Grace' });
+        const sel = window.getSelectedFromURL([{ id: 1, name: 'Grace' }, { id: 2, name: 'Ada' }]);
+        expect(sel.names.has('Grace')).toBe(true);
+        expect(sel.ids.has(1)).toBe(true);
+        expect(sel.ids.has(2)).toBe(true);
+        expect(sel.isEmpty).toBe(false);
+    });
+
+    it('marks an explicit empty filter', () => {
+        const window = loadWindow({ url: 'http://localhost/?location_group_id=' });
+        expect(window.getSelectedFromURL([]).isEmpty).toBe(true);
+        const plain = loadWindow({ url: 'http://localhost/' });
+        const sel = plain.getSelectedFromURL([]);
+        expect(sel.isEmpty).toBe(false);
+        expect(sel.ids.size).toBe(0);
+    });
+
+    it('attaches stable ids and numeric timestamps', () => {
         const window = loadWindow();
-        expect(window.getTimePillClass(0, true, 30 * 60 * 1000)).toBe('bg-gray-400');
-        expect(window.getTimePillClass(0, true, 0)).toBe('bg-gray-400');
-        expect(window.getTimePillClass(0, false, Date.now())).toBe('bg-green-500');
+        const meta = window.withChildMeta(pcChild('a'));
+        expect(meta._id).toBe('pc:a');
+        expect(meta.checked_out_at_ms).toBeGreaterThan(0);
     });
 
-    it('swaps the pill class when confirmed state changes', () => {
-        const html = `<!doctype html>
-            <html>
-                <body>
-                    <div id="children-list">
-                        <div class="child-time bg-green-500" data-child-id="pc:11">0 min ago</div>
-                    </div>
-                </body>
-            </html>`;
-        const window = loadWindow({ html });
-        const pill = window.document.querySelector('.child-time');
-        const child = {
-            source: 'planning_center',
-            planning_center_id: '11',
-            checked_out_at_ms: 1000,
-            checked_out_confirmed_at: null
-        };
-
-        window.applyPillColor(pill, child, true, Date.now());
-        expect(pill.className).toContain('bg-gray-400');
-        expect(pill.className).not.toContain('bg-green-500');
-
-        window.applyPillColor(pill, child, false, 1000);
-        expect(pill.className).toContain('bg-green-500');
-        expect(pill.className).not.toContain('bg-gray-400');
-    });
-
-    it('renders pill with stepped background class', () => {
+    it('diffs arrivals against known ids', () => {
         const window = loadWindow();
-        const html = window.renderChildren([
-            {
-                first_name: 'Ada',
-                last_name: 'Lovelace',
-                security_code: '1234',
-                checked_out_at_ms: 3 * 60 * 1000,
-                checked_out_confirmed_at: '2024-01-01T00:05:00Z',
-                planning_center_id: 'pc-1',
-                source: 'planning_center'
-            },
-            {
-                first_name: 'Sam',
-                last_name: 'Test',
-                security_code: '9999',
-                checked_out_at_ms: 60 * 1000,
-                planning_center_id: '11',
-                source: 'planning_center'
-            }
-        ], 5 * 60 * 1000);
-
-        expect(html).toContain('bg-gray-400');
-        expect(html).toContain('bg-yellow-500');
-        expect(html).toContain('transition-colors');
-        // bar uses inline background-color; pill still uses bg-* classes
-        expect(html).toContain('background-color:');
-        expect(html).toContain('aria-hidden="true"');
+        const kids = [pcChild('a'), pcChild('b')].map((c) => window.withChildMeta(c));
+        const first = window.computeNewChildIds(kids, new Set());
+        expect(first.appeared.size).toBe(0);
+        const more = [...kids, window.withChildMeta(pcChild('c'))];
+        const second = window.computeNewChildIds(more, first.current);
+        expect(Array.from(second.appeared)).toEqual(['pc:c']);
     });
 
-    it('renders empty state when no checkouts are active', () => {
+    it('filters visible children by confirmation, search, and groups', () => {
         const window = loadWindow();
-        const html = window.renderChildren([], Date.now());
-        expect(html).toContain('No children called yet');
+        const kids = [
+            window.withChildMeta(pcChild('a', { first_name: 'Amy', location_group_id: 1 })),
+            window.withChildMeta(pcChild('b', { first_name: 'Bo', location_group_id: 2, checked_out_confirmed_at: '2024-01-01' })),
+            window.withChildMeta({ source: 'manual', public_id: 'm1', first_name: 'Mo', location_group_id: null, checked_out_at: new Date().toISOString() })
+        ];
+        const confirmedById = new Map([['pc:a', false], ['pc:b', true], ['manual:m1', false]]);
+
+        expect(window.filterVisibleChildren(kids, { confirmedById }).length).toBe(3);
+        expect(window.filterVisibleChildren(kids, { confirmedById, hideConfirmed: true }).map((c) => c._id))
+            .toEqual(['pc:a', 'manual:m1']);
+        expect(window.filterVisibleChildren(kids, { confirmedById, searchQuery: 'amy' }).map((c) => c._id))
+            .toEqual(['pc:a']);
+        expect(window.filterVisibleChildren(kids, { confirmedById, filterEmpty: true })).toEqual([]);
+        // Group filter keeps manual checkins regardless of group.
+        const grouped = window.filterVisibleChildren(kids, {
+            confirmedById, filterActive: true, selectedIds: new Set([2]), includeUnassigned: false
+        }).map((c) => c._id);
+        expect(grouped).toEqual(['pc:b', 'manual:m1']);
+        const unassigned = window.filterVisibleChildren(
+            [window.withChildMeta(pcChild('c', { location_group_id: null }))],
+            { confirmedById: new Map(), filterActive: true, selectedIds: new Set([1]), includeUnassigned: true }
+        );
+        expect(unassigned.length).toBe(1);
     });
 
-    it('shows error state in children list on fetch error', async () => {
-        const html = `<!doctype html>
-            <html>
-                <body>
-                    <div id="children-list">
-                        <div class="child-time" data-child-id="pc:1">5 min ago</div>
-                    </div>
-                </body>
-            </html>`;
-        const window = loadWindow({
-            html,
-            fetchImpl: async () => {
-                throw new Error('offline');
-            }
-        });
-
-        const originalConsoleError = window.console.error;
-        window.console.error = () => { };
-
-        try {
-            await window.fetchChildrenData();
-        } finally {
-            window.console.error = originalConsoleError;
-        }
-
-        expect(window.document.getElementById('children-list').innerHTML)
-            .toContain('Error loading data. Please try again.');
+    it('lists overdue checkouts oldest-first, skipping confirmed', () => {        const window = loadWindow();
+        const now = Date.now();
+        const old = (min) => new Date(now - min * 60 * 1000).toISOString();
+        const kids = [
+            window.withChildMeta(pcChild('fresh', { checked_out_at: old(1) })),
+            window.withChildMeta(pcChild('late', { checked_out_at: old(9) })),
+            window.withChildMeta(pcChild('later', { checked_out_at: old(6) })),
+            window.withChildMeta(pcChild('done', { checked_out_at: old(9) }))
+        ];
+        const confirmedById = new Map([['pc:fresh', false], ['pc:late', false], ['pc:later', false], ['pc:done', true]]);
+        expect(window.getOverdueList(kids, confirmedById, now).map((c) => c._id)).toEqual(['pc:late', 'pc:later']);
     });
 
-    it('keeps confirmation overrides applied until data catches up', () => {
-        const html = `<!doctype html>
-            <html>
-                <body>
-                    <div id="children-list">
-                        <label data-confirmed-label data-confirmed-state="unconfirmed">
-                            <input type="checkbox" class="child-confirmed-checkbox" data-child-id="manual:pub-1">
-                        </label>
-                    </div>
-                </body>
-            </html>`;
-        const window = loadWindow({ html });
-
-        window.__test.setDom();
-        window.__test.setChildrenData([
-            {
-                source: 'manual',
-                public_id: 'pub-1',
-                checked_out_confirmed_at: null,
-                checked_out_at: '2024-01-01T00:00:00Z'
-            }
-        ]);
-
-        window.__test.setConfirmationOverride('manual:pub-1', true);
-        window.__test.syncConfirmedStates();
-
-        const checkboxes = window.document.querySelectorAll('.child-confirmed-checkbox');
-        checkboxes.forEach((checkbox) => {
-            expect(checkbox.checked).toBe(true);
-            const label = checkbox.closest('[data-confirmed-label]');
-            expect(label?.dataset.confirmedState).toBe('confirmed');
-        });
-    });
-
-    it('filters visible children by name and code', () => {
+    it('orders tied timestamps deterministically regardless of API row order', () => {
         const window = loadWindow();
-        window.__test.setChildrenData([
-            { id: 'pc:1', first_name: 'Alice', last_name: 'Smith', security_code: '1234', source: 'planning_center' },
-            { id: 'pc:2', first_name: 'Bob', last_name: 'Jones', security_code: '5678', source: 'planning_center' }
-        ]);
-        window.__test.setSearchQuery('ali');
-        expect(window.__test.getVisibleChildren().map((c) => c.id)).toEqual(['pc:1']);
-        window.__test.setSearchQuery('5678');
-        expect(window.__test.getVisibleChildren().map((c) => c.id)).toEqual(['pc:2']);
-        window.__test.setSearchQuery('');
-        expect(window.__test.getVisibleChildren()).toHaveLength(2);
+        const stamp = new Date().toISOString();
+        const make = (id) => window.withChildMeta(pcChild(id, { checked_out_at: stamp }));
+        const forward = [make('a'), make('b'), make('c')];
+        const backward = [...forward].reverse();
+        expect(window.sortByCheckoutDesc(backward).map((c) => c._id))
+            .toEqual(window.sortByCheckoutDesc(forward).map((c) => c._id));
+        expect(window.sortByCheckoutAsc(backward).map((c) => c._id))
+            .toEqual(window.sortByCheckoutAsc(forward).map((c) => c._id));
+        expect(window.sortByCheckoutDesc(forward).map((c) => c._id)).toEqual(['pc:a', 'pc:b', 'pc:c']);
+    });
+});
+
+describe('checkoutsv1/checkoutsBoard factory', () => {
+    it('derives visible children and empty messages', () => {
+        const w = loadWindow({ url: 'http://localhost/' });
+        const board = boardWith(w, [pcChild('a', { first_name: 'Amy' }), pcChild('b', { first_name: 'Bo' })]);
+        expect(board.visibleChildren.map((c) => c._id)).toEqual(['pc:a', 'pc:b']);
+
+        board.searchQuery = 'zzz';
+        expect(board.visibleChildren).toEqual([]);
+        expect(board.emptyMessage).toBe('No matching children');
+
+        board.searchQuery = '';
+        board.hideConfirmed = true;
+        board.children[0].checked_out_confirmed_at = '2024-01-01';
+        expect(board.visibleChildren.map((c) => c._id)).toEqual(['pc:b']);
+        expect(board.emptyMessage).toBe('No unconfirmed children');
     });
 
-    it('renders no-matching message for empty search results', () => {
-        const window = loadWindow({ html: '<!doctype html><html><body><ul id="children-list"></ul></body></html>' });
-        window.__test.setChildrenData([]);
-        window.__test.setDom();
-        window.__test.setSearchQuery('zzz');
-        expect(window.document.getElementById('children-list').innerHTML).toContain('No matching children');
+    it('applies an explicit empty group filter', () => {
+        const w = loadWindow({ url: 'http://localhost/?location_group_id=' });
+        const board = w.checkoutsBoardData();
+        board.setGroups([{ id: 1, name: 'A' }]);
+        expect(board.filterEmpty).toBe(true);
+        board.children = [w.withChildMeta(pcChild('a'))];
+        expect(board.visibleChildren).toEqual([]);
     });
 
-    it('setHideConfirmed filters confirmed children from view without deleting them', () => {
-        const window = loadWindow();
-        window.__test.setChildrenData([
-            { id: 'pc:1', first_name: 'A', last_name: 'B', security_code: '1', source: 'planning_center', checked_out_confirmed_at: '2026-08-18T10:00:00Z' },
-            { id: 'pc:2', first_name: 'C', last_name: 'D', security_code: '2', source: 'planning_center', checked_out_confirmed_at: null }
-        ]);
-        window.__test.setHideConfirmed(true);
-        const visible = window.__test.getVisibleChildren();
-        expect(visible.map((c) => c.id)).toEqual(['pc:2']);
-        expect(window.__test.getChildrenData()).toHaveLength(2);
+    it('selects all groups by default with no URL filter', () => {
+        const w = loadWindow({ url: 'http://localhost/' });
+        const board = w.checkoutsBoardData();
+        board.setGroups([{ id: 1, name: 'A' }, { id: 2, name: 'B' }]);
+        expect(board.selected).toEqual(['1', '2']);
+        expect(board.includeUnassigned).toBe(true);
+        expect(board.selectAllLabel).toBe('Deselect all');
+        expect(board.filterActive).toBe(false);
     });
 
-    it('setHideConfirmed(false) shows confirmed children again', () => {
-        const window = loadWindow();
-        window.__test.setChildrenData([
-            { id: 'pc:1', first_name: 'A', last_name: 'B', security_code: '1', source: 'planning_center', checked_out_confirmed_at: '2026-08-18T10:00:00Z' },
-            { id: 'pc:2', first_name: 'C', last_name: 'D', security_code: '2', source: 'planning_center', checked_out_confirmed_at: null }
-        ]);
-        window.__test.setHideConfirmed(true);
-        window.__test.setHideConfirmed(false);
-        expect(window.__test.getVisibleChildren()).toHaveLength(2);
+    it('applyURL respects an explicit id filter', () => {
+        const w = loadWindow({ url: 'http://localhost/?location_group_id=2' });
+        const board = w.checkoutsBoardData();
+        board.setGroups([{ id: 1, name: 'A' }, { id: 2, name: 'B' }]);
+        expect(board.selected).toEqual(['2']);
+        expect(board.filterActive).toBe(true);
+        expect(board.selectAllLabel).toBe('Select all');
     });
 
-    function hideConfirmedToggleWindow() {
-        return loadWindow({ html: '<!doctype html><html><body><input id="hide-confirmed-toggle" type="checkbox" role="switch" aria-label="Hide confirmed children"></body></html>' });
-    }
-
-    it('setHideConfirmed keeps the hide-confirmed toggle checked state in sync', () => {
-        const window = hideConfirmedToggleWindow();
-        const toggle = window.document.getElementById('hide-confirmed-toggle');
-
-        window.__test.setHideConfirmed(true);
-        expect(toggle.checked).toBe(true);
-
-        window.__test.setHideConfirmed(false);
-        expect(toggle.checked).toBe(false);
-    });
-
-    it('changing the hide-confirmed toggle updates the confirmed filter', () => {
-        const window = hideConfirmedToggleWindow();
-        window.document.dispatchEvent(new window.Event('DOMContentLoaded'));
-        window.__test.setChildrenData([
-            { id: 'pc:1', first_name: 'A', last_name: 'B', security_code: '1', source: 'planning_center', checked_out_confirmed_at: '2026-08-18T10:00:00Z' },
-            { id: 'pc:2', first_name: 'C', last_name: 'D', security_code: '2', source: 'planning_center', checked_out_confirmed_at: null }
-        ]);
-
-        const toggle = window.document.getElementById('hide-confirmed-toggle');
-        toggle.checked = true;
-        toggle.dispatchEvent(new window.Event('change'));
-        expect(window.__test.getVisibleChildren().map((c) => c.id)).toEqual(['pc:2']);
-
-        toggle.checked = false;
-        toggle.dispatchEvent(new window.Event('change'));
-        expect(window.__test.getVisibleChildren()).toHaveLength(2);
-    });
-
-    it('search toggle button expands and collapses the search controls', () => {
-        const window = loadWindow({
-            html: '<!doctype html><html><body><button id="search-toggle-button" aria-expanded="false" aria-controls="search-controls"><svg data-search-toggle-icon></svg></button><div id="search-controls" class="w-full max-w-md"></div></body></html>'
-        });
-        window.document.dispatchEvent(new window.Event('DOMContentLoaded'));
-        const toggle = window.document.getElementById('search-toggle-button');
-        const controls = window.document.getElementById('search-controls');
-        const icon = toggle.querySelector('[data-search-toggle-icon]');
-
-        expect(controls.classList.contains('is-expanded')).toBe(false);
-        expect(toggle.getAttribute('aria-expanded')).toBe('false');
-        expect(icon.classList.contains('rotate-180')).toBe(false);
-
-        toggle.click();
-        expect(controls.classList.contains('is-expanded')).toBe(true);
-        expect(toggle.getAttribute('aria-expanded')).toBe('true');
-        expect(icon.classList.contains('rotate-180')).toBe(true);
-
-        toggle.click();
-        expect(controls.classList.contains('is-expanded')).toBe(false);
-        expect(toggle.getAttribute('aria-expanded')).toBe('false');
-        expect(icon.classList.contains('rotate-180')).toBe(false);
-    });
-
-    it('re-measures expanded search controls height on window resize', () => {
-        const window = loadWindow({
-            html: '<!doctype html><html><body><button id="search-toggle-button" aria-expanded="false"><svg data-search-toggle-icon></svg></button><div id="search-controls"></div></body></html>'
-        });
-        window.document.dispatchEvent(new window.Event('DOMContentLoaded'));
-        const toggle = window.document.getElementById('search-toggle-button');
-        const controls = window.document.getElementById('search-controls');
-
-        toggle.click();
-        const measuredHeight = controls.style.height;
-
-        controls.style.height = '123px';
-        window.dispatchEvent(new window.Event('resize'));
-        expect(controls.style.height).toBe(measuredHeight);
-
-        toggle.click();
-        controls.style.height = '456px';
-        window.dispatchEvent(new window.Event('resize'));
-        expect(controls.style.height).toBe('456px');
-    });
-
-    it('renders no-unconfirmed message when hiding confirmed empties the board', () => {
-        const window = loadWindow();
-        window.__test.setChildrenData([
-            { id: 'pc:1', first_name: 'A', last_name: 'B', security_code: '1', source: 'planning_center', checked_out_confirmed_at: '2026-08-18T10:00:00Z' }
-        ]);
-        window.__test.setHideConfirmed(true);
-        const html = window.renderChildren(window.__test.getVisibleChildren(), Date.now(), false);
-        expect(html).toContain('No unconfirmed children');
-    });
-
-    it('computeNewChildIds seeds on first call and detects later additions', () => {
-        const window = loadWindow();
-        const pc1 = { source: 'planning_center', planning_center_id: 'pc1' };
-        const pc2 = { source: 'planning_center', planning_center_id: 'pc2' };
-        const first = window.__test.computeNewChildIds([pc1]);
-        expect(first.size).toBe(0);
-        const second = window.__test.computeNewChildIds([pc1, pc2]);
-        expect(Array.from(second)).toEqual(['pc:pc2']);
-    });
-
-    it('does not flash children when the location group filter changes', async () => {
+    it('onFilterChange writes the selection to the URL', async () => {
         const w = loadWindow({
             html: '<!doctype html><html><body><div id="children-list"></div></body></html>',
-            url: 'http://localhost/?location_group_id=1',
-            fetchImpl: async (url) => {
-                if (String(url).includes('location_group_id=1')) {
-                    return { ok: true, json: async () => [pcChild('a')] };
-                }
-                if (String(url).includes('location_group_id=2')) {
-                    return { ok: true, json: async () => [pcChild('b'), pcChild('c')] };
-                }
-                return { ok: true, json: async () => [] };
+            url: 'http://localhost/'
+        });
+        const board = w.checkoutsBoardData();
+        board.setGroups([{ id: 1, name: 'A' }, { id: 2, name: 'B' }]);
+        board.selected = ['2'];
+        board.onFilterChange();
+        expect(w.location.search).toContain('location_group_id=2');
+        await board.fetchChildrenData();
+    });
+
+    it('toggleSelectAll selects all, then empties', async () => {
+        const w = loadWindow({ url: 'http://localhost/?location_group_id=2' });
+        const board = w.checkoutsBoardData();
+        board.setGroups([{ id: 1, name: 'A' }, { id: 2, name: 'B' }]);
+        board.toggleSelectAll();
+        expect(w.location.search).not.toContain('location_group_id');
+        expect(board.selectAllLabel).toBe('Deselect all');
+        board.toggleSelectAll();
+        expect(board.filterEmpty).toBe(true);
+        await board.fetchChildrenData();
+    });
+
+    it('honors confirmation overrides until they expire', () => {
+        const w = loadWindow();
+        const board = boardWith(w, [pcChild('a')]);
+        const child = board.children[0];
+        expect(board.isConfirmed(child)).toBe(false);
+        board.confirmationOverrides.set('pc:a', { confirmed: true, timestamp: Date.now() });
+        expect(board.isConfirmed(child)).toBe(true);
+        board.confirmationOverrides.set('pc:a', { confirmed: true, timestamp: Date.now() - 60 * 1000 });
+        expect(board.isConfirmed(child)).toBe(false);
+    });
+
+    it('confirms a checkout with PATCH and tracks the override', async () => {
+        const calls = [];
+        const w = loadWindow({
+            fetchImpl: async (url, init = {}) => {
+                calls.push({ url: String(url), method: init.method, body: init.body });
+                return { ok: true, json: async () => ({}) };
             }
         });
-        await w.fetchChildrenData();
-        expect(w.__test.getFlashChildIds().size).toBe(0);
-
-        w.history.replaceState(null, '', '?location_group_id=2');
-        await w.fetchChildrenData();
-
-        expect(w.__test.getFlashChildIds().size).toBe(0);
-        expect(w.document.querySelectorAll('.child-card-flash').length).toBe(0);
+        const board = boardWith(w, [pcChild('abc')]);
+        board.refreshOverdue();
+        await board.onConfirmToggle(board.children[0], { target: { checked: true } });
+        expect(calls).toHaveLength(1);
+        expect(calls[0].url).toContain('/v1/checkins/abc/checked_out_confirmed');
+        expect(JSON.parse(calls[0].body)).toEqual({ confirmed: true });
+        expect(board.isConfirmed(board.children[0])).toBe(true);
     });
 
-    it('still flashes net-new children when the filter is unchanged', async () => {
-        const children = [pcChild('a'), pcChild('b')];
+    it('reverts the override when PATCH fails', async () => {
         const w = loadWindow({
-            url: 'http://localhost/?location_group_id=1',
-            fetchImpl: async () => ({ ok: true, json: async () => children.slice() })
+            fetchImpl: async () => ({ ok: false, status: 500, json: async () => ({}) })
         });
-        await w.fetchChildrenData();
-        expect(w.__test.getFlashChildIds().size).toBe(0);
-
-        children.push(pcChild('c'));
-        await w.fetchChildrenData();
-
-        expect(Array.from(w.__test.getFlashChildIds())).toEqual(['pc:c']);
+        const board = boardWith(w, [pcChild('abc')]);
+        const box = { checked: true };
+        await board.onConfirmToggle(board.children[0], { target: box });
+        expect(board.isConfirmed(board.children[0])).toBe(false);
+        expect(box.checked).toBe(false);
     });
 
-    it('clears an in-flight flash when the filter changes', async () => {
-        const children = [pcChild('a'), pcChild('b')];
+    it('skips unknown sources without calling the API', async () => {
+        let called = false;
         const w = loadWindow({
-            html: '<!doctype html><html><body><div id="children-list"></div></body></html>',
-            url: 'http://localhost/?location_group_id=1',
-            fetchImpl: async () => ({ ok: true, json: async () => children.slice() })
+            fetchImpl: async () => { called = true; return { ok: true, json: async () => ({}) }; }
         });
-        await w.fetchChildrenData();
-        children.push(pcChild('d'));
-        await w.fetchChildrenData();
-        expect(Array.from(w.__test.getFlashChildIds())).toEqual(['pc:d']);
-
-        w.history.replaceState(null, '', '?location_group_id=2');
-        await w.fetchChildrenData();
-        expect(w.__test.getFlashChildIds().size).toBe(0);
+        const board = boardWith(w, [{ source: 'walk-in', planning_center_id: 'x' }]);
+        await board.onConfirmToggle(board.children[0], { target: { checked: true } });
+        expect(called).toBe(false);
+        expect(board.isConfirmed(board.children[0])).toBe(false);
     });
 
-    it('renders child-card-flash class for flashing ids', () => {
-        const window = loadWindow();
-        const child = pcChild('pc1');
-        const html = window.renderChildren([child], Date.now(), false);
-        expect(html).not.toContain('child-card-flash');
-        window.__test.setFlashChildIds(new Set(['pc:pc1']));
-        const flashing = window.renderChildren([child], Date.now(), false);
-        expect(flashing).toContain('child-card-flash');
-    });
-
-    it('clearFlashStyles removes flash class from the board and resets flash ids', () => {
-        const window = childrenListWindow();
-        window.__test.setChildrenData([pcChild('pc1')]);
-        window.__test.setDom();
-        window.__test.setFlashChildIds(new Set(['pc:pc1']));
-        window.__test.updateUI();
-        expect(window.document.querySelector('.child-card-flash')).not.toBeNull();
-        window.__test.clearFlashStyles();
-        expect(window.document.querySelector('.child-card-flash')).toBeNull();
-        expect(window.__test.getFlashChildIds().size).toBe(0);
-    });
-
-    it('strips stale flash classes before morphing so a new child re-flashes', () => {
-        const window = childrenListWindow();
-        window.__test.setDom();
-        boardWithFlashedChild(window);
-        expect(cardFor(window, 'pc:d').className).toContain('child-card-flash');
-        let classesAtMorph = null;
-        const realMorphdom = window.morphdom;
-        window.morphdom = (target, template, opts) => {
-            classesAtMorph = [...target.querySelectorAll('.bg-white.rounded-lg')].map((el) => el.className);
-            realMorphdom(target, template, opts);
-        };
-        window.__test.setChildrenData([pcChild('e'), pcChild('d'), pcChild('a'), pcChild('b')]);
-        window.__test.setFlashChildIds(new Set(['pc:e']));
-        window.__test.updateUI();
-        expect(classesAtMorph.length).toBeGreaterThan(0);
-        expect(classesAtMorph.every((className) => !className.includes('child-card-flash'))).toBe(true);
-    });
-
-    it('forces a reflow after clearing stale flash classes so the animation restarts', () => {
-        const window = childrenListWindow();
-        window.__test.setDom();
-        boardWithFlashedChild(window);
-        expect(cardFor(window, 'pc:d').className).toContain('child-card-flash');
-        let reflowCount = 0;
-        Object.defineProperty(window.document.getElementById('children-list'), 'offsetHeight', {
-            configurable: true,
-            get: () => {
-                reflowCount += 1;
-                return 0;
-            }
-        });
-        window.__test.setChildrenData([pcChild('e'), pcChild('d'), pcChild('a'), pcChild('b')]);
-        window.__test.setFlashChildIds(new Set(['pc:e']));
-        window.__test.updateUI();
-        expect(reflowCount).toBeGreaterThan(0);
-    });
-
-    it('maps location_group_id deterministically to Paul Tol muted, gray for null', () => {
-        const w = loadWindow();
-        expect(w.getLocationGroupColor(null)).toBe('#9CA3AF');
-        expect(w.getLocationGroupColor(undefined)).toBe('#9CA3AF');
-        const c1 = w.getLocationGroupColor(1);
-        expect(c1).toBe(w.getLocationGroupColor(1));
-        expect(w.PAUL_TOL_MUTED).not.toContain('#9CA3AF');
-        expect(w.getLocationGroupColor(2)).not.toBe(c1);
-    });
-
-    it('renders color bar matching location_group_id', () => {
-        const w = loadWindow();
-        const html = w.renderChildren([{ first_name: 'A', last_name: 'B', location_group_id: 1, planning_center_id: '1', checked_out_at_ms: Date.now() }], Date.now());
-        expect(html).toContain('background-color:' + w.getLocationGroupColor(1));
-        expect(html).toContain('width:6px');
-        expect(html).toContain('flex-shrink:0');
-        expect(html).toContain('aria-hidden="true"');
-        expect(html).toContain('rounded-l-lg');
-        expect(html).not.toContain('overflow-hidden');
-        expect(html).toContain('flex-1');
-        const htmlNull = w.renderChildren([{ first_name: 'C', last_name: 'D', location_group_id: null, planning_center_id: '2', checked_out_at_ms: Date.now() }], Date.now());
-        expect(htmlNull).toContain('#9CA3AF');
-        expect(htmlNull).toContain('background-color:#9CA3AF');
-    });
-
-    it('renders color bar with flash class on outer container', () => {
-        const w = loadWindow();
-        w.__test.setFlashChildIds(new Set(['pc:1']));
-        const html = w.renderChildren([{ first_name: 'A', last_name: 'B', location_group_id: 1, planning_center_id: '1', checked_out_at_ms: Date.now() }], Date.now());
-        expect(html).toContain('child-card-flash');
-        expect(html).toContain('flex child-card-flash');
-    });
-
-    it('syncLocationGroupUIFromURL Select All toggles text and hides/shows children', async () => {
-        const w = locationGroupWindow();
-        w.fetchChildrenData = async () => {};
-        w.__test.setChildrenData([
-            { source: 'planning_center', planning_center_id: '1', first_name: 'A', last_name: 'B', location_group_id: 1 },
-            { source: 'planning_center', planning_center_id: '2', first_name: 'C', last_name: 'D', location_group_id: 2 }
-        ]);
-        w.document.dispatchEvent(new w.Event('DOMContentLoaded'));
-        await new Promise(r=>setTimeout(r,10));
-
-        let btn = w.document.getElementById('location-group-select-all');
-        let checks = w.document.querySelectorAll('#location-group-checkboxes input');
-        // Initially all checked (no filter params) => text should be Deselect all
-        expect(btn.textContent.trim()).toBe('Deselect all');
-        expect([...checks].every(c=>c.checked)).toBe(true);
-        // isEmpty should be false when no params
-        expect(w.getSelectedFromURL().isEmpty).toBe(false);
-        // visible should show all children
-        expect(w.__test.getVisibleChildren().length).toBe(2);
-
-        // Click Deselect all
-        btn.click();
-        expect(btn.textContent.trim()).toBe('Select all');
-        expect(w.getSelectedFromURL().isEmpty).toBe(true);
-        expect(w.__test.getVisibleChildren().length).toBe(0);
-
-        // Click Select all
-        btn.click();
-        expect(btn.textContent.trim()).toBe('Deselect all');
-        expect(w.getSelectedFromURL().isEmpty).toBe(false);
-        expect(w.__test.getVisibleChildren().length).toBe(2);
-    });
-
-    it('manual checkbox uncheck all hides all children via sentinel URL', async () => {
-        const w = locationGroupWindow();
-        w.fetchChildrenData = async () => {};
-        w.__test.setChildrenData([
-            { source: 'planning_center', planning_center_id: '1', first_name: 'A', last_name: 'B', location_group_id: 1 },
-            { source: 'planning_center', planning_center_id: '2', first_name: 'C', last_name: 'D', location_group_id: 2 }
-        ]);
-        w.document.dispatchEvent(new w.Event('DOMContentLoaded'));
-        await new Promise(r=>setTimeout(r,10));
-
-        let btn = w.document.getElementById('location-group-select-all');
-        let checks = w.document.querySelectorAll('#location-group-checkboxes input');
-
-        // Uncheck all checkboxes manually
-        checks.forEach(c => { c.checked = false; c.dispatchEvent(new w.Event('change', {bubbles:true})); });
-        await new Promise(r=>setTimeout(r,10));
-
-        expect(btn.textContent.trim()).toBe('Select all');
-        expect(w.getSelectedFromURL().isEmpty).toBe(true);
-        expect(w.__test.getVisibleChildren().length).toBe(0);
-    });
-
-    it('select all when URL has empty location_group_id param shows Select all and hides all children', async () => {
-        const w = locationGroupWindow();
-        w.fetchChildrenData = async () => {};
-        w.window.history.replaceState(null, '', '?location_group_id=');
-        w.__test.setChildrenData([
-            { source: 'planning_center', planning_center_id: '1', first_name: 'A', last_name: 'B', location_group_id: 1 },
-            { source: 'planning_center', planning_center_id: '2', first_name: 'C', last_name: 'D', location_group_id: 2 }
-        ]);
-        w.document.dispatchEvent(new w.Event('DOMContentLoaded'));
-        await new Promise(r=>setTimeout(r,10));
-
-        let btn = w.document.getElementById('location-group-select-all');
-        let checks = w.document.querySelectorAll('#location-group-checkboxes input');
-        expect(btn.textContent.trim()).toBe('Select all');
-        expect([...checks].every(c=>c.checked)).toBe(false);
-        expect(w.getSelectedFromURL().isEmpty).toBe(true);
-        expect(w.__test.getVisibleChildren().length).toBe(0);
-    });
-
-    it('still fetches (unfiltered) while the location group selection is empty but hides filtered children', async () => {
-        let checkoutsFetchCount = 0;
+    it('flags new arrivals and reseeds the baseline when the filter changes', async () => {
         const w = loadWindow({
-            html: '<!doctype html><html><body><div id="children-list"></div><button id="overdue-badge" class="hidden"></button><div id="overdue-sheet" class="translate-y-full"></div><div id="overdue-sheet-backdrop" class="hidden"></div><div id="overdue-sheet-list"></div><div id="toast-stack"></div></body></html>',
-            url: 'http://localhost/?location_group_id=',
-            fetchImpl: async (url) => {
-                if (String(url).includes('/v1/checkins/checkouts')) checkoutsFetchCount++;
-                return { ok: true, json: async () => [pcChild('a')] };
-            }
-        });
-        await w.fetchChildrenData();
-        // Single unfiltered poll: still hits the server so the overdue badge can be fed
-        expect(checkoutsFetchCount).toBe(1);
-        // Board is empty due to client-side isEmpty filter
-        expect(w.document.getElementById('children-list').textContent).toContain('No children called yet');
-        expect(w.__test.getVisibleChildren().length).toBe(0);
-        // But childrenData still holds the fetched record (for overdue badge)
-        expect(w.__test.getChildrenData().length).toBe(1);
-
-        await w.fetchChildrenData();
-        expect(checkoutsFetchCount).toBe(2);
-    });
-
-    const overdueChild = (id, minutesAgo) => ({
-        source: 'planning_center',
-        planning_center_id: id,
-        first_name: id,
-        last_name: 'X',
-        security_code: id,
-        checked_out_at_ms: Date.now() - minutesAgo * 60 * 1000,
-        checked_out_confirmed_at: null
-    });
-
-    function overdueBadgeWindow() {
-        return loadWindow({
-            html: '<!doctype html><html><body><div id="children-list"></div><button id="overdue-badge" class="hidden"></button><div id="overdue-sheet" class="translate-y-full"></div><div id="overdue-sheet-backdrop" class="hidden"></div><div id="overdue-sheet-list"></div></body></html>',
-            fetchImpl: async () => ({ ok: true, json: async () => [] })
-        });
-    }
-
-    it('jiggles the overdue badge when the overdue count increases', async () => {
-        const w = overdueBadgeWindow();
-        w.document.dispatchEvent(new w.Event('DOMContentLoaded'));
-        await new Promise(r=>setTimeout(r,10));
-
-        const badge = w.document.getElementById('overdue-badge');
-        w.__test.setChildrenData([overdueChild('a', 6)]);
-        w.updateOverdueUI();
-        expect(badge.classList.contains('hidden')).toBe(false);
-        expect(badge.textContent).toContain('1 overdue');
-        expect(badge.classList.contains('overdue-badge-jiggle')).toBe(true);
-
-        // Same count: animation must not restart
-        badge.classList.remove('overdue-badge-jiggle');
-        w.updateOverdueUI();
-        expect(badge.classList.contains('overdue-badge-jiggle')).toBe(false);
-
-        // Count increases again: jiggle restarts
-        w.__test.setChildrenData([overdueChild('a', 6), overdueChild('b', 7)]);
-        w.updateOverdueUI();
-        expect(badge.classList.contains('overdue-badge-jiggle')).toBe(true);
-    });
-
-    it('does not jiggle the overdue badge when the count decreases', async () => {
-        const w = overdueBadgeWindow();
-        w.document.dispatchEvent(new w.Event('DOMContentLoaded'));
-        await new Promise(r=>setTimeout(r,10));
-
-        const badge = w.document.getElementById('overdue-badge');
-        w.__test.setChildrenData([overdueChild('a', 6), overdueChild('b', 7)]);
-        w.updateOverdueUI();
-        expect(badge.classList.contains('overdue-badge-jiggle')).toBe(true);
-        badge.classList.remove('overdue-badge-jiggle');
-
-        w.__test.setChildrenData([overdueChild('a', 6)]);
-        w.updateOverdueUI();
-        expect(badge.classList.contains('overdue-badge-jiggle')).toBe(false);
-    });
-
-    it('closes the overdue sheet when clicking the backdrop', async () => {
-        const w = overdueBadgeWindow();
-        w.document.dispatchEvent(new w.Event('DOMContentLoaded'));
-        await new Promise(r=>setTimeout(r,10));
-
-        w.__test.setChildrenData([overdueChild('a', 6)]);
-        w.updateOverdueUI();
-        w.openOverdueSheet();
-
-        const sheet = w.document.getElementById('overdue-sheet');
-        const backdrop = w.document.getElementById('overdue-sheet-backdrop');
-        expect(sheet.classList.contains('translate-y-full')).toBe(false);
-        expect(backdrop.classList.contains('hidden')).toBe(false);
-        expect(w.document.body.style.overflow).toBe('hidden');
-
-        backdrop.dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
-
-        expect(sheet.classList.contains('translate-y-full')).toBe(true);
-        expect(backdrop.classList.contains('hidden')).toBe(true);
-        expect(w.document.body.style.overflow).toBe('');
-    });
-
-    it('updates the main-list pill color when confirming via the overdue sheet', async () => {
-        const w = overdueBadgeWindow();
-        w.document.dispatchEvent(new w.Event('DOMContentLoaded'));
-        await new Promise(r=>setTimeout(r,10));
-
-        const child = overdueChild('a', 9);
-        w.__test.setChildrenData([child]);
-        w.updateUI();
-        w.updateOverdueUI();
-
-        const mainPill = w.document.querySelector('#children-list .child-time[data-child-id="pc:a"]');
-        const sheetPill = w.document.querySelector('#overdue-sheet-list .child-time[data-child-id="pc:a"]');
-        expect(mainPill).not.toBeNull();
-        expect(sheetPill).not.toBeNull();
-        expect(mainPill.className).toContain('bg-red-500');
-        expect(sheetPill.className).toContain('bg-red-500');
-
-        const sheetCheckbox = w.document.querySelector('#overdue-sheet-list .child-confirmed-checkbox[data-child-id="pc:a"]');
-        sheetCheckbox.checked = true;
-        sheetCheckbox.dispatchEvent(new w.Event('change', { bubbles: true }));
-        await new Promise(r=>setTimeout(r,10));
-
-        // Main-list pill must flip to confirmed gray even though the cached
-        // single entry pointed at the sheet pill.
-        const updatedMainPill = w.document.querySelector('#children-list .child-time[data-child-id="pc:a"]');
-        expect(updatedMainPill.className).toContain('bg-gray-400');
-        expect(updatedMainPill.className).not.toContain('bg-red-500');
-    });
-
-    it('refetches and reseeds the flash baseline after re-selecting a group', async () => {
-        const w = loadWindow({
-            html: '<!doctype html><html><body><div id="children-list"></div></body></html>',
-            url: 'http://localhost/?location_group_id=',
+            url: 'http://localhost/',
             fetchImpl: async () => ({ ok: true, json: async () => [pcChild('a')] })
         });
-        await w.fetchChildrenData();
-        expect(w.__test.getFlashChildIds().size).toBe(0);
+        const board = w.checkoutsBoardData();
+        await board.fetchChildrenData();
+        expect(board.loading).toBe(false);
+        expect(board.loadError).toBe(false);
+        expect(board.flashIds.size).toBe(0);
 
         w.history.replaceState(null, '', '?location_group_id=1');
-        await w.fetchChildrenData();
-
-        expect(Array.from(w.__test.getFlashChildIds())).toEqual([]);
-        expect(w.document.querySelectorAll('.child-time').length).toBe(1);
+        await board.fetchChildrenData();
+        expect(Array.from(board.flashIds)).toEqual([]);
     });
 
-    it('unchecking all groups via the UI hides visible children but polling continues for overdue badge', async () => {
-        let checkoutsFetchCount = 0;
-        const w = locationGroupWindow();
-        w.window.fetch = async (url) => {
-            if (String(url).includes('/v1/checkins/checkouts')) checkoutsFetchCount++;
-            return { ok: true, json: async () => [] };
-        };
-        w.document.dispatchEvent(new w.Event('DOMContentLoaded'));
-        await new Promise(r=>setTimeout(r,10));
-
-        expect(checkoutsFetchCount).toBe(1); // initial children fetch
-        w.renderLocationGroupSettings([{ id: 1, name: 'A' }, { id: 2, name: 'B' }]);
-
-        const checks = w.document.querySelectorAll('#location-group-checkboxes input');
-        checks.forEach(c => { c.checked = false; c.dispatchEvent(new w.Event('change', {bubbles:true})); });
-        await new Promise(r=>setTimeout(r,10));
-
-        expect(w.getSelectedFromURL().isEmpty).toBe(true);
-        expect(w.__test.getVisibleChildren().length).toBe(0);
-
-        // While empty, scheduled polls still hit the API (so overdue badge sees all groups)
-        const before = checkoutsFetchCount;
-        await w.fetchChildrenData();
-        await w.fetchChildrenData();
-        expect(checkoutsFetchCount).toBe(before + 2);
-
-        // Re-selecting a group shows children again
-        w.document.querySelector('#location-group-checkboxes input[data-lg-id="1"]').checked = true;
-        w.document.querySelector('#location-group-checkboxes input[data-lg-id="1"]').dispatchEvent(new w.Event('change', {bubbles:true}));
-        await new Promise(r=>setTimeout(r,10));
-        expect(w.getSelectedFromURL().isEmpty).toBe(false);
-    });
-
-    it('resolves location_group_name filters to ids once groups are known', () => {
-        const w = loadWindow({
-            html: '<!doctype html><html><body><div id="location-group-checkboxes"></div></body></html>',
-            url: 'http://localhost/?location_group_name=Grace'
-        });
-        const sel = w.getSelectedFromURL();
-        expect(sel.names.has('Grace')).toBe(true);
-        expect(sel.ids.size).toBe(0);
-
-        w.renderLocationGroupSettings([{ id: 1, name: 'Grace' }, { id: 2, name: 'Ada' }]);
-
-        const resolved = w.getSelectedFromURL();
-        expect(resolved.ids.has(1)).toBe(true);
-        expect(resolved.ids.has(2)).toBe(false);
-    });
-
-    it('keeps name-filtered children visible when ids are also selected', () => {
-        const w = loadWindow({
-            html: '<!doctype html><html><body><div id="location-group-checkboxes"></div></body></html>',
-            url: 'http://localhost/?location_group_id=2&location_group_name=Grace'
-        });
-        w.renderLocationGroupSettings([{ id: 1, name: 'Grace' }, { id: 2, name: 'Ada' }]);
-        w.__test.setChildrenData([
-            { source: 'planning_center', planning_center_id: '1', location_group_id: 1 },
-            { source: 'planning_center', planning_center_id: '2', location_group_id: 2 }
-        ]);
-        const visible = w.__test.getVisibleChildren().map((c) => c.planning_center_id);
-        expect(visible).toEqual(['1', '2']);
-    });
-
-    it('escapes location group ids in the settings markup', () => {
-        const w = locationGroupWindow();
-        w.renderLocationGroupSettings([{ id: '1" onmouseover="alert(1)', name: 'Sneaky' }]);
-        const html = w.document.getElementById('location-group-checkboxes').innerHTML;
-        expect(html).not.toContain('data-lg-id="1" onmouseover=');
-        expect(html).toContain('&quot;');
-    });
-
-    it('keeps tied-row order stable across polls with varying API row order', async () => {
-        const stamp = new Date().toISOString();
-        const rows = () => [
-            { ...pcChild('b'), checked_out_at: stamp },
-            { ...pcChild('a'), checked_out_at: stamp }
-        ];
-        let flip = false;
+    it('marks fetch errors', async () => {
         const w = loadWindow({
             html: '<!doctype html><html><body><div id="children-list"></div></body></html>',
-            fetchImpl: async () => {
+            fetchImpl: async () => ({ ok: false, status: 500, json: async () => ({}) })
+        });
+        const board = w.checkoutsBoardData();
+        await board.fetchChildrenData();
+        expect(board.loadError).toBe(true);
+        expect(board.children).toEqual([]);
+    });
+
+    it('retains confirmed overdue rows in the sheet until close', () => {
+        const w = loadWindow();
+        const old = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+        const board = boardWith(w, [pcChild('a', { checked_out_at: old })]);
+        board.refreshOverdue();
+        expect(board.badgeVisible).toBe(true);
+        expect(board.sheetOverdue.map((c) => c._id)).toEqual(['pc:a']);
+
+        board.openOverdueSheet();
+        board.confirmationOverrides.set('pc:a', { confirmed: true, timestamp: Date.now() });
+        board.refreshOverdue();
+        // Live list is empty, but the drawer keeps the row until close.
+        expect(board.overdueChildren).toEqual([]);
+        board.overdueRetainedIds.add('pc:a');
+        board.refreshOverdue();
+        expect(board.sheetOverdue.map((c) => c._id)).toEqual(['pc:a']);
+
+        board.closeOverdueSheet();
+        expect(board.sheetOverdue).toEqual([]);
+        expect(board.badgeVisible).toBe(false);
+    });
+
+    it('keeps drawer order stable when tied rows arrive in different orders', async () => {
+        const stamp = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+        const tied = () => [pcChild('b', { checked_out_at: stamp }), pcChild('a', { checked_out_at: stamp })];
+        let flip = false;
+        const w = loadWindow({
+            fetchImpl: async (url) => {
+                if (String(url).includes('/v1/location_groups')) return { ok: true, json: async () => [] };
+                const rows = tied();
+                // Simulate the DB returning tied rows in varying order.
                 flip = !flip;
-                const r = rows();
-                return { ok: true, json: async () => (flip ? r : [...r].reverse()) };
+                return { ok: true, json: async () => (flip ? rows : [...rows].reverse()) };
             }
         });
-        await w.fetchChildrenData();
-        const first = w.__test.getVisibleChildren().map((c) => c.planning_center_id);
-        expect(first).toEqual(['a', 'b']);
-        await w.fetchChildrenData();
-        expect(w.__test.getVisibleChildren().map((c) => c.planning_center_id)).toEqual(first);
+        const board = w.checkoutsBoardData();
+        board.openOverdueSheet();
+        await board.fetchChildrenData();
+        const first = board.sheetOverdue.map((c) => c._id);
+        expect(first).toEqual(['pc:a', 'pc:b']);
+        await board.onConfirmToggle(board.children.find((c) => c._id === 'pc:b'), { target: { checked: true } });
+        await board.fetchChildrenData();
+        await board.fetchChildrenData();
+        expect(board.sheetOverdue.map((c) => c._id)).toEqual(first);
+        board.destroy();
+    });
+});
+
+describe('checkoutsv1/checkoutsBoard with Alpine', () => {
+    it('boots without Alpine expression errors', async () => {
+        const old = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+        const { board, warns } = await loadBoardPage({
+            checkouts: [pcChild('Late', { checked_out_at: old })],
+            groups: [{ id: 1, name: 'G' }]
+        });
+        // Every x-bind/@on in the page must resolve: Alpine reports
+        // failures as console warnings (e.g. the badgeCount ReferenceError).
+        // ("already been initialized" is harness noise from the explicit
+        // start() call below auto-start, not an app signal.)
+        const problems = warns.filter((m) => /Alpine Expression Error|Maximum recursive|undefined is not/i)
+            .filter((m) => !/already been initialized/i.test(m));
+        expect(problems).toEqual([]);
+        board.destroy();
+    });
+
+    it('renders location groups from the API', async () => {
+        const { window: w } = await loadBoardPage({
+            groups: [{ id: 1, name: 'Group A' }, { id: 2, name: 'Group B' }]
+        });
+        const labels = [...w.document.querySelectorAll('#location-group-checkboxes label')]
+            .map((l) => l.textContent.trim()).filter(Boolean);
+        expect(labels).toEqual(['Group A', 'Group B', 'Unassigned']);
+        w.__checkoutsBoard.destroy();
+    });
+
+    it('renders checkout cards and filters by search', async () => {
+        const { window: w, board } = await loadBoardPage({
+            checkouts: [pcChild('Amy'), pcChild('Bo')],
+            groups: [{ id: 1, name: 'G' }]
+        });
+        expect(board.visibleChildren).toHaveLength(2);
+        let cards = w.document.querySelectorAll('#children-list .child-card');
+        expect(cards.length).toBe(2);
+        expect(cards[0].textContent).toContain('Amy');
+        // Group color bar: sizing must come from classes, not the static
+        // style attribute — Alpine's :style binding replaces the whole
+        // attribute and would wipe inline width/flex (zero-width bar).
+        const bar = cards[0].querySelector(':scope > div[aria-hidden="true"]');
+        expect(bar.getAttribute('style')).toContain('background-color');
+        expect(bar.getAttribute('style')).not.toContain('width');
+        expect(bar.classList.contains('w-[6px]')).toBe(true);
+        expect(bar.classList.contains('shrink-0')).toBe(true);
+
+        const input = w.document.getElementById('search-input');
+        input.value = 'bo';
+        input.dispatchEvent(new w.Event('input', { bubbles: true }));
+        await flush();
+        cards = w.document.querySelectorAll('#children-list .child-card');
+        expect(cards.length).toBe(1);
+        expect(cards[0].textContent).toContain('Bo');
+        board.destroy();
+    });
+
+    it('keeps DOM nodes stable across polls (focus/scroll safe)', async () => {
+        const kid = pcChild('Amy');
+        const { window: w, board } = await loadBoardPage({ checkouts: [kid] });
+        const before = w.document.querySelector('#children-list .child-card[data-child-id="pc:Amy"]');
+        expect(before).not.toBeNull();
+        before.querySelector('input[type="checkbox"]').focus();
+        await board.fetchChildrenData();
+        await flush();
+        const after = w.document.querySelector('#children-list .child-card[data-child-id="pc:Amy"]');
+        expect(after).toBe(before);
+        expect(w.document.activeElement).toBe(after.querySelector('input[type="checkbox"]'));
+        board.destroy();
+    });
+
+    it('confirms via checkbox and turns the pill gray', async () => {
+        const { window: w, board, patches } = await loadBoardPage({ checkouts: [pcChild('Amy')] });
+        const box = w.document.querySelector('#children-list .child-confirmed-checkbox');
+        box.checked = true;
+        box.dispatchEvent(new w.Event('change', { bubbles: true }));
+        await flush();
+        expect(patches).toHaveLength(1);
+        expect(patches[0].url).toContain('/v1/checkins/Amy/checked_out_confirmed');
+        expect(patches[0].body).toEqual({ confirmed: true });
+        expect(board.isConfirmed(board.children[0])).toBe(true);
+        const pill = w.document.querySelector('#children-list .child-time');
+        expect(pill.className).toContain('bg-gray-400');
+        // The green icon is pure CSS: [data-confirmed-state="confirmed"]
+        // [data-confirmed-icon] { filter: ... }. Both hooks must exist.
+        const label = w.document.querySelector('#children-list .child-card label');
+        expect(label.getAttribute('data-confirmed-state')).toBe('confirmed');
+        expect(label.querySelector('img[data-confirmed-icon]')).not.toBeNull();
+        board.destroy();
+    });
+
+    it('shows the overdue badge and sheet for stale checkouts', async () => {
+        const old = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+        const { window: w, board } = await loadBoardPage({
+            checkouts: [pcChild('Late', { checked_out_at: old })]
+        });
+        const badge = w.document.getElementById('overdue-badge');
+        expect(badge.textContent).toContain('1 overdue');
+        expect(badge.style.display).not.toBe('none');
+        // All Alpine bindings must resolve: a missing component member
+        // throws ReferenceError and leaves the attribute unset.
+        expect(badge.getAttribute('aria-label')).toBe('1 overdue checkouts, tap to view');
+
+        badge.dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
+        await flush();
+        const sheet = w.document.getElementById('overdue-sheet');
+        expect(sheet.classList.contains('translate-y-full')).toBe(false);
+        expect(w.document.querySelectorAll('#overdue-sheet-list .child-card').length).toBe(1);
+
+        w.document.getElementById('overdue-sheet-close')
+            .dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
+        await flush();
+        expect(sheet.classList.contains('translate-y-full')).toBe(true);
+        board.destroy();
+    });
+
+    it('hides confirmed children with the toggle', async () => {
+        const { window: w, board } = await loadBoardPage({
+            checkouts: [pcChild('Amy'), pcChild('Bo', { checked_out_confirmed_at: '2024-01-01T00:00:00Z' })]
+        });
+        expect(w.document.querySelectorAll('#children-list .child-card').length).toBe(2);
+        const toggle = w.document.getElementById('hide-confirmed-toggle');
+        toggle.checked = true;
+        toggle.dispatchEvent(new w.Event('change', { bubbles: true }));
+        await flush();
+        const cards = w.document.querySelectorAll('#children-list .child-card');
+        expect(cards.length).toBe(1);
+        expect(cards[0].textContent).toContain('Amy');
+        board.destroy();
     });
 });
