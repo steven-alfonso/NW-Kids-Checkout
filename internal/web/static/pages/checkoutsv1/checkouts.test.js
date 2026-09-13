@@ -887,4 +887,26 @@ describe('checkoutsv1/checkouts', () => {
         expect(html).not.toContain('data-lg-id="1" onmouseover=');
         expect(html).toContain('&quot;');
     });
+
+    it('keeps tied-row order stable across polls with varying API row order', async () => {
+        const stamp = new Date().toISOString();
+        const rows = () => [
+            { ...pcChild('b'), checked_out_at: stamp },
+            { ...pcChild('a'), checked_out_at: stamp }
+        ];
+        let flip = false;
+        const w = loadWindow({
+            html: '<!doctype html><html><body><div id="children-list"></div></body></html>',
+            fetchImpl: async () => {
+                flip = !flip;
+                const r = rows();
+                return { ok: true, json: async () => (flip ? r : [...r].reverse()) };
+            }
+        });
+        await w.fetchChildrenData();
+        const first = w.__test.getVisibleChildren().map((c) => c.planning_center_id);
+        expect(first).toEqual(['a', 'b']);
+        await w.fetchChildrenData();
+        expect(w.__test.getVisibleChildren().map((c) => c.planning_center_id)).toEqual(first);
+    });
 });
