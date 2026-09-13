@@ -5,8 +5,13 @@
   "main": "app.js",
   "scripts": {
     "test": "vitest run",
-    "build:css": "tailwindcss --config tailwind.config.js -o internal/web/static/css/tailwind.css --minify --content \".\"",
-    "watch:css": "tailwindcss --config tailwind.config.js -o internal/web/static/css/tailwind.css --content \".\" --watch"
+    "test:unit": "vitest run",
+    "test:browser": "node e2e/browser-smoke.mjs",
+    "test:e2e": "npm run test:unit && npm run test:browser",
+    "e2e:ab": "node e2e/ab-validate/checkouts.mjs",
+    "e2e:smoke": "node e2e/browser-smoke.mjs",
+    "build:css": "tailwindcss --config tailwind.config.js -o internal/web/static/css/tailwind.css --minify --content \"./internal/web/static/**/*.{html,js}\"",
+    "watch:css": "tailwindcss --config tailwind.config.js -o internal/web/static/css/tailwind.css --content \"./internal/web/static/**/*.{html,js}\" --watch"
   },
   "keywords": [],
   "author": "",

@@ -1,4 +1,6 @@
 // NW Kids checkouts board.
+// CSP note: Alpine.js uses `new Function` / `with` for expression evaluation
+// and requires `script-src 'unsafe-eval'` if a Content-Security-Policy is set.
 //
 // Single Alpine.js component (`checkoutsBoard`, see checkouts.html) owns all
 // board state: children, search/filter UI, confirmations, flash highlights,
@@ -14,6 +16,11 @@ const DEBUG = typeof window !== 'undefined' && new URLSearchParams(window.locati
 const CONFIRM_OVERRIDE_TTL_MS = 15000;
 const FLASH_RESET_DELAY_MS = 4000;
 const OVERDUE_MINUTES = 5;
+const PREVIEW_AUTO_UNBLOCK_MS = 30000;
+
+// Module-local guard for double-PATCH: checked synchronously outside the
+// Alpine proxy so a second click before the await sees it.
+const inflightConfirmIds = new Set();
 
 const GRAY_UNASSIGNED = '#9CA3AF';
 const PAUL_TOL_MUTED = [
@@ -260,6 +267,10 @@ function unlockBodyScroll(scrollState) {
     return { locked: false, scrollY: 0 };
 }
 
+function getBackoffMs(errors) {
+    return Math.min(30000, 3000 * Math.pow(2, Math.max(0, errors - 1)));
+}
+
 // The board component (registered as Alpine data `checkoutsBoard`).
 // All mutable board state lives here; the HTML reads it declaratively.
 function checkoutsBoardData() {
@@ -276,6 +287,7 @@ function checkoutsBoardData() {
         includeUnassigned: true,
         filterEmpty: false,
         filterActive: false,
+        groupsReady: false,
 
         // Board UI
         loading: true,
@@ -305,10 +317,16 @@ function checkoutsBoardData() {
         // Fetch control
         fetchController: null,
         fetchBlocked: false,
+        previewMode: false,
+        previewTimeoutId: null,
+        consecutiveErrors: 0,
+        backoffUntil: 0,
+        lastErrorLogAt: 0,
         lastFetchParams: null,
         pollFetchId: null,
         pollTickId: null,
         scrollState: { locked: false, scrollY: 0 },
+        _visibilityHandler: null,
 
         // ----- derived -----
 
@@ -364,6 +382,29 @@ function checkoutsBoardData() {
             return this.sheetOverdue.length > 0 ? `${this.sheetOverdue.length} overdue` : 'No overdue';
         },
 
+        get filteredCount() {
+            const selectedIds = new Set(
+                this.selected.map(Number).filter((n) => Number.isFinite(n) && n > 0)
+            );
+            return filterVisibleChildren(this.children, {
+                hideConfirmed: this.hideConfirmed,
+                searchQuery: this.searchQuery,
+                filterEmpty: this.filterEmpty,
+                filterActive: this.filterActive,
+                selectedIds,
+                includeUnassigned: this.includeUnassigned,
+                confirmedById: this.confirmedById
+            }).length;
+        },
+
+        get isTruncated() {
+            return this.filteredCount > 100;
+        },
+
+        get truncationText() {
+            return `Showing 100 of ${this.filteredCount}`;
+        },
+
         // ----- per-child view helpers -----
 
         displayName(child) {
@@ -409,17 +450,54 @@ function checkoutsBoardData() {
             window.__checkoutsBoard = this;
             this.applyURL();
             this.tickClock();
-            this.fetchLocationGroups();
-            this.fetchChildrenData();
-            this.pollFetchId = setInterval(() => { this.fetchChildrenData(); }, 3000);
+            // visibility pause/resume
+            if (typeof document !== 'undefined' && document.addEventListener) {
+                this._visibilityHandler = () => {
+                    if (document.hidden) this.pausePolling();
+                    else this.resumePolling();
+                };
+                document.addEventListener('visibilitychange', this._visibilityHandler);
+            }
             this.pollTickId = setInterval(() => { this.tick(); }, 1000);
+            // Gate first fetch on groups resolution to avoid unfiltered flash.
+            this.fetchLocationGroups().finally(() => {
+                this.groupsReady = true;
+                this.applyURL();
+                this.fetchChildrenData();
+                if (!this.pollFetchId && !(typeof document !== 'undefined' && document.hidden)) {
+                    this.pollFetchId = setInterval(() => { this.fetchChildrenData(); }, 3000);
+                }
+            });
         },
 
         destroy() {
             if (this.pollFetchId) clearInterval(this.pollFetchId);
             if (this.pollTickId) clearInterval(this.pollTickId);
             if (this.flashTimeoutId) clearTimeout(this.flashTimeoutId);
-            this.pollFetchId = this.pollTickId = this.flashTimeoutId = null;
+            if (this.previewTimeoutId) clearTimeout(this.previewTimeoutId);
+            if (this._visibilityHandler && typeof document !== 'undefined' && document.removeEventListener) {
+                document.removeEventListener('visibilitychange', this._visibilityHandler);
+            }
+            this.pollFetchId = this.pollTickId = this.flashTimeoutId = this.previewTimeoutId = null;
+            this._visibilityHandler = null;
+        },
+
+        pausePolling() {
+            if (this.pollFetchId) {
+                clearInterval(this.pollFetchId);
+                this.pollFetchId = null;
+            }
+        },
+
+        resumePolling() {
+            if (this.pollFetchId) return;
+            if (typeof document !== 'undefined' && document.hidden) return;
+            this.fetchChildrenData();
+            this.pollFetchId = setInterval(() => { this.fetchChildrenData(); }, 3000);
+        },
+
+        getBackoffMs() {
+            return getBackoffMs(this.consecutiveErrors);
         },
 
         tick() {
@@ -440,12 +518,15 @@ function checkoutsBoardData() {
         sweepOverrides() {
             const now = Date.now();
             let changed = false;
+            let next = null;
             for (const [id, entry] of this.confirmationOverrides) {
                 if (now - entry.timestamp > CONFIRM_OVERRIDE_TTL_MS) {
-                    this.confirmationOverrides.delete(id);
+                    if (!next) next = new Map(this.confirmationOverrides);
+                    next.delete(id);
                     changed = true;
                 }
             }
+            if (changed) this.confirmationOverrides = next;
             return changed;
         },
 
@@ -489,12 +570,16 @@ function checkoutsBoardData() {
 
         // ----- data -----
 
-        async fetchChildrenData() {
-            if (this.fetchBlocked) return;
+        async fetchChildrenData(opts) {
+            if (this.previewMode && !opts?.force) return;
+            if (this.backoffUntil && Date.now() < this.backoffUntil) return;
+            // Abort previous in-flight fetch (abort-previous pattern; no dropped polls)
+            if (this.fetchController) {
+                try { this.fetchController.abort(); } catch (e) { /* ignore */ }
+                this.fetchController = null;
+            }
             let controller = null;
             try {
-                this.fetchBlocked = true;
-                if (this.fetchController) this.fetchController.abort();
                 controller = new AbortController();
                 this.fetchController = controller;
 
@@ -542,27 +627,43 @@ function checkoutsBoardData() {
 
                 // Server caught up with an optimistic override: drop it.
                 const serverById = new Map(combined.map((c) => [c._id, Boolean(c.checked_out_confirmed_at)]));
+                let nextOverrides = null;
+                let overridesChanged = false;
                 for (const [id, entry] of this.confirmationOverrides) {
                     if (serverById.get(id) === entry.confirmed) {
-                        this.confirmationOverrides.delete(id);
+                        if (!nextOverrides) nextOverrides = new Map(this.confirmationOverrides);
+                        nextOverrides.delete(id);
+                        overridesChanged = true;
                     }
                 }
+                if (overridesChanged) this.confirmationOverrides = nextOverrides;
 
+                this.consecutiveErrors = 0;
+                this.backoffUntil = 0;
                 this.loadError = false;
                 this.refreshOverdue();
                 this.tickClock(); // initialize times
+                if (this.$nextTick) this.$nextTick(() => this.onResize());
+                else this.onResize();
 
                 if (DEBUG) {
                     console.log(`Fetched ${combined.length} children`);
                 }
             } catch (error) {
                 if (error?.name === 'AbortError') return;
-                console.error('Error fetching children data:', error);
-                this.children = [];
+                // exponential backoff
+                this.consecutiveErrors = (this.consecutiveErrors || 0) + 1;
+                const backoffMs = getBackoffMs(this.consecutiveErrors);
+                this.backoffUntil = Date.now() + backoffMs;
+                // throttle console.error to once per backoff window (or when DEBUG)
+                const now = Date.now();
+                if (DEBUG || !this.lastErrorLogAt || now - this.lastErrorLogAt >= backoffMs) {
+                    console.error('Error fetching children data:', error);
+                    this.lastErrorLogAt = now;
+                }
                 this.loadError = true;
             } finally {
                 this.loading = false;
-                this.fetchBlocked = false;
                 if (this.fetchController === controller) {
                     this.fetchController = null;
                 }
@@ -592,6 +693,7 @@ function checkoutsBoardData() {
                 name: g.name || '',
                 color: getLocationGroupColor(g.id)
             }));
+            this.groupsReady = true;
             this.applyURL();
         },
 
@@ -599,6 +701,30 @@ function checkoutsBoardData() {
             const { ids, includeUnassigned, isEmpty } = getSelectedFromURL(this.locationGroups);
             // Mirror the legacy semantics: an explicit empty filter shows
             // nothing; no params means no filtering; otherwise filter.
+            // While groups are still loading, treat location_group_name filters
+            // as empty to avoid flashing unfiltered results before resolution.
+            if (!this.groupsReady) {
+                const params = new URLSearchParams(window.location.search);
+                const hasGroupParam = params.has('location_group_id') || params.has('location_group_name') || params.has('include_unassigned');
+                if (hasGroupParam) {
+                    // If we have group params but groups not yet resolved, we
+                    // cannot accurately evaluate filterActive; default to empty
+                    // so first fetch is gated and no flash occurs. The
+                    // subsequent applyURL after groupsReady will correct.
+                    const hasIds = ids.size > 0;
+                    const hasNames = params.getAll('location_group_name').some(v => v.trim());
+                    // Only treat as empty if we cannot resolve names yet.
+                    // For id-based filters, ids already parsed, but keep
+                    // consistent: defer filtering until groupsReady.
+                    if (!hasIds && hasNames) {
+                        this.filterEmpty = true;
+                        this.filterActive = true;
+                        this.selected = [];
+                        this.includeUnassigned = false;
+                        return;
+                    }
+                }
+            }
             this.filterEmpty = isEmpty;
             this.filterActive = !isEmpty && (ids.size > 0 || includeUnassigned);
             if (isEmpty) {
@@ -683,31 +809,52 @@ function checkoutsBoardData() {
         async onConfirmToggle(child, event) {
             const id = child._id;
             const checkbox = event && event.target ? event.target : null;
-            if (!id || this.confirmingIds.has(id)) {
-                if (checkbox) checkbox.checked = this.isConfirmed(child);
+            if (!id || inflightConfirmIds.has(id) || this.confirmingIds.has(id)) {
                 return;
             }
             const previous = this.isConfirmed(child);
             const next = checkbox ? checkbox.checked : !previous;
 
+            // Synchronous guard + immediate disable before any await.
+            inflightConfirmIds.add(id);
+            if (checkbox) checkbox.disabled = true;
+
             // Retain confirmed overdue rows in the drawer until it closes.
             const wasOverdue = this.overdueChildren.some((c) => c._id === id);
             if (wasOverdue && !previous && next && this.sheetOpen) {
-                this.overdueRetainedIds.add(id);
+                const nextSet = new Set(this.overdueRetainedIds);
+                nextSet.add(id);
+                this.overdueRetainedIds = nextSet;
             } else if (!next) {
-                this.overdueRetainedIds.delete(id);
+                if (this.overdueRetainedIds.has(id)) {
+                    const nextSet = new Set(this.overdueRetainedIds);
+                    nextSet.delete(id);
+                    this.overdueRetainedIds = nextSet;
+                }
             }
 
-            this.confirmationOverrides.set(id, { confirmed: next, timestamp: Date.now() });
+            {
+                const nextMap = new Map(this.confirmationOverrides);
+                nextMap.set(id, { confirmed: next, timestamp: Date.now() });
+                this.confirmationOverrides = nextMap;
+            }
 
             const endpoint = this.confirmEndpoint(child);
             if (!endpoint) {
-                this.confirmationOverrides.delete(id);
-                if (checkbox) checkbox.checked = previous;
+                {
+                    const nextMap = new Map(this.confirmationOverrides);
+                    nextMap.delete(id);
+                    this.confirmationOverrides = nextMap;
+                }
+                inflightConfirmIds.delete(id);
                 return;
             }
 
-            this.confirmingIds.add(id);
+            {
+                const nextSet = new Set(this.confirmingIds);
+                nextSet.add(id);
+                this.confirmingIds = nextSet;
+            }
             try {
                 const response = await fetch(endpoint, {
                     method: 'PATCH',
@@ -719,10 +866,18 @@ function checkoutsBoardData() {
                 }
             } catch (error) {
                 console.error('Error confirming checkout:', error);
-                this.confirmationOverrides.delete(id);
-                if (checkbox) checkbox.checked = previous;
+                {
+                    const nextMap = new Map(this.confirmationOverrides);
+                    nextMap.delete(id);
+                    this.confirmationOverrides = nextMap;
+                }
             } finally {
-                this.confirmingIds.delete(id);
+                {
+                    const nextSet = new Set(this.confirmingIds);
+                    nextSet.delete(id);
+                    this.confirmingIds = nextSet;
+                }
+                inflightConfirmIds.delete(id);
             }
             this.refreshOverdue();
         },
@@ -753,16 +908,25 @@ function checkoutsBoardData() {
                 this.lastOverdueCount = count;
                 const liveIds = new Set(live.map((c) => c._id));
                 const retained = [];
+                let nextRetained = null;
+                let retainedChanged = false;
                 for (const id of this.overdueRetainedIds) {
                     if (liveIds.has(id)) {
                         // No longer needs retaining — live overdue again.
-                        this.overdueRetainedIds.delete(id);
+                        if (!nextRetained) nextRetained = new Set(this.overdueRetainedIds);
+                        nextRetained.delete(id);
+                        retainedChanged = true;
                         continue;
                     }
                     const child = this.children.find((c) => c._id === id);
                     if (child) retained.push(child);
-                    else this.overdueRetainedIds.delete(id);
+                    else {
+                        if (!nextRetained) nextRetained = new Set(this.overdueRetainedIds);
+                        nextRetained.delete(id);
+                        retainedChanged = true;
+                    }
                 }
+                if (retainedChanged) this.overdueRetainedIds = nextRetained;
                 this.sheetOverdue = sortByCheckoutAsc([...live, ...retained]);
             } else {
                 this.lastOverdueCount = count;
@@ -780,17 +944,39 @@ function checkoutsBoardData() {
 
         openOverdueSheet() {
             if (this.sheetOpen) return;
+            this._returnFocusEl = document.activeElement;
             this.sheetOpen = true;
             this.overdueRetainedIds = new Set();
             // Fresh snapshot on every open so prior confirms are reflected.
             this.refreshOverdue();
+            if (this.$nextTick) {
+                this.$nextTick(() => {
+                    const closeBtn = document.getElementById('overdue-sheet-close');
+                    if (closeBtn) closeBtn.focus();
+                });
+            } else {
+                const closeBtn = document.getElementById('overdue-sheet-close');
+                if (closeBtn) closeBtn.focus();
+            }
         },
 
         closeOverdueSheet() {
             const wasOpen = this.sheetOpen;
             this.sheetOpen = false;
             this.overdueRetainedIds = new Set();
-            if (wasOpen) this.refreshOverdue();
+            if (wasOpen) {
+                this.refreshOverdue();
+                const returnFocus = () => {
+                    const badge = (this.$refs && this.$refs.overdueBadge) || document.getElementById('overdue-badge');
+                    if (badge && typeof badge.focus === 'function' && badge.offsetParent !== null) {
+                        badge.focus();
+                    } else if (this._returnFocusEl && typeof this._returnFocusEl.focus === 'function') {
+                        this._returnFocusEl.focus();
+                    }
+                };
+                if (this.$nextTick) this.$nextTick(returnFocus);
+                else returnFocus();
+            }
         },
 
         // Body scroll follows the sheet declaratively (x-effect on the page
@@ -806,6 +992,11 @@ function checkoutsBoardData() {
         // Seeds demo children (used by dev-assets/preview.js via
         // window.__checkoutsBoard). Blocks polling so the demo is stable.
         previewChildren(raw) {
+            if (this.previewTimeoutId) {
+                clearTimeout(this.previewTimeoutId);
+                this.previewTimeoutId = null;
+            }
+            this.previewMode = true;
             this.fetchBlocked = true;
             // Keeps the given order (unlike live fetches, which sort by
             // recency) so curated demo lists display as authored.
@@ -819,16 +1010,48 @@ function checkoutsBoardData() {
             this.loadError = false;
             this.refreshOverdue();
             this.tickClock();
+            // Auto-unblock after 30s so prod board is not permanently paused.
+            this.previewTimeoutId = setTimeout(() => this.clearPreview(), PREVIEW_AUTO_UNBLOCK_MS);
+        },
+
+        clearPreview() {
+            if (!this.previewMode) return;
+            this.previewMode = false;
+            this.fetchBlocked = false;
+            if (this.previewTimeoutId) {
+                clearTimeout(this.previewTimeoutId);
+                this.previewTimeoutId = null;
+            }
+        },
+
+        unpreview() {
+            this.clearPreview();
         }
     };
 }
 
+function registerCheckoutsBoard() {
+    if (typeof window === 'undefined' || !window.Alpine || typeof window.Alpine.data !== 'function') return false;
+    try {
+        window.Alpine.data('checkoutsBoard', checkoutsBoardData);
+        return true;
+    } catch (e) {
+        // already registered
+        return false;
+    }
+}
+
+// Board script is sync (no defer) while Alpine is defer, so this listener is
+// added during HTML parsing before Alpine's queueMicrotask(start) runs, and
+// will catch the alpine:init event. Also try immediate registration for
+// non-defer or cached cases where Alpine already exists.
 if (typeof document !== 'undefined' && document.addEventListener) {
     document.addEventListener('alpine:init', () => {
-        if (window.Alpine && typeof window.Alpine.data === 'function') {
-            window.Alpine.data('checkoutsBoard', checkoutsBoardData);
-        }
+        registerCheckoutsBoard();
     });
+    if (typeof window !== 'undefined' && window.Alpine) {
+        registerCheckoutsBoard();
+    }
 }
 
 if (typeof window !== 'undefined') {
@@ -846,9 +1069,11 @@ if (typeof window !== 'undefined') {
     window.sortByCheckoutDesc = sortByCheckoutDesc;
     window.sortByCheckoutAsc = sortByCheckoutAsc;
     window.computeNewChildIds = computeNewChildIds;
+    window.getBackoffMs = getBackoffMs;
     window.GRAY_UNASSIGNED = GRAY_UNASSIGNED;
     window.PAUL_TOL_MUTED = PAUL_TOL_MUTED;
     window.OVERDUE_MINUTES = OVERDUE_MINUTES;
+    window.PREVIEW_AUTO_UNBLOCK_MS = PREVIEW_AUTO_UNBLOCK_MS;
 }
 
 if (typeof document !== 'undefined') {
@@ -860,6 +1085,19 @@ if (typeof document !== 'undefined') {
             window.initKebabMenu();
         } else if (window.NWKidsKebabMenu && typeof window.NWKidsKebabMenu.initKebabMenu === 'function') {
             window.NWKidsKebabMenu.initKebabMenu();
+        }
+
+        // Handle race where Alpine loaded via defer but alpine:init already fired
+        // before this script registered. Ensure board is registered and tree inited.
+        if (window.Alpine) {
+            const registered = registerCheckoutsBoard();
+            // If board already registered late, ensure Alpine processes x-data.
+            if (window.Alpine.initTree && !window.__checkoutsBoard) {
+                try {
+                    // Alpine v3 will initTree on next tick if needed.
+                    window.Alpine.initTree(document.body);
+                } catch (e) { /* ignore */ }
+            }
         }
 
         // The board boots from its Alpine init(). If Alpine failed to load

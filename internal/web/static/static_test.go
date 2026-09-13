@@ -115,6 +115,7 @@ func TestFilteredFSBlocksHTML(t *testing.T) {
 		require.NoError(t, err)
 		_ = f.Close()
 		require.NotEmpty(t, content)
+		require.Contains(t, string(content), "3.17.2")
 	})
 
 	t.Run("still allows css", func(t *testing.T) {

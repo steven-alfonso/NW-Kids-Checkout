@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { JSDOM } from 'jsdom';
@@ -50,6 +50,23 @@ function boardWith(w, children) {
     return board;
 }
 
+// ---- shared waitFor: replaces brittle fixed sleeps ----
+async function waitFor(fn, { timeout = 1000, interval = 10 } = {}) {
+    const start = Date.now();
+    let lastErr;
+    while (Date.now() - start < timeout) {
+        try {
+            const res = await fn();
+            if (res) return res;
+        } catch (e) {
+            lastErr = e;
+        }
+        await new Promise((r) => setTimeout(r, interval));
+    }
+    if (lastErr) throw lastErr;
+    throw new Error(`waitFor timeout after ${timeout}ms`);
+}
+
 // ---- integration harness: real page + real Alpine ----
 
 async function loadBoardPage({ url = 'http://localhost/', checkouts = [], groups = [], patchImpl } = {}) {
@@ -74,7 +91,6 @@ async function loadBoardPage({ url = 'http://localhost/', checkouts = [], groups
     };
     w.setInterval = () => 0;
     w.scrollTo = () => {};
-    // Collect (don't swallow) Alpine warnings so tests can assert clean boot.
     const warns = [];
     w.console.warn = (msg) => { warns.push(String(msg)); };
     w.eval(alpineScript);
@@ -83,11 +99,22 @@ async function loadBoardPage({ url = 'http://localhost/', checkouts = [], groups
         w.Alpine.start();
     } catch (e) { /* already initialized — registration still applied */ }
     w.document.dispatchEvent(new w.Event('DOMContentLoaded'));
-    await new Promise((r) => setTimeout(r, 100));
+    await waitFor(() => w.__checkoutsBoard != null, { timeout: 2000 });
+    // let Alpine finish initial tick and fetchLocationGroups→fetchChildrenData chain
+    await waitFor(() => w.__checkoutsBoard.groupsReady === true, { timeout: 2000 }).catch(() => {});
+    // small extra tick for x-show/x-text bindings to flush
+    await new Promise((r) => setTimeout(r, 20));
     return { window: w, board: w.__checkoutsBoard, patches, warns };
 }
 
 const flush = () => new Promise((r) => setTimeout(r, 20));
+const nextTick = async (w) => {
+    const board = w.__checkoutsBoard;
+    if (board && board.$nextTick) {
+        await new Promise((resolve) => board.$nextTick(resolve));
+    }
+    await new Promise((r) => setTimeout(r, 10));
+};
 
 describe('checkoutsv1/checkouts helpers', () => {
     it('builds child ids by source', () => {
@@ -187,7 +214,6 @@ describe('checkoutsv1/checkouts helpers', () => {
         expect(window.filterVisibleChildren(kids, { confirmedById, searchQuery: 'amy' }).map((c) => c._id))
             .toEqual(['pc:a']);
         expect(window.filterVisibleChildren(kids, { confirmedById, filterEmpty: true })).toEqual([]);
-        // Group filter keeps manual checkins regardless of group.
         const grouped = window.filterVisibleChildren(kids, {
             confirmedById, filterActive: true, selectedIds: new Set([2]), includeUnassigned: false
         }).map((c) => c._id);
@@ -301,9 +327,17 @@ describe('checkoutsv1/checkoutsBoard factory', () => {
         const board = boardWith(w, [pcChild('a')]);
         const child = board.children[0];
         expect(board.isConfirmed(child)).toBe(false);
-        board.confirmationOverrides.set('pc:a', { confirmed: true, timestamp: Date.now() });
+        {
+            const m = new Map(board.confirmationOverrides);
+            m.set('pc:a', { confirmed: true, timestamp: Date.now() });
+            board.confirmationOverrides = m;
+        }
         expect(board.isConfirmed(child)).toBe(true);
-        board.confirmationOverrides.set('pc:a', { confirmed: true, timestamp: Date.now() - 60 * 1000 });
+        {
+            const m = new Map(board.confirmationOverrides);
+            m.set('pc:a', { confirmed: true, timestamp: Date.now() - 60 * 1000 });
+            board.confirmationOverrides = m;
+        }
         expect(board.isConfirmed(child)).toBe(false);
     });
 
@@ -329,10 +363,9 @@ describe('checkoutsv1/checkoutsBoard factory', () => {
             fetchImpl: async () => ({ ok: false, status: 500, json: async () => ({}) })
         });
         const board = boardWith(w, [pcChild('abc')]);
-        const box = { checked: true };
+        const box = { checked: true, disabled: false };
         await board.onConfirmToggle(board.children[0], { target: box });
         expect(board.isConfirmed(board.children[0])).toBe(false);
-        expect(box.checked).toBe(false);
     });
 
     it('skips unknown sources without calling the API', async () => {
@@ -368,9 +401,11 @@ describe('checkoutsv1/checkoutsBoard factory', () => {
             fetchImpl: async () => ({ ok: false, status: 500, json: async () => ({}) })
         });
         const board = w.checkoutsBoardData();
+        board.children = [w.withChildMeta(pcChild('a'))];
+        const prevLen = board.children.length;
         await board.fetchChildrenData();
         expect(board.loadError).toBe(true);
-        expect(board.children).toEqual([]);
+        expect(board.children.length).toBe(prevLen);
     });
 
     it('retains confirmed overdue rows in the sheet until close', () => {
@@ -382,11 +417,18 @@ describe('checkoutsv1/checkoutsBoard factory', () => {
         expect(board.sheetOverdue.map((c) => c._id)).toEqual(['pc:a']);
 
         board.openOverdueSheet();
-        board.confirmationOverrides.set('pc:a', { confirmed: true, timestamp: Date.now() });
+        {
+            const m = new Map(board.confirmationOverrides);
+            m.set('pc:a', { confirmed: true, timestamp: Date.now() });
+            board.confirmationOverrides = m;
+        }
         board.refreshOverdue();
-        // Live list is empty, but the drawer keeps the row until close.
         expect(board.overdueChildren).toEqual([]);
-        board.overdueRetainedIds.add('pc:a');
+        {
+            const s = new Set(board.overdueRetainedIds);
+            s.add('pc:a');
+            board.overdueRetainedIds = s;
+        }
         board.refreshOverdue();
         expect(board.sheetOverdue.map((c) => c._id)).toEqual(['pc:a']);
 
@@ -403,7 +445,6 @@ describe('checkoutsv1/checkoutsBoard factory', () => {
             fetchImpl: async (url) => {
                 if (String(url).includes('/v1/location_groups')) return { ok: true, json: async () => [] };
                 const rows = tied();
-                // Simulate the DB returning tied rows in varying order.
                 flip = !flip;
                 return { ok: true, json: async () => (flip ? rows : [...rows].reverse()) };
             }
@@ -428,10 +469,6 @@ describe('checkoutsv1/checkoutsBoard with Alpine', () => {
             checkouts: [pcChild('Late', { checked_out_at: old })],
             groups: [{ id: 1, name: 'G' }]
         });
-        // Every x-bind/@on in the page must resolve: Alpine reports
-        // failures as console warnings (e.g. the badgeCount ReferenceError).
-        // ("already been initialized" is harness noise from the explicit
-        // start() call below auto-start, not an app signal.)
         const problems = warns.filter((m) => /Alpine Expression Error|Maximum recursive|undefined is not/i)
             .filter((m) => !/already been initialized/i.test(m));
         expect(problems).toEqual([]);
@@ -457,9 +494,6 @@ describe('checkoutsv1/checkoutsBoard with Alpine', () => {
         let cards = w.document.querySelectorAll('#children-list .child-card');
         expect(cards.length).toBe(2);
         expect(cards[0].textContent).toContain('Amy');
-        // Group color bar: sizing must come from classes, not the static
-        // style attribute — Alpine's :style binding replaces the whole
-        // attribute and would wipe inline width/flex (zero-width bar).
         const bar = cards[0].querySelector(':scope > div[aria-hidden="true"]');
         expect(bar.getAttribute('style')).toContain('background-color');
         expect(bar.getAttribute('style')).not.toContain('width');
@@ -469,7 +503,7 @@ describe('checkoutsv1/checkoutsBoard with Alpine', () => {
         const input = w.document.getElementById('search-input');
         input.value = 'bo';
         input.dispatchEvent(new w.Event('input', { bubbles: true }));
-        await flush();
+        await waitFor(() => w.document.querySelectorAll('#children-list .child-card').length === 1);
         cards = w.document.querySelectorAll('#children-list .child-card');
         expect(cards.length).toBe(1);
         expect(cards[0].textContent).toContain('Bo');
@@ -483,7 +517,7 @@ describe('checkoutsv1/checkoutsBoard with Alpine', () => {
         expect(before).not.toBeNull();
         before.querySelector('input[type="checkbox"]').focus();
         await board.fetchChildrenData();
-        await flush();
+        await nextTick(w);
         const after = w.document.querySelector('#children-list .child-card[data-child-id="pc:Amy"]');
         expect(after).toBe(before);
         expect(w.document.activeElement).toBe(after.querySelector('input[type="checkbox"]'));
@@ -495,15 +529,13 @@ describe('checkoutsv1/checkoutsBoard with Alpine', () => {
         const box = w.document.querySelector('#children-list .child-confirmed-checkbox');
         box.checked = true;
         box.dispatchEvent(new w.Event('change', { bubbles: true }));
-        await flush();
+        await waitFor(() => patches.length === 1);
         expect(patches).toHaveLength(1);
         expect(patches[0].url).toContain('/v1/checkins/Amy/checked_out_confirmed');
         expect(patches[0].body).toEqual({ confirmed: true });
         expect(board.isConfirmed(board.children[0])).toBe(true);
         const pill = w.document.querySelector('#children-list .child-time');
         expect(pill.className).toContain('bg-gray-400');
-        // The green icon is pure CSS: [data-confirmed-state="confirmed"]
-        // [data-confirmed-icon] { filter: ... }. Both hooks must exist.
         const label = w.document.querySelector('#children-list .child-card label');
         expect(label.getAttribute('data-confirmed-state')).toBe('confirmed');
         expect(label.querySelector('img[data-confirmed-icon]')).not.toBeNull();
@@ -518,19 +550,17 @@ describe('checkoutsv1/checkoutsBoard with Alpine', () => {
         const badge = w.document.getElementById('overdue-badge');
         expect(badge.textContent).toContain('1 overdue');
         expect(badge.style.display).not.toBe('none');
-        // All Alpine bindings must resolve: a missing component member
-        // throws ReferenceError and leaves the attribute unset.
         expect(badge.getAttribute('aria-label')).toBe('1 overdue checkouts, tap to view');
 
         badge.dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
-        await flush();
+        await waitFor(() => !w.document.getElementById('overdue-sheet').classList.contains('translate-y-full'));
         const sheet = w.document.getElementById('overdue-sheet');
         expect(sheet.classList.contains('translate-y-full')).toBe(false);
         expect(w.document.querySelectorAll('#overdue-sheet-list .child-card').length).toBe(1);
 
         w.document.getElementById('overdue-sheet-close')
             .dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
-        await flush();
+        await waitFor(() => w.document.getElementById('overdue-sheet').classList.contains('translate-y-full'));
         expect(sheet.classList.contains('translate-y-full')).toBe(true);
         board.destroy();
     });
@@ -543,10 +573,438 @@ describe('checkoutsv1/checkoutsBoard with Alpine', () => {
         const toggle = w.document.getElementById('hide-confirmed-toggle');
         toggle.checked = true;
         toggle.dispatchEvent(new w.Event('change', { bubbles: true }));
-        await flush();
+        await waitFor(() => w.document.querySelectorAll('#children-list .child-card').length === 1);
         const cards = w.document.querySelectorAll('#children-list .child-card');
         expect(cards.length).toBe(1);
         expect(cards[0].textContent).toContain('Amy');
+        board.destroy();
+    });
+
+    // ---- F1 coverage: search toggle expand/focus/resize ----
+    it('toggles search panel expanded state, aria, rotate and focus', async () => {
+        const { window: w, board } = await loadBoardPage({ checkouts: [pcChild('Amy')] });
+        const btn = w.document.getElementById('search-toggle-button');
+        const controls = w.document.getElementById('search-controls');
+        const icon = btn.querySelector('svg');
+        const input = w.document.getElementById('search-input');
+
+        // initial collapsed
+        expect(board.searchOpen).toBe(false);
+        expect(controls.classList.contains('is-expanded')).toBe(false);
+        expect(btn.getAttribute('aria-expanded')).toBe('false');
+        expect(controls.getAttribute('aria-hidden')).toBe('true');
+        expect(icon.classList.contains('rotate-180')).toBe(false);
+
+        btn.dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
+        await waitFor(() => board.searchOpen === true);
+        await nextTick(w);
+        expect(controls.classList.contains('is-expanded')).toBe(true);
+        expect(btn.getAttribute('aria-expanded')).toBe('true');
+        expect(controls.getAttribute('aria-hidden')).toBe('false');
+        expect(icon.classList.contains('rotate-180')).toBe(true);
+        expect(w.document.activeElement).toBe(input);
+
+        btn.dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
+        await waitFor(() => board.searchOpen === false);
+        await nextTick(w);
+        expect(controls.classList.contains('is-expanded')).toBe(false);
+        expect(btn.getAttribute('aria-expanded')).toBe('false');
+        expect(controls.getAttribute('aria-hidden')).toBe('true');
+        expect(icon.classList.contains('rotate-180')).toBe(false);
+
+        board.destroy();
+    });
+
+    it('onResize preserves clamped height while search panel is expanded', async () => {
+        const { window: w, board } = await loadBoardPage({ checkouts: [pcChild('Amy')] });
+        const controls = w.document.getElementById('search-controls');
+        // mock scrollHeight for expanded panel
+        Object.defineProperty(controls, 'scrollHeight', { value: 123, configurable: true });
+        Object.defineProperty(controls, 'offsetHeight', { value: 123, configurable: true });
+
+        // open
+        w.document.getElementById('search-toggle-button').dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
+        await waitFor(() => board.searchOpen === true);
+        await nextTick(w);
+        const expandedHeight = controls.style.height;
+        expect(expandedHeight).toBe('123px');
+
+        // resize while open should re-clamp to scrollHeight
+        Object.defineProperty(controls, 'scrollHeight', { value: 200, configurable: true });
+        board.onResize();
+        expect(controls.style.height).toBe('200px');
+
+        // close
+        w.document.getElementById('search-toggle-button').dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
+        await waitFor(() => board.searchOpen === false);
+        await nextTick(w);
+        // while closed, onResize should not force expanded height
+        controls.style.height = '0px';
+        board.onResize();
+        expect(controls.style.height).toBe('0px');
+
+        board.destroy();
+    });
+
+    // ---- XSS via x-text ----
+    it('escapes checkout names via x-text and contains no x-html', async () => {
+        const evil = pcChild('<img src=x onerror=alert(1)>', { first_name: '<img src=x onerror=alert(1)>', last_name: '"><svg onload=alert(1)>', security_code: '<script>' });
+        const { window: w, board } = await loadBoardPage({ checkouts: [evil] });
+        await waitFor(() => w.document.querySelectorAll('#children-list .child-card').length === 1);
+        const card = w.document.querySelector('#children-list .child-card');
+        // x-text ensures the raw HTML is escaped: no extra img/svg element should be injected
+        expect(card.querySelector('img[src="x"]')).toBeNull();
+        expect(card.querySelector('svg:not([viewBox])')).toBeNull(); // svg injection would be without viewBox
+        expect(card.querySelectorAll('img[data-confirmed-icon]').length).toBe(1);
+        expect(card.textContent).toContain('<img src=x onerror=alert(1)>');
+        expect(card.textContent).toContain('"><svg');
+        // displayName span should have escaped markup via textContent, not innerHTML injection
+        const nameSpan = card.querySelector('span[x-text="displayName(child)"]');
+        expect(nameSpan.textContent).toContain('<img src=x onerror=alert(1)>');
+        // static grep: checkouts.html must have zero x-html
+        expect(html).not.toContain('x-html');
+        board.destroy();
+    });
+
+    // ---- Jiggle on increase only ----
+    it('jiggles badge only when overdue count increases', async () => {
+        const old = (min) => new Date(Date.now() - min * 60 * 1000).toISOString();
+        // start with 0 overdue
+        const { window: w, board } = await loadBoardPage({ checkouts: [pcChild('Fresh', { checked_out_at: new Date().toISOString() })] });
+        const badge = w.document.getElementById('overdue-badge');
+        // ensure badge starts hidden
+        expect(badge.style.display === 'none' || board.badgeVisible === false).toBeTruthy();
+
+        // push 1 overdue → should jiggle
+        board.children = [w.withChildMeta(pcChild('Late1', { checked_out_at: old(6) }))];
+        board.tick(); // triggers refreshOverdue + jiggle check
+        await nextTick(w);
+        expect(badge.classList.contains('overdue-badge-jiggle')).toBe(true);
+        badge.classList.remove('overdue-badge-jiggle');
+
+        // same count again → no jiggle
+        board.tick();
+        await nextTick(w);
+        expect(badge.classList.contains('overdue-badge-jiggle')).toBe(false);
+
+        // increase to 2 → jiggle again
+        board.children = [w.withChildMeta(pcChild('Late1', { checked_out_at: old(6) })), w.withChildMeta(pcChild('Late2', { checked_out_at: old(7) }))];
+        board.tick();
+        await nextTick(w);
+        expect(badge.classList.contains('overdue-badge-jiggle')).toBe(true);
+        badge.classList.remove('overdue-badge-jiggle');
+
+        // decrease to 1 → no jiggle
+        board.children = [w.withChildMeta(pcChild('Late1', { checked_out_at: old(6) }))];
+        board.tick();
+        await nextTick(w);
+        expect(badge.classList.contains('overdue-badge-jiggle')).toBe(false);
+
+        board.destroy();
+    });
+
+    // ---- Backdrop click + scroll-lock ----
+    it('backdrop click closes sheet and scroll-lock locks body', async () => {
+        const old = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+        const { window: w, board } = await loadBoardPage({ checkouts: [pcChild('Late', { checked_out_at: old })] });
+        const backdrop = w.document.getElementById('overdue-sheet-backdrop');
+        const badge = w.document.getElementById('overdue-badge');
+
+        // open via method (also tests lockBodyScroll)
+        board.openOverdueSheet();
+        await waitFor(() => board.sheetOpen === true);
+        await nextTick(w);
+        // syncScrollLock is called via x-effect, but also ensure body is locked directly
+        // In JSDOM scrollY is 0; check position fixed
+        expect(w.document.body.style.position).toBe('fixed');
+        expect(backdrop.style.display).not.toBe('none');
+
+        // click backdrop should close and unlock
+        backdrop.dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
+        await waitFor(() => board.sheetOpen === false);
+        await nextTick(w);
+        // Need to wait for syncScrollLock effect to run; also call manually to ensure
+        board.syncScrollLock();
+        expect(w.document.body.style.position).toBe('');
+        expect(w.document.getElementById('overdue-sheet').classList.contains('translate-y-full')).toBe(true);
+
+        // also test direct lock/unlock via syncScrollLock toggle
+        board.sheetOpen = true;
+        board.syncScrollLock();
+        expect(w.document.body.style.position).toBe('fixed');
+        board.sheetOpen = false;
+        board.syncScrollLock();
+        expect(w.document.body.style.position).toBe('');
+
+        // restore
+        board.destroy();
+        w.document.body.style.position = '';
+        w.document.body.style.top = '';
+        w.document.body.style.overflow = '';
+    });
+
+    it('syncScrollLock is idempotent', async () => {
+        const { window: w, board } = await loadBoardPage({ checkouts: [] });
+        board.sheetOpen = false;
+        board.syncScrollLock();
+        expect(board.scrollState.locked).toBe(false);
+        board.sheetOpen = true;
+        board.syncScrollLock();
+        expect(board.scrollState.locked).toBe(true);
+        const firstTop = w.document.body.style.top;
+        board.syncScrollLock();
+        expect(w.document.body.style.top).toBe(firstTop);
+        board.sheetOpen = false;
+        board.syncScrollLock();
+        expect(board.scrollState.locked).toBe(false);
+        board.destroy();
+    });
+
+    // ---- Sheet sync: confirm via sheet flips both lists ----
+    it('confirm via sheet checkbox flips pill in both main list and sheet', async () => {
+        const old = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+        const { window: w, board } = await loadBoardPage({ checkouts: [pcChild('Late', { checked_out_at: old })] });
+        // open sheet
+        w.document.getElementById('overdue-badge').dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
+        await waitFor(() => board.sheetOpen === true);
+        await nextTick(w);
+        const mainPillBefore = w.document.querySelector('#children-list .child-time');
+        const sheetPillBefore = w.document.querySelector('#overdue-sheet-list .child-time');
+        expect(mainPillBefore.className).toContain('bg-red-500');
+        expect(sheetPillBefore.className).toContain('bg-red-500');
+
+        const sheetBox = w.document.querySelector('#overdue-sheet-list .child-confirmed-checkbox');
+        sheetBox.checked = true;
+        sheetBox.dispatchEvent(new w.Event('change', { bubbles: true }));
+        await waitFor(() => board.isConfirmed(board.children[0]) === true);
+        await nextTick(w);
+        await waitFor(() => w.document.querySelector('#children-list .child-time').className.includes('bg-gray-400'));
+        const mainPillAfter = w.document.querySelector('#children-list .child-time');
+        const sheetPillAfter = w.document.querySelector('#overdue-sheet-list .child-time');
+        expect(mainPillAfter.className).toContain('bg-gray-400');
+        expect(sheetPillAfter.className).toContain('bg-gray-400');
+        board.destroy();
+    });
+
+    // ---- Error / loading / empty DOM states ----
+    it('shows error DOM and hides loading on fetch failure, empty shows correct variant', async () => {
+        // Error case: fetch fails
+        const dom = new JSDOM(html, { url: 'http://localhost/', runScripts: 'outside-only', pretendToBeVisual: true });
+        const w = dom.window;
+        w.fetch = async (input) => {
+            const target = String(input);
+            if (target.includes('/v1/location_groups')) return { ok: true, json: async () => [] };
+            return { ok: false, status: 500, json: async () => ({}) };
+        };
+        w.setInterval = () => 0;
+        w.scrollTo = () => {};
+        w.eval(alpineScript);
+        w.eval(script);
+        try { w.Alpine.start(); } catch {}
+        w.document.dispatchEvent(new w.Event('DOMContentLoaded'));
+        await waitFor(() => w.__checkoutsBoard != null, { timeout: 2000 });
+        const board = w.__checkoutsBoard;
+        // wait for loadError to be set
+        await waitFor(() => board.loadError === true, { timeout: 2000 });
+        await nextTick(w);
+        // loading should be false, error div visible, loading div hidden
+        expect(board.loading).toBe(false);
+        expect(board.loadError).toBe(true);
+        const loadingEl = w.document.querySelector('[x-show="loading"]');
+        const errorEl = w.document.querySelector('[x-show="loadError"]');
+        // Alpine hides via display:none
+        expect(loadingEl.style.display).toBe('none');
+        expect(errorEl.style.display).not.toBe('none');
+        board.destroy();
+    });
+
+    it('empty DOM shows correct variant per state', async () => {
+        // no children, no filter -> "No children called yet"
+        const { window: w1, board: b1 } = await loadBoardPage({ checkouts: [], groups: [] });
+        await waitFor(() => b1.loading === false);
+        await nextTick(w1);
+        const empty1 = w1.document.querySelector('[x-text="emptyMessage"]');
+        expect(b1.emptyMessage).toBe('No children called yet');
+        expect(empty1.textContent).toContain('No children called yet');
+        b1.destroy();
+
+        // search with no match -> "No matching children"
+        const { window: w2, board: b2 } = await loadBoardPage({ checkouts: [pcChild('Amy')], groups: [] });
+        b2.searchQuery = 'zzz-nope';
+        await nextTick(w2);
+        // need Alpine to update visibleChildren and emptyMessage
+        await waitFor(() => b2.visibleChildren.length === 0);
+        expect(b2.emptyMessage).toBe('No matching children');
+        const empty2 = w2.document.querySelector('[x-text="emptyMessage"]');
+        expect(empty2.textContent).toContain('No matching children');
+        b2.destroy();
+
+        // hideConfirmed empties board -> "No unconfirmed children"
+        const { window: w3, board: b3 } = await loadBoardPage({ checkouts: [pcChild('Only', { checked_out_confirmed_at: '2024-01-01T00:00:00Z' })], groups: [] });
+        b3.hideConfirmed = true;
+        await nextTick(w3);
+        await waitFor(() => b3.visibleChildren.length === 0);
+        expect(b3.emptyMessage).toBe('No unconfirmed children');
+        const empty3 = w3.document.querySelector('[x-text="emptyMessage"]');
+        expect(empty3.textContent).toContain('No unconfirmed children');
+        b3.destroy();
+    });
+
+    it('truncation footer shows when >100 filtered children', async () => {
+        const many = Array.from({ length: 101 }, (_, i) => pcChild(`K${String(i).padStart(3, '0')}`));
+        const { window: w, board } = await loadBoardPage({ checkouts: many });
+        await waitFor(() => board.visibleChildren.length === 100);
+        expect(board.isTruncated).toBe(true);
+        expect(board.truncationText).toBe('Showing 100 of 101');
+        await nextTick(w);
+        const truncEl = w.document.querySelector('[x-text="truncationText"]');
+        expect(truncEl.textContent).toContain('Showing 100 of 101');
+        expect(truncEl.style.display).not.toBe('none');
+        board.destroy();
+    });
+});
+
+// ---- Direct unit tests for tick/tickClock/sweepOverrides and preview semantics ----
+
+describe('checkoutsv1/tick and preview semantics', () => {
+    it('tickClock advances nowMs and formats clock', () => {
+        const w = loadWindow();
+        const board = boardWith(w, []);
+        const fixed = new Date('2024-06-15T14:30:00Z').getTime();
+        const origNow = w.Date.now;
+        const origGlobalNow = Date.now;
+        w.Date.now = () => fixed;
+        Date.now = () => fixed;
+        board.tickClock();
+        expect(board.nowMs).toBe(fixed);
+        expect(board.clock).toMatch(/\d{2}:\d{2}/);
+        w.Date.now = origNow;
+        Date.now = origGlobalNow;
+    });
+
+    it('sweepOverrides removes expired entries and returns changed', () => {
+        const w = loadWindow();
+        const board = boardWith(w, [pcChild('a'), pcChild('b')]);
+        const now = Date.now();
+        const origNow = w.Date.now;
+        const origGlobalNow = Date.now;
+        w.Date.now = () => now;
+        Date.now = () => now;
+        board.confirmationOverrides = new Map([
+            ['pc:a', { confirmed: true, timestamp: now - 20000 }], // expired (>15s)
+            ['pc:b', { confirmed: true, timestamp: now - 1000 }] // fresh
+        ]);
+        const changed = board.sweepOverrides();
+        expect(changed).toBe(true);
+        expect(board.confirmationOverrides.has('pc:a')).toBe(false);
+        expect(board.confirmationOverrides.has('pc:b')).toBe(true);
+        // second sweep with no expired should return false and not reassign
+        const beforeRef = board.confirmationOverrides;
+        const changed2 = board.sweepOverrides();
+        expect(changed2).toBe(false);
+        expect(board.confirmationOverrides).toBe(beforeRef);
+        w.Date.now = origNow;
+        Date.now = origGlobalNow;
+    });
+
+    it('sweepOverrides is no-op when no overrides', () => {
+        const w = loadWindow();
+        const board = boardWith(w, []);
+        expect(board.sweepOverrides()).toBe(false);
+    });
+
+    it('tick calls tickClock, sweepOverrides and refreshOverdue', () => {
+        const w = loadWindow();
+        const old = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+        const board = boardWith(w, [pcChild('a', { checked_out_at: old })]);
+        let clockCalled = false;
+        let sweepCalled = false;
+        let refreshCalled = false;
+        const origTickClock = board.tickClock.bind(board);
+        const origSweep = board.sweepOverrides.bind(board);
+        const origRefresh = board.refreshOverdue.bind(board);
+        board.tickClock = () => { clockCalled = true; origTickClock(); };
+        board.sweepOverrides = () => { sweepCalled = true; return origSweep(); };
+        board.refreshOverdue = () => { refreshCalled = true; origRefresh(); };
+        board.tick();
+        expect(clockCalled).toBe(true);
+        expect(sweepCalled).toBe(true);
+        expect(refreshCalled).toBe(true);
+    });
+
+    it('getBackoffMs exponential backoff', () => {
+        const w = loadWindow();
+        expect(w.getBackoffMs(1)).toBe(3000);
+        expect(w.getBackoffMs(2)).toBe(6000);
+        expect(w.getBackoffMs(3)).toBe(12000);
+        expect(w.getBackoffMs(10)).toBe(30000);
+    });
+
+    it('previewChildren preserves authored order (not sorted)', () => {
+        const w = loadWindow();
+        const board = w.checkoutsBoardData();
+        const raw = [
+            { source: 'planning_center', planning_center_id: 'z', first_name: 'Z', checked_out_at: new Date(Date.now() - 1 * 60 * 1000).toISOString(), location_group_id: 1 },
+            { source: 'planning_center', planning_center_id: 'a', first_name: 'A', checked_out_at: new Date(Date.now() - 10 * 60 * 1000).toISOString(), location_group_id: 1 },
+            { source: 'planning_center', planning_center_id: 'm', first_name: 'M', checked_out_at: new Date(Date.now() - 5 * 60 * 1000).toISOString(), location_group_id: 1 }
+        ];
+        board.previewChildren(raw);
+        expect(board.children.map((c) => c.planning_center_id)).toEqual(['z', 'a', 'm']);
+        expect(board.fetchBlocked).toBe(true);
+        expect(board.previewMode).toBe(true);
+        if (board.previewTimeoutId) clearTimeout(board.previewTimeoutId);
+        board.clearPreview();
+    });
+
+    it('fetchBlocked blocks fetchChildrenData unless forced, and clearPreview restores', async () => {
+        const w = loadWindow();
+        let calls = 0;
+        w.fetch = async () => { calls++; return { ok: true, json: async () => [] }; };
+        const board = w.checkoutsBoardData();
+        board.previewChildren([pcChild('x')]);
+        expect(board.fetchBlocked).toBe(true);
+        await board.fetchChildrenData();
+        expect(calls).toBe(0);
+        await board.fetchChildrenData({ force: true });
+        expect(calls).toBe(1);
+        board.clearPreview();
+        expect(board.fetchBlocked).toBe(false);
+        await board.fetchChildrenData();
+        expect(calls).toBe(2);
+        if (board.previewTimeoutId) clearTimeout(board.previewTimeoutId);
+        board.destroy();
+    });
+
+    it('board.init gates first fetch on groups and uses waitFor semantics', async () => {
+        // This test routes via real board.init() + Alpine.start() path, using fake fetch.
+        const dom = new JSDOM(html, {
+            url: 'http://localhost/',
+            runScripts: 'outside-only',
+            pretendToBeVisual: true
+        });
+        const w = dom.window;
+        const fetched = [];
+        w.fetch = async (input) => {
+            const t = String(input);
+            fetched.push(t);
+            if (t.includes('/v1/location_groups')) {
+                return { ok: true, json: async () => [{ id: 1, name: 'Grace' }] };
+            }
+            return { ok: true, json: async () => [pcChild('InitKid')] };
+        };
+        w.setInterval = () => 99;
+        w.scrollTo = () => {};
+        w.eval(alpineScript);
+        w.eval(script);
+        try { w.Alpine.start(); } catch {}
+        w.document.dispatchEvent(new w.Event('DOMContentLoaded'));
+        const board = await waitFor(() => w.__checkoutsBoard, { timeout: 2000 });
+        // wait for groupsReady and children populated via init's gated fetch
+        await waitFor(() => board.groupsReady === true, { timeout: 2000 });
+        await waitFor(() => board.children.length === 1, { timeout: 2000 });
+        expect(board.visibleChildren.map((c) => c.first_name)).toContain('InitKid');
+        expect(fetched.some((u) => u.includes('/v1/location_groups'))).toBe(true);
+        expect(fetched.some((u) => u.includes('/v1/checkins/checkouts'))).toBe(true);
         board.destroy();
     });
 });

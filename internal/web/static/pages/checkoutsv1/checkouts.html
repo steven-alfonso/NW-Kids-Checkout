@@ -174,9 +174,11 @@
         </div>
 
         <div
-            class="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 text-4xl md:text-6xl font-bold text-gray-800">
+            class="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 text-4xl md:text-6xl font-bold text-gray-800 flex items-center gap-2">
             <span id="current-time" x-text="clock">14:30</span>
+            <span x-show="previewMode" x-cloak id="preview-badge" class="text-xs font-bold bg-amber-400 text-slate-900 px-2 py-1 rounded-full">Preview</span>
         </div>
+        <div x-show="previewMode" x-cloak id="preview-banner" class="fixed top-2 left-1/2 -translate-x-1/2 z-50 bg-amber-400 text-slate-900 px-4 py-1.5 rounded-full text-xs font-bold shadow">Preview mode — polling paused</div>
 
         <div class="hidden lg:block w-16 md:w-24"></div>
 
@@ -212,7 +214,7 @@
     <!-- Main Content -->
     <div class="relative z-10 min-h-screen flex flex-col box-border lg:h-screen lg:pt-28 pb-20">
         <div class="relative z-10 flex flex-col items-center gap-2 px-4 md:flex-row md:justify-center md:gap-3">
-            <div id="search-controls" x-ref="searchControls" class="w-full max-w-md md:flex-1 md:max-w-2xl">
+            <div id="search-controls" x-ref="searchControls" :aria-hidden="String(!searchOpen)" class="w-full max-w-md md:flex-1 md:max-w-2xl">
                 <div class="overflow-hidden search-controls-panel pb-2 md:pt-4">
                     <div class="flex flex-col items-center gap-2 md:flex-row md:items-center md:gap-3">
                         <input id="search-input" x-ref="searchInput" x-model="searchQuery" type="search" autocomplete="off" placeholder="Search by name or code"
@@ -264,7 +266,7 @@
         <!-- Scrollable children list (list on mobile, grid on desktop).
              Keyed x-for keeps DOM nodes (and checkbox focus/scroll) stable
              across polls — no morphing library needed. -->
-        <div id="children-list" x-ref="childrenList"
+        <div id="children-list" x-ref="childrenList" x-effect="visibleChildren.length; $nextTick(() => onResize())"
             class="grid grid-cols-1 gap-3 px-4 py-4 md:grid-cols-2 lg:flex-1 lg:min-h-0 lg:overflow-y-auto lg:content-start lg:grid-cols-3">
             <div x-show="loading" x-cloak class="text-center text-gray-500 py-8">
                 Loading children data...
@@ -300,6 +302,7 @@
                     </div>
                 </div>
             </template>
+            <div x-show="isTruncated" x-cloak class="col-span-full text-center text-sm text-slate-500 py-2" x-text="truncationText"></div>
             <div x-show="!loading && !loadError && visibleChildren.length === 0" x-cloak
                 class="text-center py-12 text-3xl text-slate-500" x-text="emptyMessage"></div>
             <div x-show="loadError" x-cloak class="text-center text-red-500 py-8">
@@ -309,7 +312,7 @@
 
     <!-- Overdue floating badge (phone-friendly, zero cost when no overdue) -->
     <button id="overdue-badge" type="button" x-ref="overdueBadge" x-show="badgeVisible" x-cloak x-transition
-        @click="openOverdueSheet()" :aria-label="`${badgeCount} overdue checkouts, tap to view`"
+        @click="openOverdueSheet()" :aria-label="badgeAria"
         class="fixed bottom-4 left-1/2 -translate-x-1/2 z-30 rounded-full bg-red-600 text-white px-5 py-2.5 text-sm font-bold shadow-[0_4px_12px_rgba(0,0,0,0.3)] hover:bg-red-700 active:bg-red-700 transition-colors cursor-pointer whitespace-nowrap w-max"
         x-text="badgeText">
     </button>
@@ -317,7 +320,7 @@
     <!-- Overdue bottom sheet -->
     <div id="overdue-sheet-backdrop" x-show="sheetOpen" x-cloak x-transition @click="closeOverdueSheet()"
         class="fixed inset-0 bg-black/40 z-40" aria-hidden="true"></div>
-    <div id="overdue-sheet" :class="{ 'translate-y-full': !sheetOpen }" :aria-hidden="String(!sheetOpen)"
+    <div id="overdue-sheet" x-cloak :inert="!sheetOpen" :class="{ 'translate-y-full': !sheetOpen }" :aria-hidden="String(!sheetOpen)"
         class="fixed inset-x-0 bottom-0 z-40 h-[80vh] bg-slate-50 rounded-t-2xl shadow-2xl border-t border-slate-200 flex flex-col translate-y-full"
         role="dialog" aria-label="Overdue checkouts" @keydown.escape.window="closeOverdueSheet()">
         <div class="flex items-center justify-between px-4 pt-3 pb-2 shrink-0">
