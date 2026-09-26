@@ -97,6 +97,9 @@ func StartServer(port int, dbFilepath string) error {
 	app.Use(middleware.RequestLogger())
 	app.Use(middleware.HTTPAccessLogger())
 	app.Use(recover.New())
+	// Registered before the routes and the /static mount so every response,
+	// including the chunked HTML pages, is compressed on the way out.
+	app.Use(middleware.Compress())
 
 	registerRoutes(app, database, store, storage)
 

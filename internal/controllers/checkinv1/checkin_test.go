@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -283,6 +284,107 @@ func Test_buildFilter_location_group_id(t *testing.T) {
 			tc.assert(t, got, gotErr)
 		})
 	}
+}
+
+func TestController_Checkouts_conditionalPolling(t *testing.T) {
+	app, store := setupAuthedApp()
+	testDB, cleanup, err := db.PrepareTestDB()
+	require.NoError(t, err)
+	t.Cleanup(cleanup)
+	c := NewController(testDB, store)
+	c.RegisterRoutes(app)
+
+	_, err = squirrel.Delete("checkins").RunWith(testDB).ExecContext(t.Context())
+	require.NoError(t, err)
+
+	locRes, err := squirrel.Insert("locations").
+		RunWith(testDB).
+		Columns("name", "planning_center_id", "event_id").
+		Values("nursery", "plloc_cond", 1).
+		ExecContext(t.Context())
+	require.NoError(t, err)
+	locationID, err := locRes.LastInsertId()
+	require.NoError(t, err)
+
+	addChild := func(t *testing.T, pcID, first, last string) {
+		t.Helper()
+		_, err := squirrel.Insert("checkins").
+			RunWith(testDB).
+			Columns("planning_center_id", "location_id", "first_name", "last_name", "security_code", "checked_out_at").
+			Values(pcID, locationID, first, last, "ABC123", time.Now().UTC()).
+			ExecContext(t.Context())
+		require.NoError(t, err)
+	}
+
+	poll := func(t *testing.T, ifNoneMatch string) *http.Response {
+		t.Helper()
+		req := httptest.NewRequest("GET", "/v1/checkins/checkouts?limit=100", nil)
+		req.Header.Set("Accept", "application/json")
+		if ifNoneMatch != "" {
+			req.Header.Set("If-None-Match", ifNoneMatch)
+		}
+		resp, err := app.Test(req)
+		require.NoError(t, err)
+		return resp
+	}
+
+	t.Run("200 carries a validator and tells the client to revalidate", func(t *testing.T) {
+		resp := poll(t, "")
+		require.Equal(t, fiber.StatusOK, resp.StatusCode)
+		assert.NotEmpty(t, resp.Header.Get("ETag"),
+			"the 3s poll can only revalidate if the response carries an ETag")
+		assert.Equal(t, "no-cache", resp.Header.Get("Cache-Control"),
+			"no-cache stores the body but forces revalidation; no-store would defeat the ETag")
+		assert.Equal(t, "Accept-Encoding", resp.Header.Get("Vary"),
+			"the body varies once compression is applied")
+	})
+
+	t.Run("matching validator returns 304 with no body", func(t *testing.T) {
+		first := poll(t, "")
+		etag := first.Header.Get("ETag")
+		require.NotEmpty(t, etag)
+		first.Body.Close()
+
+		second := poll(t, etag)
+		defer second.Body.Close()
+		assert.Equal(t, fiber.StatusNotModified, second.StatusCode)
+
+		body, err := io.ReadAll(second.Body)
+		require.NoError(t, err)
+		assert.Empty(t, body, "a 304 must not resend the payload")
+		assert.Equal(t, etag, second.Header.Get("ETag"),
+			"the validator should be echoed so the client keeps caching it")
+	})
+
+	t.Run("changed data returns 200 with a new validator", func(t *testing.T) {
+		before := poll(t, "")
+		beforeETag := before.Header.Get("ETag")
+		before.Body.Close()
+
+		addChild(t, "plc_new", "jamie", "zeta")
+
+		after := poll(t, beforeETag)
+		defer after.Body.Close()
+		assert.Equal(t, fiber.StatusOK, after.StatusCode,
+			"a newly arrived child must not be hidden behind a stale validator")
+		assert.NotEqual(t, beforeETag, after.Header.Get("ETag"))
+
+		var payload CheckoutsResponse
+		require.NoError(t, json.NewDecoder(after.Body).Decode(&payload))
+		assert.Len(t, payload.Checkins, 1)
+		assert.Equal(t, "jamie", payload.Checkins[0].FirstName)
+	})
+
+	t.Run("HTML branch is unaffected", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/v1/checkins/checkouts", nil)
+		req.Header.Set("Accept", "text/html")
+		resp, err := app.Test(req)
+		require.NoError(t, err)
+		t.Cleanup(func() { resp.Body.Close() })
+		require.Equal(t, fiber.StatusOK, resp.StatusCode)
+		assert.Empty(t, resp.Header.Get("ETag"),
+			"only the poll payload is validated; the page itself is already cache-busted by asset hashing")
+	})
 }
 
 func TestController_Checkouts_filter_validation(t *testing.T) {
