@@ -1,0 +1,18 @@
+# air (live reload) configuration for `make web-lr`.
+#
+# This file exists to declare `build.entrypoint`, the non-deprecated way to tell
+# air which binary `build.cmd` produces. Without it, air v1.64 prints
+# "[warning] build.bin is deprecated; set build.entrypoint instead" on every
+# start.
+#
+# The warning cannot be silenced from the command line: air calls
+# warnDeprecatedBin() on the config-file/default state *before* it applies CLI
+# flags, so --build.entrypoint has no effect on it. Declaring entrypoint here
+# is what actually silences it.
+#
+# The Makefile still passes --build.cmd, --build.full_bin, and
+# --build.exclude_dir; entrypoint is not redundant with those. air ignores
+# entrypoint's arguments while full_bin is set, and full_bin remains the
+# command that is actually run, because it needs the `godotenv` env-var prefix.
+[build]
+entrypoint = "./bin/kids-checkin"
