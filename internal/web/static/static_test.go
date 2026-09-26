@@ -108,6 +108,16 @@ func TestFilteredFSBlocksHTML(t *testing.T) {
 		_ = f.Close()
 	})
 
+	t.Run("serves vendored alpine.js (offline, no CDN)", func(t *testing.T) {
+		f, err := fsys.Open("js/alpine.min.js")
+		require.NoError(t, err)
+		content, err := io.ReadAll(f)
+		require.NoError(t, err)
+		_ = f.Close()
+		require.NotEmpty(t, content)
+		require.Contains(t, string(content), "3.17.2")
+	})
+
 	t.Run("still allows css", func(t *testing.T) {
 		f, err := fsys.Open("css/tailwind.css")
 		require.NoError(t, err)

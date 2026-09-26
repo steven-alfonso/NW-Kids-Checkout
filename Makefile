@@ -69,6 +69,27 @@ test:
 	godotenv go test ./...
 	npm test
 
+.PHONY: test-unit
+test-unit:
+	godotenv go test ./...
+	npm run test:unit
+
+.PHONY: test-browser
+test-browser:
+	npm run test:browser
+
+.PHONY: test-e2e
+test-e2e:
+	npm run test:e2e
+
+.PHONY: e2e-smoke
+e2e-smoke:
+	npm run e2e:smoke
+
+.PHONY: e2e-ab
+e2e-ab:
+	npm run e2e:ab
+
 .PHONY: db-seed
 db-seed:
 	godotenv ./bin/db-seed
