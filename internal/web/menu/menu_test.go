@@ -19,19 +19,19 @@ func TestFor(t *testing.T) {
 	}{
 		{
 			name: "anonymous user",
-			want: []string{"guest-checkin-link", "manual-checkins-link", "login-link"},
+			want: []string{"manual-checkins-link", "login-link"},
 		},
 		{
 			name:          "authenticated non-admin user",
 			authenticated: true,
 			role:          "user",
-			want:          []string{"guest-checkin-link", "manual-checkins-link", "logout-link"},
+			want:          []string{"manual-checkins-link", "logout-link"},
 		},
 		{
 			name:          "authenticated admin user",
 			authenticated: true,
 			role:          "admin",
-			want:          []string{"guest-checkin-link", "manual-checkins-link", "admin-link", "logout-link"},
+			want:          []string{"manual-checkins-link", "admin-link", "logout-link"},
 		},
 	}
 
@@ -58,7 +58,8 @@ func TestFor_AnonymousNeverSeesAdminOrLogout(t *testing.T) {
 func TestRenderHTML(t *testing.T) {
 	html, err := RenderHTML(true, "admin")
 	require.NoError(t, err)
-	require.Contains(t, html, `id="guest-checkin-link"`)
+	require.Contains(t, html, `id="manual-checkins-link"`)
+	require.NotContains(t, html, `id="guest-checkin-link"`)
 	require.Contains(t, html, `href="/admin"`)
 	require.Contains(t, html, `href="/logout"`)
 	require.NotContains(t, html, `href="/login`)
@@ -66,6 +67,7 @@ func TestRenderHTML(t *testing.T) {
 	html, err = RenderHTML(false, "")
 	require.NoError(t, err)
 	require.Contains(t, html, `href="/login?next=/"`)
+	require.NotContains(t, html, `id="guest-checkin-link"`)
 	require.NotContains(t, html, `href="/admin"`)
 	require.NotContains(t, html, `href="/logout"`)
 }
@@ -96,6 +98,6 @@ func TestRenderedMenuFitsPlaceholder(t *testing.T) {
 		html, err := RenderHTML(role != "", role)
 		require.NoError(t, err)
 		require.False(t, strings.Contains(html, "class=\"hidden"), "server-rendered menu should not need hidden classes")
-		require.True(t, strings.HasPrefix(html, `<a id="guest-checkin-link"`), "guest link must always be first")
+		require.True(t, strings.HasPrefix(html, `<a id="manual-checkins-link"`), "manual check-ins link must always be first")
 	}
 }
