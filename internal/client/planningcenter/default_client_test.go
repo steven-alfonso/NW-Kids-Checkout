@@ -1,11 +1,9 @@
 package planningcenter
 
 import (
-	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -15,56 +13,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-func Test_defaultClient_GetCheckoutsForEvent_Real(t *testing.T) {
-	t.Skip()
-	require.NotEmpty(t, os.Getenv("PLANNING_CENTER_API_BASE_URL"), "PLANNING_CENTER_API_BASE_URL must be set to run this test")
-	require.NotEmpty(t, os.Getenv("PLANNING_CENTER_API_CLIENT_ID"), "PLANNING_CENTER_API_CLIENT_ID must be set to run this test")
-	require.NotEmpty(t, os.Getenv("PLANNING_CENTER_API_SECRET"), "PLANNING_CENTER_API_SECRET must be set to run this test")
-
-	type fields struct {
-		baseURL  string
-		clientID string
-		secret   string
-	}
-	type args struct {
-		ctx                 context.Context
-		eventID             string
-		checkedOutOnOrAfter time.Time
-		limit               int
-	}
-	tests := []struct {
-		name    string
-		fields  fields
-		args    args
-		want    []Checkout
-		wantErr bool
-	}{
-		{
-			name: "get checkins",
-			args: args{
-				ctx:                 t.Context(),
-				eventID:             "151353",
-				checkedOutOnOrAfter: time.Date(2026, time.April, 5, 0, 0, 0, 0, time.UTC),
-			},
-			wantErr: false,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			client := &defaultClient{
-				httpClient: http.DefaultClient,
-				baseURL:    os.Getenv("PLANNING_CENTER_API_BASE_URL"),
-				clientID:   os.Getenv("PLANNING_CENTER_API_CLIENT_ID"),
-				secret:     os.Getenv("PLANNING_CENTER_API_SECRET"),
-			}
-			got, err := client.GetCheckoutsForEvent(tt.args.ctx, tt.args.eventID, tt.args.checkedOutOnOrAfter, tt.args.limit)
-			require.NoError(t, err)
-			fmt.Printf("%+v\n", got)
-			// t.Fail()
-		})
-	}
-}
 
 func Test_defaultClient_GetCheckoutsForEvent_Fake(t *testing.T) {
 	checkedOutAt := time.Now().UTC().Add(-1 * time.Minute).Round(time.Second)
@@ -177,55 +125,6 @@ func Test_defaultClient_GetCheckoutsForEvent_nonTerminatingPagination_returnsErr
 	assert.ErrorIs(t, err, ErrPaginationLimitExceeded, "truncation must be surfaced as an explicit error, not a silent return")
 }
 
-func Test_defaultClient_GetLocation_Real(t *testing.T) {
-	t.Skip()
-	require.NotEmpty(t, os.Getenv("PLANNING_CENTER_API_BASE_URL"), "PLANNING_CENTER_API_BASE_URL must be set to run this test")
-	require.NotEmpty(t, os.Getenv("PLANNING_CENTER_API_CLIENT_ID"), "PLANNING_CENTER_API_CLIENT_ID must be set to run this test")
-	require.NotEmpty(t, os.Getenv("PLANNING_CENTER_API_SECRET"), "PLANNING_CENTER_API_SECRET must be set to run this test")
-
-	type fields struct {
-		baseURL  string
-		clientID string
-		secret   string
-	}
-	type args struct {
-		ctx                        context.Context
-		locationID                 string
-		includeAssociatedLocations bool
-	}
-	tests := []struct {
-		name    string
-		fields  fields
-		args    args
-		want    []Checkout
-		wantErr bool
-	}{
-		{
-			name: "get checkins",
-			args: args{
-				ctx:        t.Context(),
-				locationID: "295939",
-				//locationID: "723452",
-				includeAssociatedLocations: true,
-			},
-			wantErr: false,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			client := &defaultClient{
-				httpClient: http.DefaultClient,
-				baseURL:    os.Getenv("PLANNING_CENTER_API_BASE_URL"),
-				clientID:   os.Getenv("PLANNING_CENTER_API_CLIENT_ID"),
-				secret:     os.Getenv("PLANNING_CENTER_API_SECRET"),
-			}
-			got, err := client.GetLocation(tt.args.ctx, tt.args.locationID, tt.args.includeAssociatedLocations)
-			require.NoError(t, err)
-			fmt.Printf("%+v\n", got)
-		})
-	}
-}
-
 func Test_defaultClient_GetEventByID(t *testing.T) {
 	var requestCount atomic.Int64
 
@@ -263,54 +162,6 @@ func Test_defaultClient_GetEventByID_EmptyID(t *testing.T) {
 
 	_, err := client.GetEventByID(t.Context(), "")
 	require.Error(t, err)
-}
-
-func Test_defaultClient_GetLocationsForEvent(t *testing.T) {
-	t.Skip()
-	require.NotEmpty(t, os.Getenv("PLANNING_CENTER_API_BASE_URL"), "PLANNING_CENTER_API_BASE_URL must be set to run this test")
-	require.NotEmpty(t, os.Getenv("PLANNING_CENTER_API_CLIENT_ID"), "PLANNING_CENTER_API_CLIENT_ID must be set to run this test")
-	require.NotEmpty(t, os.Getenv("PLANNING_CENTER_API_SECRET"), "PLANNING_CENTER_API_SECRET must be set to run this test")
-
-	type fields struct {
-		baseURL  string
-		clientID string
-		secret   string
-	}
-	type args struct {
-		ctx                        context.Context
-		eventID                    string
-		includeAssociatedLocations bool
-	}
-	tests := []struct {
-		name    string
-		fields  fields
-		args    args
-		want    []Checkout
-		wantErr bool
-	}{
-		{
-			name: "get checkins",
-			args: args{
-				ctx:                        t.Context(),
-				eventID:                    "152112",
-				includeAssociatedLocations: true,
-			},
-			wantErr: false,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			client := &defaultClient{
-				httpClient: http.DefaultClient,
-				baseURL:    os.Getenv("PLANNING_CENTER_API_BASE_URL"),
-				clientID:   os.Getenv("PLANNING_CENTER_API_CLIENT_ID"),
-				secret:     os.Getenv("PLANNING_CENTER_API_SECRET"),
-			}
-			got, err := client.GetLocationsForEvent(tt.args.ctx, tt.args.eventID)
-			require.NoError(t, err)
-			fmt.Printf("%+v\n", got)
-		})
-	}
 }
 
 func Test_defaultClient_GetEvents_EmptyNext(t *testing.T) {

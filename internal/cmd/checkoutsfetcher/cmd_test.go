@@ -50,57 +50,6 @@ func testService(checkWindowRepo eventcheckwindow.Repo, eventRepo event.Repo, ch
 	}
 }
 
-type concurrentEventRepo struct {
-	events      []event.Event
-	onUpdate    func()
-	mu          sync.Mutex
-	updateCount atomic.Int64
-}
-
-func (m *concurrentEventRepo) ListEvents(ctx context.Context, filter event.EventFilter) ([]event.Event, error) {
-	return m.events, nil
-}
-
-func (m *concurrentEventRepo) GetEventByID(ctx context.Context, id int64) (event.Event, error) {
-	for _, e := range m.events {
-		if e.ID == id {
-			return e, nil
-		}
-	}
-	return event.Event{}, nil
-}
-
-func (m *concurrentEventRepo) GetEventByPlanningCenterID(ctx context.Context, planningCenterID string) (event.Event, error) {
-	for _, e := range m.events {
-		if e.PlanningCenterID == planningCenterID {
-			return e, nil
-		}
-	}
-	return event.Event{}, nil
-}
-
-func (m *concurrentEventRepo) CreateEvent(ctx context.Context, ev event.Event) (event.Event, error) {
-	ev.ID = int64(len(m.events) + 1)
-	m.events = append(m.events, ev)
-	return ev, nil
-}
-
-func (m *concurrentEventRepo) UpdateEvent(ctx context.Context, ev event.Event) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.updateCount.Add(1)
-	if m.onUpdate != nil {
-		m.onUpdate()
-	}
-	for i, e := range m.events {
-		if e.ID == ev.ID {
-			m.events[i] = ev
-			return nil
-		}
-	}
-	return nil
-}
-
 func Test_eventCheckoutLoop_noEvents(t *testing.T) {
 	var events []event.Event
 	eventRepo := &event.MockRepo{
@@ -1666,48 +1615,70 @@ func TestParseTime(t *testing.T) {
 }
 
 func TestMergeWindows(t *testing.T) {
+	// Minutes are anchored to Monday 2026-03-23 00:00 UTC, so a weekday offset
+	// of N days is N*1440. America/New_York is EDT (UTC-4) in late March.
+	const (
+		mon = 0
+		tue = 1440
+		fri = 4 * 1440
+		sat = 5 * 1440
+		sun = 6 * 1440
+	)
 	tests := []struct {
 		name         string
 		checkWindows []eventcheckwindow.EventCheckWindow
-		wantLen      int
-		wantErr      bool
+		want         []Window
 	}{
 		{
+			// Mon 09:00 EDT = Mon 13:00 UTC, Mon 12:00 EDT = Mon 16:00 UTC.
 			name: "single window same day",
 			checkWindows: []eventcheckwindow.EventCheckWindow{
 				{StartDayOfWeek: 1, StartTime: "09:00", EndDayOfWeek: 1, EndTime: "12:00", Timezone: "America/New_York"},
 			},
-			wantLen: 1,
+			want: []Window{{mon + 13*60, mon + 16*60}},
 		},
 		{
+			// 09:00-11:00 EDT = 13:00-15:00 UTC; 14:00-16:00 EDT = 18:00-20:00 UTC.
 			name: "multiple non-overlapping",
 			checkWindows: []eventcheckwindow.EventCheckWindow{
 				{StartDayOfWeek: 1, StartTime: "09:00", EndDayOfWeek: 1, EndTime: "11:00", Timezone: "America/New_York"},
 				{StartDayOfWeek: 1, StartTime: "14:00", EndDayOfWeek: 1, EndTime: "16:00", Timezone: "America/New_York"},
 			},
-			wantLen: 2,
+			want: []Window{
+				{mon + 13*60, mon + 15*60},
+				{mon + 18*60, mon + 20*60},
+			},
 		},
 		{
+			// 11:00 EDT (15:00 UTC) falls inside 09:00-12:00 EDT, and the second
+			// window ends later, so the union must run to 18:00 UTC.
 			name: "overlapping windows merge",
 			checkWindows: []eventcheckwindow.EventCheckWindow{
 				{StartDayOfWeek: 1, StartTime: "09:00", EndDayOfWeek: 1, EndTime: "12:00", Timezone: "America/New_York"},
 				{StartDayOfWeek: 1, StartTime: "11:00", EndDayOfWeek: 1, EndTime: "14:00", Timezone: "America/New_York"},
 			},
-			wantLen: 1,
+			want: []Window{{mon + 13*60, mon + 18*60}},
 		},
 		{
+			// Fri 22:00 EDT = Sat 02:00 UTC; Sat 02:00 EDT = Sat 06:00 UTC.
 			name: "crosses week boundary",
 			checkWindows: []eventcheckwindow.EventCheckWindow{
 				{StartDayOfWeek: 5, StartTime: "22:00", EndDayOfWeek: 6, EndTime: "02:00", Timezone: "America/New_York"},
 			},
-			wantLen: 1,
+			want: []Window{{sat + 2*60, sat + 6*60}},
 		},
 		{
+			// Sun 22:00 UTC to Mon 02:00 UTC wraps past the end of the week, so it
+			// must split into the tail of this week and the head of the next. The
+			// tail sorts last because it starts later.
 			name: "splits true Sunday/Monday crossing into two ranges",
 			checkWindows: []eventcheckwindow.EventCheckWindow{
 				{StartDayOfWeek: 7, StartTime: "22:00", EndDayOfWeek: 1, EndTime: "02:00", Timezone: "UTC"},
 			},
-			wantLen: 2,
+			want: []Window{
+				{0, 2 * 60},
+				{sun + 22*60, minutesPerWeek},
+			},
 		},
 	}
 
@@ -1717,12 +1688,8 @@ func TestMergeWindows(t *testing.T) {
 			// merged minute ranges are deterministic regardless of wall clock.
 			now := time.Date(2026, 3, 25, 12, 0, 0, 0, time.UTC)
 			got, err := mergeWindows(tt.checkWindows, now)
-			if tt.wantErr {
-				assert.Error(t, err)
-				return
-			}
 			require.NoError(t, err)
-			assert.Len(t, got, tt.wantLen)
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }

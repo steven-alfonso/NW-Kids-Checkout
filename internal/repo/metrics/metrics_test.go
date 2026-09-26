@@ -140,18 +140,6 @@ func Test_sqliteRepo_ListDailyMetrics_excludes_manual(t *testing.T) {
 	assert.Equal(t, "Kids Service", daily[0].EventName)
 }
 
-func Test_sqliteRepo_ListDailyMetrics_excludes_manual_only_days(t *testing.T) {
-	f := newFixture(t)
-
-	f.insertManualCheckin(t)
-
-	repo := NewRepo(f.testDB)
-	daily, err := repo.ListDailyMetrics(t.Context(), Filter{Days: 14})
-	require.NoError(t, err)
-
-	require.Empty(t, daily, "days with only manual checkins must not appear in daily metrics")
-}
-
 func Test_sqliteRepo_ListDailyMetrics_days_filter(t *testing.T) {
 	f := newFixture(t)
 

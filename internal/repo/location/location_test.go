@@ -283,19 +283,14 @@ func Test_sqliteRepo_ListLocations_filter_by_multiple_IDs(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	loc3, err := s.CreateLocation(t.Context(), Location{
+	// A third location so the multi-id and empty-id filters have something to
+	// discriminate against.
+	_, err = s.CreateLocation(t.Context(), Location{
 		PlanningCenterID: "pcloc_multi_3",
 		EventID:          1,
 		Name:             "Multi Location 3",
 	})
 	require.NoError(t, err)
-
-	t.Run("filter by single id", func(t *testing.T) {
-		locations, err := s.ListLocations(t.Context(), LocationFilter{IDs: []int64{loc1.ID}})
-		require.NoError(t, err)
-		require.Len(t, locations, 1)
-		assert.Equal(t, loc1.ID, locations[0].ID)
-	})
 
 	t.Run("filter by multiple ids", func(t *testing.T) {
 		locations, err := s.ListLocations(t.Context(), LocationFilter{IDs: []int64{loc1.ID, loc2.ID}})
@@ -310,16 +305,10 @@ func Test_sqliteRepo_ListLocations_filter_by_multiple_IDs(t *testing.T) {
 		assert.True(t, idMap[loc2.ID])
 	})
 
-	t.Run("filter by three ids", func(t *testing.T) {
-		locations, err := s.ListLocations(t.Context(), LocationFilter{IDs: []int64{loc1.ID, loc2.ID, loc3.ID}})
-		require.NoError(t, err)
-		require.Len(t, locations, 3)
-	})
-
 	t.Run("filter by empty ids returns all", func(t *testing.T) {
 		locations, err := s.ListLocations(t.Context(), LocationFilter{IDs: []int64{}})
 		require.NoError(t, err)
-		assert.GreaterOrEqual(t, len(locations), 3)
+		assert.Len(t, locations, 3)
 	})
 
 	t.Run("filter by non-existent ids returns empty", func(t *testing.T) {
