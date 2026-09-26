@@ -343,7 +343,7 @@ func TestController_ManualCheckinsPage_ServerRenderedMenu(t *testing.T) {
 	// setupAuthedApp sets role=admin, so admin and logout links are rendered.
 	assert.Contains(t, html, `id="menu-button"`)
 	assert.Contains(t, html, `id="kebab-menu"`)
-	assert.Contains(t, html, `id="guest-checkin-link"`)
+	assert.NotContains(t, html, `id="guest-checkin-link"`)
 	assert.Contains(t, html, `id="manual-checkins-link"`)
 	assert.Contains(t, html, `id="admin-link"`)
 	assert.Contains(t, html, `id="logout-link"`)

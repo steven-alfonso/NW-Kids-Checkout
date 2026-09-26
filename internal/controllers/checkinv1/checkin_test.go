@@ -143,7 +143,8 @@ func TestController_CheckoutsWeb_PreviewTag(t *testing.T) {
 		t.Setenv("ENVIRONMENT", "production")
 		html := request(t)
 		// setupAuthedApp sets role=admin, so admin and logout links appear
-		assert.Contains(t, html, `id="guest-checkin-link"`)
+		assert.Contains(t, html, `id="manual-checkins-link"`)
+		assert.NotContains(t, html, `id="guest-checkin-link"`)
 		assert.Contains(t, html, `id="admin-link"`)
 		assert.Contains(t, html, `id="logout-link"`)
 		assert.NotContains(t, html, `id="login-link"`)

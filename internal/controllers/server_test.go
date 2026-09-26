@@ -44,10 +44,10 @@ func getHomeHTML(t *testing.T, app *fiber.App) string {
 }
 
 func TestHomePageMenu(t *testing.T) {
-	t.Run("admin sees guest, manual, admin, logout but no login link", func(t *testing.T) {
+	t.Run("admin sees manual, admin, logout but no login or guest link", func(t *testing.T) {
 		app, _ := setupHomeApp()
 		html := getHomeHTML(t, app)
-		assert.Contains(t, html, `id="guest-checkin-link"`)
+		assert.NotContains(t, html, `id="guest-checkin-link"`)
 		assert.Contains(t, html, `id="manual-checkins-link"`)
 		assert.Contains(t, html, `id="admin-link"`)
 		assert.Contains(t, html, `id="logout-link"`)
@@ -62,7 +62,9 @@ func TestHomePageMenu(t *testing.T) {
 
 		html := getHomeHTML(t, app)
 		assert.Contains(t, html, `id="login-link"`)
-		assert.Contains(t, html, `href="/guest-checkin"`)
+		assert.Contains(t, html, `id="manual-checkins-link"`)
+		assert.NotContains(t, html, `id="guest-checkin-link"`)
+		assert.NotContains(t, html, `href="/guest-checkin"`)
 		assert.NotContains(t, html, "id=\"admin-link\"")
 		assert.NotContains(t, html, "id=\"logout-link\"")
 		assert.False(t, strings.Contains(html, `href="/admin"`), "home HTML must not expose /admin href")
