@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 	"testing"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -141,36 +140,17 @@ func TestMigration_GuestFamilyModel_RoundTrip(t *testing.T) {
 	assert.Equal(t, 0, idxCount, "idx_children_parent_id should not exist after down")
 }
 
+// The guest family migration rebuilds manual_checkins via a manual_checkins_new
+// table and a RENAME, so child_id must be declared on the new table. An
+// "ALTER TABLE manual_checkins ADD COLUMN child_id" would be dead SQL that
+// either no-ops or fails. The behavioral round trip is covered by
+// TestMigration_GuestFamilyModel_RoundTrip; this guards the migration's shape.
 func TestMigration_GuestFamilyModel_NoRedundantAlterTable(t *testing.T) {
-	db, err := sql.Open("sqlite3", "file::memory:?cache=shared&_foreign_keys=on")
-	require.NoError(t, err)
-	defer db.Close()
-
-	targetMigration := "migrations/20260906164308_add_guest_family_model.up.sqlite"
-	applyMigrationsUpTo(t, db, targetMigration)
-
-	_, err = db.Exec(`INSERT INTO manual_checkins (first_name, last_name) VALUES ('Alice', 'Smith')`)
+	upSQL, err := os.ReadFile("migrations/20260906164308_add_guest_family_model.up.sqlite")
 	require.NoError(t, err)
 
-	upSQL, err := os.ReadFile(targetMigration)
-	require.NoError(t, err)
-	upSQLStr := string(upSQL)
-
-	assert.False(t, strings.Contains(upSQLStr, "ALTER TABLE manual_checkins ADD COLUMN"),
+	assert.NotContains(t, string(upSQL), "ALTER TABLE manual_checkins ADD COLUMN",
 		"migration should not contain a redundant ALTER TABLE ADD COLUMN for child_id")
-
-	_, err = db.Exec(upSQLStr)
-	require.NoError(t, err, "migration should apply cleanly without the dead ALTER TABLE")
-
-	var count int
-	err = db.QueryRow("SELECT COUNT(*) FROM manual_checkins").Scan(&count)
-	require.NoError(t, err)
-	assert.Equal(t, 1, count, "data should survive migration")
-
-	var childIDCol string
-	err = db.QueryRow("SELECT name FROM pragma_table_info('manual_checkins') WHERE name = 'child_id'").Scan(&childIDCol)
-	require.NoError(t, err, "child_id column should exist after migration")
-	assert.Equal(t, "child_id", childIDCol)
 }
 
 func TestMigration_GuestFamilyModel_BlankNameBackfill(t *testing.T) {

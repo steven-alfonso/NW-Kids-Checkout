@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http/httptest"
 	"testing"
 
@@ -62,6 +63,7 @@ func TestController_GetEventByID(t *testing.T) {
 		resp, err := app.Test(req)
 		require.NoError(t, err)
 		assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
+		assert.Equal(t, "invalid id", bodyString(t, resp.Body))
 	})
 }
 
@@ -301,6 +303,7 @@ func TestController_GetEventCheckWindows(t *testing.T) {
 		resp, err := app.Test(req)
 		require.NoError(t, err)
 		assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
+		assert.Equal(t, "invalid event id", bodyString(t, resp.Body))
 	})
 }
 
@@ -479,6 +482,7 @@ func TestController_PutUpdateCheckWindow(t *testing.T) {
 		resp, err := app.Test(req)
 		require.NoError(t, err)
 		assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
+		assert.Equal(t, "invalid window id", bodyString(t, resp.Body))
 	})
 
 	t.Run("window belongs to another event", func(t *testing.T) {
@@ -576,6 +580,7 @@ func TestController_DeleteCheckWindow(t *testing.T) {
 		resp, err := app.Test(req)
 		require.NoError(t, err)
 		assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
+		assert.Equal(t, "invalid window id", bodyString(t, resp.Body))
 	})
 
 	t.Run("window belongs to another event", func(t *testing.T) {
@@ -692,6 +697,7 @@ func TestController_PatchUpdateEvent(t *testing.T) {
 		resp, err := app.Test(req)
 		require.NoError(t, err)
 		assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
+		assert.Equal(t, "invalid event id", bodyString(t, resp.Body))
 	})
 
 	t.Run("invalid json", func(t *testing.T) {
@@ -817,5 +823,14 @@ func TestController_DeleteEvent(t *testing.T) {
 		resp, err := app.Test(req)
 		require.NoError(t, err)
 		assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
+		assert.Equal(t, "invalid event id", bodyString(t, resp.Body))
 	})
+}
+
+// bodyString reads a response body as a string for error-message assertions.
+func bodyString(t *testing.T, r io.Reader) string {
+	t.Helper()
+	b, err := io.ReadAll(r)
+	require.NoError(t, err)
+	return string(b)
 }
