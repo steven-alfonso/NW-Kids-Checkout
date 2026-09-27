@@ -2,6 +2,7 @@ package static
 
 import (
 	"bytes"
+	"encoding/binary"
 	"image"
 	"image/color"
 	"image/png"
@@ -144,9 +145,90 @@ func TestFilteredFSBlocksHTML(t *testing.T) {
 	})
 }
 
-// TestLogoRungsServe guards the picture ladder used on every page. The
-// extension allowlist silently 404s anything unlisted, so a new rung that is
-// not added there would fail only in the browser.
+// TestFaviconIsMultiSize guards the single largest asset on a page load.
+// Browsers request /favicon.ico unprompted on every navigation when no page
+// declares <link rel="icon">, so its size is paid on every page view. The
+// original was one 256x247 32bpp entry stored as an uncompressed DIB, 260894
+// bytes for an image that is only ever drawn at 16-48px.
+func TestFaviconIsMultiSize(t *testing.T) {
+	raw := readEmbedded(t, "img/favicon.ico")
+	require.Less(t, len(raw), 30_000,
+		"favicon.ico is %d bytes; the browser fetches it on every page load. "+
+			"Regenerate it as a compressed multi-size ICO (16/32/48), not one large DIB", len(raw))
+
+	// ICON container: reserved=0, type=1 (icon), then a 16-byte directory
+	// entry per image.
+	require.GreaterOrEqual(t, len(raw), 6, "too small to be an ICO")
+	reserved, typ := binary.LittleEndian.Uint16(raw[0:2]), binary.LittleEndian.Uint16(raw[2:4])
+	require.Equal(t, uint16(0), reserved)
+	require.Equal(t, uint16(1), typ)
+	count := int(binary.LittleEndian.Uint16(raw[4:6]))
+	require.GreaterOrEqual(t, count, 2,
+		"favicon.ico holds %d image(s); a browser tab renders 16px and a bookmark 32px, "+
+			"so it needs a multi-size set", count)
+
+	// No single entry may be a large uncompressed bitmap. ICO permits a
+	// PNG-compressed payload only for the 256x256 entry; smaller ones are
+	// DIB plus a 1bpp AND mask, so they cost slightly more than 4 bytes per
+	// pixel. That is expected. What must not happen is a 256px entry stored
+	// raw, which is what made the original 260894 bytes.
+	for i := range count {
+		entry := raw[6+i*16:]
+		width := int(entry[0])
+		if width == 0 {
+			width = 256
+		}
+		size := int(binary.LittleEndian.Uint32(entry[8:12]))
+		offset := int(binary.LittleEndian.Uint32(entry[12:16]))
+		require.LessOrEqual(t, offset+size, len(raw),
+			"entry %d points outside the file (%d+%d > %d)", i, offset, size, len(raw))
+
+		if width < 256 {
+			// DIB is mandatory here; just keep it sane.
+			require.LessOrEqual(t, size, width*width*5,
+				"entry %d (%dx%d) is %d bytes, larger than raw pixels plus a mask",
+				i, width, width, size)
+			continue
+		}
+		payload := raw[offset : offset+8]
+		require.True(t, bytes.Equal(payload, []byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a}),
+			"the 256x256 entry (%d bytes) must be PNG-compressed; a raw DIB there "+
+				"costs 262144 bytes on every page load", size)
+	}
+}
+
+// TestManifestIconsAreReasonable guards the icons the manifest pulls in. The
+// 192px one is fetched on every page load, not only on install.
+func TestManifestIconsAreReasonable(t *testing.T) {
+	for _, tc := range []struct {
+		file      string
+		sizeLimit int64
+	}{
+		// A 192x192 image of fine halftone dots is legitimately a few tens of
+		// KB; these ceilings only catch a return to the original hand-exported
+		// files, which were near the theoretical size for an uncompressed RGBA
+		// bitmap.
+		{"android-chrome-192x192.png", 60_000},
+		{"android-chrome-512x512.png", 260_000},
+		{"apple-touch-icon.png", 55_000},
+	} {
+		t.Run(tc.file, func(t *testing.T) {
+			raw := readEmbedded(t, "img/"+tc.file)
+			require.Less(t, int64(len(raw)), tc.sizeLimit,
+				"%s is %d bytes", tc.file, len(raw))
+		})
+	}
+}
+
+func readEmbedded(t *testing.T, name string) []byte {
+	t.Helper()
+	f, err := EmbeddedFS.Open(name)
+	require.NoError(t, err)
+	defer func() { _ = f.Close() }()
+	raw, err := io.ReadAll(f)
+	require.NoError(t, err)
+	return raw
+}
 func TestLogoRungsServe(t *testing.T) {
 	app := fiber.New()
 	app.Use("/static", filesystem.New(filesystem.Config{
