@@ -235,10 +235,14 @@ function getOverdueCount(nowMs) {
     return getOverdueChildren(nowMs).length;
 }
 
-// Signature of everything renderOverdueSheet bakes into a row. The drawer's
-// "N min ago" labels and pill colors are refreshed in place by updateTimes, so
-// they are deliberately absent here: if the row set and its confirmed/group
-// state are unchanged, re-rendering would only reproduce identical markup.
+// Signature over everything renderOverdueSheet bakes into a row, so that equal
+// signature implies byte-identical markup and the rebuild is pure waste. The
+// "N min ago" labels and pill colors are absent because updateTimes() refreshes
+// them in place, every tick, outside this guard. getChildSignature covers the
+// name, code, source, ids, checked_out_at and the raw location_group_id (which
+// drives the bar color); the confirmed flag covers the checkbox and pill; and
+// the resolved group label is included because locationGroups arrives
+// asynchronously, so a late load must re-render exactly once.
 let lastSheetSignature = null;
 
 function overdueGroupLabel(child) {
@@ -248,9 +252,11 @@ function overdueGroupLabel(child) {
 }
 
 function getOverdueSheetSignature(overdue) {
-    return overdue
-        .map((child) => `${getChildId(child)}:${isChildConfirmed(child) ? 1 : 0}:${overdueGroupLabel(child)}`)
-        .join('|');
+    return JSON.stringify(overdue.map((child) => [
+        getChildSignature(child),
+        isChildConfirmed(child) ? 1 : 0,
+        overdueGroupLabel(child),
+    ]));
 }
 
 function renderOverdueSheet(overdue) {

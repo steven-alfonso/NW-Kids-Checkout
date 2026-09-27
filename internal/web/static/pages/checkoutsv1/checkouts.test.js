@@ -15,6 +15,7 @@ window.__test = {
     },
     syncConfirmedStates: () => syncConfirmedStates(),
     updateUI: () => updateUI(),
+    updateTimes: () => updateTimes(),
     setConfirmationOverride: (childId, confirmed) => setConfirmationOverride(childId, confirmed),
     setSearchQuery: (query) => setSearchQuery(query),
     setHideConfirmed: (hidden) => setHideConfirmed(hidden),
@@ -804,81 +805,232 @@ describe('checkoutsv1/checkouts', () => {
     });
 
     describe('overdue drawer rendering', () => {
+        // Mirrors the real page: checkouts.html ships a placeholder child in
+        // #overdue-sheet-list and a #location-group-checkboxes container.
         function drawerWindow() {
-            return overdueBadgeWindow();
+            return loadWindow({
+                html: `<!doctype html><html><body>
+                    <div id="children-list"></div>
+                    <button id="overdue-badge" class="hidden"></button>
+                    <div id="overdue-sheet" class="translate-y-full"></div>
+                    <div id="overdue-sheet-backdrop" class="hidden"></div>
+                    <div id="location-group-checkboxes"></div>
+                    <div id="overdue-sheet-list"><div class="text-center py-6 text-sm text-slate-500">No overdue checkouts</div></div>
+                </body></html>`,
+                fetchImpl: async () => ({ ok: true, json: async () => ({ checkins: [], manual_checkins: [] }) })
+            });
         }
 
+        // Absolute-timestamp fixture so minute labels are exact regardless of
+        // when the suite runs.
+        function childAt(id, minutesAgo, nowMs, extra = {}) {
+            return {
+                source: 'planning_center',
+                planning_center_id: id,
+                first_name: 'Kida',
+                last_name: 'Test',
+                security_code: 'CODE' + id,
+                location_group_id: 1,
+                checked_out_at_ms: nowMs - minutesAgo * 60 * 1000,
+                checked_out_confirmed_at: null,
+                ...extra
+            };
+        }
+
+        // The page reads Date.now() from its own window, so the clock has to be
+        // patched there rather than with fake timers.
+        function freezeClock(w, startMs) {
+            let nowMs = startMs;
+            w.Date.now = () => nowMs;
+            return {
+                advance: (ms) => { nowMs += ms; },
+                at: () => nowMs
+            };
+        }
+
+        function sheetList(w) {
+            return w.document.getElementById('overdue-sheet-list');
+        }
         function sheetRows(w) {
-            return w.document.querySelectorAll('#overdue-sheet-list > div');
+            return [...sheetList(w).querySelectorAll(':scope > div')];
+        }
+        function sheetRowFor(w, id) {
+            return w.document.querySelector(`#overdue-sheet-list .child-time[data-child-id="pc:${id}"]`)?.closest('div.bg-white');
+        }
+        function sheetPill(w, id) {
+            return w.document.querySelector(`#overdue-sheet-list .child-time[data-child-id="pc:${id}"]`);
+        }
+        function sheetBox(w, id) {
+            return w.document.querySelector(`#overdue-sheet-list .child-confirmed-checkbox[data-child-id="pc:${id}"]`);
+        }
+        function mainBox(w, id) {
+            return w.document.querySelector(`#children-list .child-confirmed-checkbox[data-child-id="pc:${id}"]`);
+        }
+        // Counts keyed patches so "we did not rebuild" is asserted directly
+        // instead of inferred from a label that happens not to have moved.
+        function countMorphs(w) {
+            const real = w.morphdom;
+            w.__morphCalls = 0;
+            w.morphdom = (...args) => { w.__morphCalls++; return real(...args); };
+            return () => w.__morphCalls;
         }
 
-        async function readyWindow(children) {
+        async function ready(children, nowMs = 1_700_000_000_000) {
             const w = drawerWindow();
             w.document.dispatchEvent(new w.Event('DOMContentLoaded'));
             await new Promise(r => setTimeout(r, 10));
+            const clock = freezeClock(w, nowMs);
             w.__test.setChildrenData(children);
             w.updateUI();
-            return w;
+            return { w, clock };
         }
 
         it('leaves the overdue drawer untouched while it is closed', async () => {
-            const w = await readyWindow([overdueChild('a', 6), overdueChild('b', 7)]);
-            const sheetList = w.document.getElementById('overdue-sheet-list');
+            const { w } = await ready([childAt('a', 6, 1_700_000_000_000), childAt('b', 7, 1_700_000_000_000)]);
+            const before = sheetList(w).innerHTML;
 
             w.updateOverdueUI();
 
-            // The badge is the visible signal while the drawer is closed, so it
-            // must still update...
+            // The badge is the visible surface while closed, so it updates...
             expect(w.document.getElementById('overdue-badge').textContent).toContain('2 overdue');
             // ...but the hidden drawer must not be rebuilt for an audience of nobody.
-            expect(sheetRows(w).length).toBe(0);
+            expect(before).toContain('No overdue checkouts');
+            expect(sheetList(w).innerHTML).toBe(before);
         });
 
+        // Guards the invariant the closed-drawer skip depends on: whatever the
+        // drawer shows must be a fresh snapshot taken when it becomes visible.
         it('renders the current overdue set when the drawer is opened', async () => {
-            const w = await readyWindow([overdueChild('a', 6), overdueChild('b', 7)]);
+            const { w } = await ready([childAt('a', 6, 1_700_000_000_000), childAt('b', 7, 1_700_000_000_000)]);
+            expect(sheetList(w).textContent).toContain('No overdue checkouts');
 
             w.openOverdueSheet();
 
             expect(sheetRows(w).length).toBe(2);
+            expect(sheetPill(w, 'a')).not.toBeNull();
         });
 
         it('reuses existing drawer rows instead of recreating them', async () => {
-            const w = await readyWindow([overdueChild('a', 6), overdueChild('b', 7)]);
+            const { w } = await ready([childAt('a', 6, 1_700_000_000_000), childAt('b', 7, 1_700_000_000_000)]);
             w.openOverdueSheet();
             const rowBefore = sheetRows(w)[0];
 
-            // Same data, no change: the row node must survive rather than be
-            // torn down and rebuilt, which is what innerHTML assignment does.
             w.updateOverdueUI();
 
             expect(sheetRows(w).length).toBe(2);
             expect(sheetRows(w)[0]).toBe(rowBefore);
         });
 
-        it('adds a row when a child becomes overdue while the drawer is open', async () => {
-            const w = await readyWindow([overdueChild('a', 6)]);
+        it('does not rebuild the drawer when only time has passed', async () => {
+            const now0 = 1_700_000_000_000;
+            const { w, clock } = await ready([childAt('a', 6, now0), childAt('b', 6, now0)], now0);
             w.openOverdueSheet();
-            expect(sheetRows(w).length).toBe(1);
+            // 6.0 and 7.5 minutes are both in the yellow band, so the pill class
+            // cannot be what makes the text differ.
+            expect(sheetPill(w, 'a').className).toContain('bg-yellow-500');
+            expect(sheetPill(w, 'a').textContent.trim()).toBe('6 min ago');
 
-            // 'b' ages past the overdue threshold.
-            w.__test.setChildrenData([overdueChild('a', 8), overdueChild('b', 6)]);
+            const morphs = countMorphs(w);
+            clock.advance(90_000);
             w.updateOverdueUI();
 
+            // Unchanged row set: the renderer must not run at all.
+            expect(morphs()).toBe(0);
+            expect(sheetPill(w, 'a').textContent.trim()).toBe('6 min ago');
+
+            // updateTimes owns the labels, so they must still advance without
+            // any rebuild. This is what lets the signature omit them.
+            w.__test.updateTimes();
+            expect(sheetPill(w, 'a').textContent.trim()).toBe('7 min ago');
+            expect(sheetPill(w, 'b').textContent.trim()).toBe('7 min ago');
+        });
+
+        it('paints the drawer row confirmed when the child is confirmed from the main list', async () => {
+            const now0 = 1_700_000_000_000;
+            const { w } = await ready([childAt('a', 6, now0), childAt('b', 7, now0)], now0);
+            w.openOverdueSheet();
+
+            // Confirming in the main list never touches the drawer's own
+            // checkbox, so only a re-render can paint the drawer row.
+            const box = mainBox(w, 'a');
+            expect(box).not.toBeNull();
+            box.checked = true;
+            box.dispatchEvent(new w.Event('change', { bubbles: true }));
+            await new Promise(r => setTimeout(r, 10));
+
+            expect(sheetRows(w).length).toBe(2);
+            expect(sheetBox(w, 'a').checked).toBe(true);
+            expect(sheetBox(w, 'a').closest('[data-confirmed-label]').dataset.confirmedState).toBe('confirmed');
+            expect(sheetPill(w, 'a').className).toContain('bg-gray-400');
+        });
+
+        it('keeps a row in the open drawer after confirming it there, until the drawer closes', async () => {
+            const now0 = 1_700_000_000_000;
+            const { w } = await ready([childAt('a', 6, now0), childAt('b', 7, now0)], now0);
+            w.openOverdueSheet();
+
+            const box = sheetBox(w, 'a');
+            box.checked = true;
+            box.dispatchEvent(new w.Event('change', { bubbles: true }));
+            await new Promise(r => setTimeout(r, 10));
+
+            // Retained rather than dropped, so the confirm stays on screen.
+            expect(sheetRows(w).length).toBe(2);
+            expect(sheetBox(w, 'a').checked).toBe(true);
+            expect(sheetPill(w, 'a').className).toContain('bg-gray-400');
+            expect(sheetPill(w, 'a').className).not.toContain('bg-red-500');
+
+            // Idempotent on the next tick.
+            w.updateOverdueUI();
             expect(sheetRows(w).length).toBe(2);
         });
 
-        it('drops the row when a child is confirmed while the drawer is open', async () => {
-            const w = await readyWindow([overdueChild('a', 6), overdueChild('b', 7)]);
-            w.openOverdueSheet();
-            expect(sheetRows(w).length).toBe(2);
+        it('treats exactly five minutes as overdue', async () => {
+            const now0 = 1_700_000_000_000;
+            const { w } = await ready([childAt('a', 5, now0)], now0);
 
-            w.__test.setChildrenData([
-                { ...overdueChild('a', 6), checked_out_confirmed_at: new Date().toISOString() },
-                overdueChild('b', 7)
-            ]);
             w.updateOverdueUI();
 
-            expect(sheetRows(w).length).toBe(1);
+            expect(w.document.getElementById('overdue-badge').classList.contains('hidden')).toBe(false);
+            expect(w.document.getElementById('overdue-badge').textContent).toContain('1 overdue');
+        });
+
+        it('does not treat just under five minutes as overdue', async () => {
+            const now0 = 1_700_000_000_000;
+            // Checked out 4m59s ago: one second short of the threshold.
+            const justUnder = now0 - (5 * 60 * 1000) + 1000;
+            const { w } = await ready([childAt('a', 5, now0, { checked_out_at_ms: justUnder })], now0);
+
+            w.updateOverdueUI();
+
+            expect(w.document.getElementById('overdue-badge').classList.contains('hidden')).toBe(true);
+        });
+
+        it('updates the drawer group label when location groups load late', async () => {
+            const now0 = 1_700_000_000_000;
+            const { w } = await ready([childAt('a', 6, now0)], now0);
+            w.openOverdueSheet();
+            expect(sheetRowFor(w, 'a').textContent).toContain('Group 1');
+
+            // locationGroups is fetched asynchronously, so it can land after the
+            // drawer has already rendered.
+            w.renderLocationGroupSettings([{ id: 1, name: 'Room A' }]);
+            w.updateOverdueUI();
+
+            expect(sheetRowFor(w, 'a').textContent).toContain('Room A');
+            expect(sheetRowFor(w, 'a').textContent).not.toContain('Group 1');
+        });
+
+        it('re-renders the drawer when a child\'s name changes', async () => {
+            const now0 = 1_700_000_000_000;
+            const { w } = await ready([childAt('a', 6, now0)], now0);
+            w.openOverdueSheet();
+            expect(sheetRowFor(w, 'a').textContent).toContain('Kida');
+
+            w.__test.setChildrenData([childAt('a', 6, now0, { first_name: 'Renamed' })]);
+            w.updateOverdueUI();
+
+            expect(sheetRowFor(w, 'a').textContent).toContain('Renamed');
         });
     });
 
