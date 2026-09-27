@@ -244,6 +244,11 @@ function getOverdueCount(nowMs) {
 // the resolved group label is included because locationGroups arrives
 // asynchronously, so a late load must re-render exactly once.
 let lastSheetSignature = null;
+// Child ids currently shown in the drawer. While the drawer is open these rows
+// are never pulled out from under the reader's finger: if one becomes confirmed
+// -- here or on another device -- it is kept in place and repainted as
+// confirmed instead of being removed, so the list cannot reflow mid-read.
+let drawerRenderedIds = new Set();
 
 function overdueGroupLabel(child) {
     if (child.location_group_id == null) return 'Unassigned';
@@ -264,6 +269,7 @@ function renderOverdueSheet(overdue) {
     const signature = getOverdueSheetSignature(overdue);
     if (signature === lastSheetSignature) return;
     lastSheetSignature = signature;
+    drawerRenderedIds = new Set(overdue.map(getChildId).filter(Boolean));
     if (overdue.length === 0) {
         dom.overdueSheetList.innerHTML = '<div class="text-center py-6 text-sm text-slate-500">No overdue checkouts</div>';
         return;
@@ -347,6 +353,13 @@ function updateOverdueUI() {
         lastOverdueCount = count;
 
         if (dom.overdueSheet) {
+            // Whatever is on screen stays on screen. Seed the retained set with
+            // every id the drawer is currently showing, so a row that leaves the
+            // live overdue set -- because it was confirmed here or on another
+            // device -- is repainted in place rather than removed. The loop below
+            // then drops the ones that are still live, and the ones that have
+            // left childrenData altogether, so nothing accumulates.
+            drawerRenderedIds.forEach((id) => overdueRetainedIds.add(id));
             const liveIds = new Set(overdue.map(getChildId));
             const retainedChildren = [];
             overdueRetainedIds.forEach((id) => {
@@ -441,6 +454,7 @@ function closeOverdueSheet() {
         isOverdueSheetOpen = false;
     }
     overdueRetainedIds.clear();
+    drawerRenderedIds = new Set();
     if (overdueSheetNeedsRefresh && !isOverdueSheetOpen) {
         overdueSheetNeedsRefresh = false;
         updateOverdueUI();

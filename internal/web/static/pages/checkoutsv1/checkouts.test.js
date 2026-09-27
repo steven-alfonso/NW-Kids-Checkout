@@ -1040,6 +1040,87 @@ describe('checkoutsv1/checkouts', () => {
 
             expect(sheetRowFor(w, 'a').textContent).toContain('Renamed');
         });
+
+        // ---- cross-device confirmation ----
+        // Another staff member confirming arrives as poll data, with no local
+        // change event. The row must not vanish from under the reader's finger.
+        describe('when another device confirms a child', () => {
+            const T0 = 1_700_000_000_000;
+            // drawer sorts oldest first: Alpha, Bravo, Charlie
+            const trio = () => [
+                childAt('a', 20, T0, { first_name: 'Alpha' }),
+                childAt('b', 15, T0, { first_name: 'Bravo' }),
+                childAt('c', 10, T0, { first_name: 'Charlie' }),
+            ];
+            const withBravoConfirmed = () => [
+                trio()[0],
+                { ...trio()[1], checked_out_confirmed_at: new Date(T0).toISOString() },
+                trio()[2],
+            ];
+            const sheetNames = (w) => sheetRows(w).map((r) => r.querySelector('.font-bold')?.textContent.trim());
+
+            it('keeps the row, checked and with a gray pill', async () => {
+                const { w } = await ready(trio(), T0);
+                w.openOverdueSheet();
+                expect(sheetNames(w)).toEqual(['Alpha Test', 'Bravo Test', 'Charlie Test']);
+
+                w.__test.setChildrenData(withBravoConfirmed());
+                w.updateOverdueUI();
+
+                expect(sheetNames(w)).toEqual(['Alpha Test', 'Bravo Test', 'Charlie Test']);
+                expect(sheetBox(w, 'b').checked).toBe(true);
+                expect(sheetBox(w, 'b').closest('[data-confirmed-label]').dataset.confirmedState).toBe('confirmed');
+                expect(sheetPill(w, 'b').className).toContain('bg-gray-400');
+            });
+
+            it('leaves every other row untouched', async () => {
+                const { w } = await ready(trio(), T0);
+                w.openOverdueSheet();
+                w.__test.setChildrenData(withBravoConfirmed());
+                w.updateOverdueUI();
+
+                expect(sheetBox(w, 'a').checked).toBe(false);
+                expect(sheetPill(w, 'a').className).toContain('bg-red-500');
+                expect(sheetBox(w, 'c').checked).toBe(false);
+            });
+
+            it('keeps the confirmed row in its original position', async () => {
+                const { w } = await ready(trio(), T0);
+                w.openOverdueSheet();
+                const rowB = sheetRowFor(w, 'b');
+
+                w.__test.setChildrenData(withBravoConfirmed());
+                w.updateOverdueUI();
+
+                // Same node, same index: the list must not reflow.
+                expect(sheetRows(w).indexOf(sheetRowFor(w, 'b'))).toBe(1);
+                expect(sheetRowFor(w, 'b')).toBe(rowB);
+            });
+
+            it('drops the row once the drawer is closed and reopened', async () => {
+                const { w } = await ready(trio(), T0);
+                w.openOverdueSheet();
+                w.__test.setChildrenData(withBravoConfirmed());
+                w.updateOverdueUI();
+                expect(sheetRows(w).length).toBe(3);
+
+                w.closeOverdueSheet();
+                w.openOverdueSheet();
+
+                expect(sheetNames(w)).toEqual(['Alpha Test', 'Charlie Test']);
+            });
+
+            it('drops a row that disappears from the data entirely', async () => {
+                const { w } = await ready(trio(), T0);
+                w.openOverdueSheet();
+
+                // Bravo aged out of the polled window rather than being confirmed.
+                w.__test.setChildrenData([trio()[0], trio()[2]]);
+                w.updateOverdueUI();
+
+                expect(sheetNames(w)).toEqual(['Alpha Test', 'Charlie Test']);
+            });
+        });
     });
 
     it('refetches and reseeds the flash baseline after re-selecting a group', async () => {
