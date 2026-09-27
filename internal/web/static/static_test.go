@@ -2,6 +2,8 @@ package static
 
 import (
 	"bytes"
+	"image/color"
+	"image/png"
 	"io"
 	"io/fs"
 	"net/http"
@@ -178,4 +180,83 @@ func TestLogoRungsServe(t *testing.T) {
 				"%s regressed in size; the original SVG this replaced was 265042 bytes", tc.file)
 		})
 	}
+}
+
+// TestLogoRungsHaveOuterRings guards the artwork itself. NWKids-logo.svg
+// layers two vector circles (an orange outer ring, a white inner ring) on top
+// of its embedded raster. Regenerating the rungs from the embedded PNG instead
+// of the whole SVG silently drops both rings, which is a visual regression no
+// size or content-type assertion would catch.
+func TestLogoRungsHaveOuterRings(t *testing.T) {
+	const (
+		orangeR = 245
+		orangeG = 146
+		orangeB = 30
+	)
+
+	src, err := EmbeddedFS.Open("img/NWKids-logo-320.png")
+	require.NoError(t, err)
+	defer func() { _ = src.Close() }()
+
+	raw, err := io.ReadAll(src)
+	require.NoError(t, err)
+
+	img, err := png.Decode(bytes.NewReader(raw))
+	require.NoError(t, err)
+
+	b := img.Bounds()
+	midY := b.Min.Y + (b.Max.Y-b.Min.Y)/2
+
+	// Walk inward along the horizontal centre line. Correct artwork reads
+	// orange, then white, then the teal disc. Rings dropped read teal almost
+	// immediately. The outermost pixel is a semi-transparent antialiased edge,
+	// and Go reports it premultiplied, so start one pixel in.
+	const (
+		edgeSkip   = 1  // antialiased transparent border
+		orangeBand = 13 // px of orange ring
+		whiteBand  = 12 // px of white ring inside it
+	)
+	orangeFrom := b.Min.X + edgeSkip
+	orangeTo := orangeFrom + orangeBand
+
+	isOrange := func(c color.RGBA) bool {
+		return near(c.R, orangeR, 24) && near(c.G, orangeG, 24) && near(c.B, orangeB, 24)
+	}
+	isWhite := func(c color.RGBA) bool {
+		return c.R > 235 && c.G > 235 && c.B > 235
+	}
+	at := func(x int) color.RGBA {
+		r, g, bl, _ := img.At(x, midY).RGBA()
+		return color.RGBA{R: uint8(r >> 8), G: uint8(g >> 8), B: uint8(bl >> 8), A: 255}
+	}
+
+	orangeOK, whiteOK := true, false
+	for x := orangeFrom; x < orangeTo && x < b.Max.X; x++ {
+		c := at(x)
+		if !isOrange(c) {
+			orangeOK = false
+			break
+		}
+	}
+	require.True(t, orangeOK,
+		"the band just inside the logo edge is not the orange ring; the rings were dropped. "+
+			"Regenerate the rungs from NWKids-logo.svg, not from its embedded PNG")
+
+	for x := orangeTo; x < orangeTo+whiteBand && x < b.Max.X; x++ {
+		if isWhite(at(x)) {
+			whiteOK = true
+			break
+		}
+	}
+	require.True(t, whiteOK,
+		"no white ring directly inside the orange ring; the rings were dropped. "+
+			"Regenerate the rungs from NWKids-logo.svg, not from its embedded PNG")
+}
+
+func near(a, b, tol uint8) bool {
+	d := int(a) - int(b)
+	if d < 0 {
+		d = -d
+	}
+	return d <= int(tol)
 }
