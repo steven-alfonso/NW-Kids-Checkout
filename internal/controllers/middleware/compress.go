@@ -19,11 +19,13 @@ func Compress() fiber.Handler {
 			if websocket.IsWebSocketUpgrade(c) {
 				return true
 			}
-			// Everything under img/ is already-compressed raster data (the logo
-			// is a base64 PNG inside an SVG). fasthttp would happily re-encode
-			// image/x-icon and image/svg+xml, and these assets are served with
-			// application/octet-stream, which it also treats as compressible.
-			// Re-encoding wastes CPU and can make a PNG larger on the wire.
+			// Everything under img/ is already-compressed raster data. fasthttp's
+			// compressible set covers text/*, application/*, image/svg+xml,
+			// image/x-icon and font/*, so the .svg and the two icon handlers
+			// below would be re-encoded for nothing. The .avif/.webp/.png rungs
+			// are correctly typed image/* and fasthttp skips them anyway, but
+			// they are skipped here too so the whole directory is covered by one
+			// rule rather than three.
 			if strings.HasPrefix(c.Path(), "/static/img/") {
 				return true
 			}
