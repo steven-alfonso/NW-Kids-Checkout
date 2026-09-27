@@ -3,7 +3,9 @@ package checkinv1
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -176,10 +178,67 @@ func (controller *Controller) checkoutsWeb(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
 	}
 
-	return c.JSON(CheckoutsResponse{
+	return sendCheckoutsJSON(c, CheckoutsResponse{
 		Checkins:       repoCheckinSliceToOutput(checkins),
 		ManualCheckins: repoManualCheckinSliceToOutput(manualCheckins),
 	})
+}
+
+// sendCheckoutsJSON writes the poll payload with a validator so the client's 3s
+// poll can revalidate instead of re-downloading an unchanged list. The checkouts
+// page polls far more often than the data changes, so most responses collapse
+// to an empty 304.
+func sendCheckoutsJSON(c *fiber.Ctx, payload CheckoutsResponse) error {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "could not encode checkouts")
+	}
+
+	// Weak validator: the identity representation is hashed here, but gzip may
+	// content-code it on the way out, and a weak tag is the correct validator
+	// when a weak transformation like compression is applied (RFC 9110 8.8.1).
+	sum := sha256.Sum256(body)
+	etag := `W/"` + hex.EncodeToString(sum[:16]) + `"`
+
+	// no-cache (not no-store) so the browser keeps the body and revalidates it
+	// on the next poll instead of refetching every time.
+	c.Set(fiber.HeaderCacheControl, "no-cache")
+	// Vary on Accept-Encoding because compression re-encodes the body, and on
+	// Accept because this route content-negotiates: the same path serves HTML
+	// or this payload depending on the request's Accept header.
+	c.Vary(fiber.HeaderAcceptEncoding, fiber.HeaderAccept)
+	c.Set(fiber.HeaderETag, etag)
+
+	if etagMatches(c.Get(fiber.HeaderIfNoneMatch), etag) {
+		return c.SendStatus(fiber.StatusNotModified)
+	}
+
+	// Set the content type directly rather than via c.Type, which treats its
+	// argument as a file extension and would fall back to octet-stream.
+	c.Set(fiber.HeaderContentType, fiber.MIMEApplicationJSON)
+	return c.Send(body)
+}
+
+// etagMatches reports whether an If-None-Match header covers the current etag.
+// The header may carry a list and may use the weak W/ prefix on either side.
+func etagMatches(ifNoneMatch, etag string) bool {
+	if ifNoneMatch == "" {
+		return false
+	}
+	if strings.TrimSpace(ifNoneMatch) == "*" {
+		return true
+	}
+	candidate := strings.TrimPrefix(etag, "W/")
+	for _, part := range strings.Split(ifNoneMatch, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		if strings.TrimPrefix(part, "W/") == candidate {
+			return true
+		}
+	}
+	return false
 }
 
 func (controller *Controller) checkoutsWebsocket(c *fiber.Ctx) error {
