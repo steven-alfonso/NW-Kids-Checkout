@@ -3,6 +3,7 @@ package middleware
 import (
 	"compress/gzip"
 	"io"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -43,7 +44,7 @@ func TestCompress(t *testing.T) {
 			return c.JSON(fiber.Map{"items": payload})
 		})
 
-		req := httptest.NewRequest("GET", "/data", nil)
+		req := httptest.NewRequest(http.MethodGet, "/data", nil)
 		req.Header.Set("Accept-Encoding", "gzip")
 		resp, err := app.Test(req)
 		require.NoError(t, err)
@@ -62,7 +63,7 @@ func TestCompress(t *testing.T) {
 			return c.SendString("<html><body>" + payload + "</body></html>")
 		})
 
-		req := httptest.NewRequest("GET", "/page", nil)
+		req := httptest.NewRequest(http.MethodGet, "/page", nil)
 		req.Header.Set("Accept-Encoding", "gzip")
 		resp, err := app.Test(req)
 		require.NoError(t, err)
@@ -78,7 +79,7 @@ func TestCompress(t *testing.T) {
 			return c.SendString(payload)
 		})
 
-		req := httptest.NewRequest("GET", "/img/logo.png", nil)
+		req := httptest.NewRequest(http.MethodGet, "/img/logo.png", nil)
 		req.Header.Set("Accept-Encoding", "gzip")
 		resp, err := app.Test(req)
 		require.NoError(t, err)
@@ -95,7 +96,7 @@ func TestCompress(t *testing.T) {
 			return c.SendString(payload)
 		})
 
-		req := httptest.NewRequest("GET", "/static/img/NWKids-logo.svg", nil)
+		req := httptest.NewRequest(http.MethodGet, "/static/img/NWKids-logo.svg", nil)
 		req.Header.Set("Accept-Encoding", "gzip")
 		resp, err := app.Test(req)
 		require.NoError(t, err)
@@ -125,7 +126,7 @@ func TestCompress(t *testing.T) {
 					return c.SendString(payload)
 				})
 
-				req := httptest.NewRequest("GET", path, nil)
+				req := httptest.NewRequest(http.MethodGet, path, nil)
 				req.Header.Set("Accept-Encoding", "gzip")
 				resp, err := app.Test(req)
 				require.NoError(t, err)
@@ -147,7 +148,7 @@ func TestCompress(t *testing.T) {
 			return c.Status(fiber.StatusSwitchingProtocols).SendString(payload)
 		})
 
-		req := httptest.NewRequest("GET", "/ws", nil)
+		req := httptest.NewRequest(http.MethodGet, "/ws", nil)
 		req.Header.Set("Accept-Encoding", "gzip")
 		req.Header.Set("Connection", "Upgrade")
 		req.Header.Set("Upgrade", "websocket")
@@ -166,7 +167,7 @@ func TestCompress(t *testing.T) {
 			return c.JSON(fiber.Map{"items": payload})
 		})
 
-		req := httptest.NewRequest("GET", "/data", nil)
+		req := httptest.NewRequest(http.MethodGet, "/data", nil)
 		req.Header.Set("Accept-Encoding", "identity")
 		resp, err := app.Test(req)
 		require.NoError(t, err)
@@ -188,7 +189,7 @@ func TestCompress(t *testing.T) {
 			return c.JSON(fiber.Map{"items": payload})
 		})
 
-		req := httptest.NewRequest("GET", "/data", nil)
+		req := httptest.NewRequest(http.MethodGet, "/data", nil)
 		req.Header.Set("Accept-Encoding", "gzip")
 		req.Header.Set("If-None-Match", `W/"abc"`)
 		resp, err := app.Test(req)

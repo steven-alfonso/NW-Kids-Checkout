@@ -3,6 +3,7 @@ package metricsv1
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 
@@ -37,7 +38,7 @@ func TestController_GetMetrics(t *testing.T) {
 	controller.RegisterRoutes(app)
 
 	t.Run("returns daily metrics", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/v1/admin/metrics", nil)
+		req := httptest.NewRequest(http.MethodGet, "/v1/admin/metrics", nil)
 		resp, err := app.Test(req)
 		require.NoError(t, err)
 		assert.Equal(t, fiber.StatusOK, resp.StatusCode)
@@ -56,21 +57,21 @@ func TestController_GetMetrics(t *testing.T) {
 	})
 
 	t.Run("invalid days returns bad request", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/v1/admin/metrics?days=abc", nil)
+		req := httptest.NewRequest(http.MethodGet, "/v1/admin/metrics?days=abc", nil)
 		resp, err := app.Test(req)
 		require.NoError(t, err)
 		assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
 	})
 
 	t.Run("days below range returns bad request", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/v1/admin/metrics?days=0", nil)
+		req := httptest.NewRequest(http.MethodGet, "/v1/admin/metrics?days=0", nil)
 		resp, err := app.Test(req)
 		require.NoError(t, err)
 		assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
 	})
 
 	t.Run("days above range returns bad request", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/v1/admin/metrics?days=91", nil)
+		req := httptest.NewRequest(http.MethodGet, "/v1/admin/metrics?days=91", nil)
 		resp, err := app.Test(req)
 		require.NoError(t, err)
 		assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
@@ -83,7 +84,7 @@ func TestController_GetMetrics_RequiresAdmin(t *testing.T) {
 	controller := NewController(&metrics.MockRepo{}, store)
 	controller.RegisterRoutes(app)
 
-	req := httptest.NewRequest("GET", "/v1/admin/metrics", nil)
+	req := httptest.NewRequest(http.MethodGet, "/v1/admin/metrics", nil)
 	resp, err := app.Test(req)
 	require.NoError(t, err)
 	assert.Equal(t, fiber.StatusForbidden, resp.StatusCode)
@@ -105,7 +106,7 @@ func TestController_GetFetchLatency(t *testing.T) {
 	controller.RegisterRoutes(app)
 
 	t.Run("returns fetch latency rows", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/v1/admin/metrics/fetch-latency", nil)
+		req := httptest.NewRequest(http.MethodGet, "/v1/admin/metrics/fetch-latency", nil)
 		resp, err := app.Test(req)
 		require.NoError(t, err)
 		assert.Equal(t, fiber.StatusOK, resp.StatusCode)
@@ -123,7 +124,7 @@ func TestController_GetFetchLatency(t *testing.T) {
 	})
 
 	t.Run("invalid days returns bad request", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/v1/admin/metrics/fetch-latency?days=abc", nil)
+		req := httptest.NewRequest(http.MethodGet, "/v1/admin/metrics/fetch-latency?days=abc", nil)
 		resp, err := app.Test(req)
 		require.NoError(t, err)
 		assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
@@ -139,7 +140,7 @@ func TestController_GetFetchLatency(t *testing.T) {
 		controller2 := NewController(mockRepo2, store2)
 		controller2.RegisterRoutes(app2)
 
-		req := httptest.NewRequest("GET", "/v1/admin/metrics/fetch-latency?days=7", nil)
+		req := httptest.NewRequest(http.MethodGet, "/v1/admin/metrics/fetch-latency?days=7", nil)
 		resp, err := app2.Test(req)
 		require.NoError(t, err)
 		assert.Equal(t, fiber.StatusOK, resp.StatusCode)
@@ -171,7 +172,7 @@ func TestController_GetGuestMetrics(t *testing.T) {
 	controller.RegisterRoutes(app)
 
 	t.Run("returns guest metrics rows", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/v1/admin/metrics/guest", nil)
+		req := httptest.NewRequest(http.MethodGet, "/v1/admin/metrics/guest", nil)
 		resp, err := app.Test(req)
 		require.NoError(t, err)
 		assert.Equal(t, fiber.StatusOK, resp.StatusCode)
@@ -189,7 +190,7 @@ func TestController_GetGuestMetrics(t *testing.T) {
 	})
 
 	t.Run("invalid days returns bad request", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/v1/admin/metrics/guest?days=abc", nil)
+		req := httptest.NewRequest(http.MethodGet, "/v1/admin/metrics/guest?days=abc", nil)
 		resp, err := app.Test(req)
 		require.NoError(t, err)
 		assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
@@ -205,7 +206,7 @@ func TestController_GetGuestMetrics(t *testing.T) {
 		controller2 := NewController(mockRepo2, store2)
 		controller2.RegisterRoutes(app2)
 
-		req := httptest.NewRequest("GET", "/v1/admin/metrics/guest?days=7", nil)
+		req := httptest.NewRequest(http.MethodGet, "/v1/admin/metrics/guest?days=7", nil)
 		resp, err := app2.Test(req)
 		require.NoError(t, err)
 		assert.Equal(t, fiber.StatusOK, resp.StatusCode)

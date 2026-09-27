@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -62,7 +63,7 @@ func TestController_CreateSubmission(t *testing.T) {
 		"safety_ack": true}
 	body, _ := json.Marshal(payload)
 
-	req := httptest.NewRequest("POST", "/v1/checkins/guest-submissions", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/v1/checkins/guest-submissions", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	resp, _ := app.Test(req)
 	require.Equal(t, fiber.StatusCreated, resp.StatusCode)
@@ -91,20 +92,20 @@ func TestController_CreateSubmissionContentType(t *testing.T) {
 	body, _ := json.Marshal(payload)
 
 	t.Run("wrong content type returns 415", func(t *testing.T) {
-		req := httptest.NewRequest("POST", "/v1/checkins/guest-submissions", bytes.NewReader(body))
+		req := httptest.NewRequest(http.MethodPost, "/v1/checkins/guest-submissions", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "text/plain")
 		resp, _ := app.Test(req)
 		require.Equal(t, fiber.StatusUnsupportedMediaType, resp.StatusCode)
 	})
 
 	t.Run("missing content type returns 415", func(t *testing.T) {
-		req := httptest.NewRequest("POST", "/v1/checkins/guest-submissions", bytes.NewReader(body))
+		req := httptest.NewRequest(http.MethodPost, "/v1/checkins/guest-submissions", bytes.NewReader(body))
 		resp, _ := app.Test(req)
 		require.Equal(t, fiber.StatusUnsupportedMediaType, resp.StatusCode)
 	})
 
 	t.Run("charset suffix still 201", func(t *testing.T) {
-		req := httptest.NewRequest("POST", "/v1/checkins/guest-submissions", bytes.NewReader(body))
+		req := httptest.NewRequest(http.MethodPost, "/v1/checkins/guest-submissions", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json; charset=utf-8")
 		resp, _ := app.Test(req)
 		require.Equal(t, fiber.StatusCreated, resp.StatusCode)
@@ -133,7 +134,7 @@ func TestController_CreateSubmissionRequiresPhoneOrEmail(t *testing.T) {
 				"safety_ack": true,
 			}
 			body, _ := json.Marshal(payload)
-			req := httptest.NewRequest("POST", "/v1/checkins/guest-submissions", bytes.NewReader(body))
+			req := httptest.NewRequest(http.MethodPost, "/v1/checkins/guest-submissions", bytes.NewReader(body))
 			req.Header.Set("Content-Type", "application/json")
 			resp, _ := app.Test(req)
 			require.Equal(t, tt.expectedStatus, resp.StatusCode)
@@ -194,7 +195,7 @@ func TestController_CreateSubmissionValidation(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			body, _ := json.Marshal(tt.payload)
-			req := httptest.NewRequest("POST", "/v1/checkins/guest-submissions", bytes.NewReader(body))
+			req := httptest.NewRequest(http.MethodPost, "/v1/checkins/guest-submissions", bytes.NewReader(body))
 			req.Header.Set("Content-Type", "application/json")
 			resp, _ := app.Test(req)
 			require.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
@@ -218,7 +219,7 @@ func TestController_ListSubmissionsNamesOnly(t *testing.T) {
 		Relationship: "Parent"}}, true)
 	require.NoError(t, err)
 
-	req := httptest.NewRequest("GET", "/v1/checkins/guest-submissions", nil)
+	req := httptest.NewRequest(http.MethodGet, "/v1/checkins/guest-submissions", nil)
 	resp, _ := app.Test(req)
 	require.Equal(t, fiber.StatusOK, resp.StatusCode)
 
@@ -249,7 +250,7 @@ func TestController_AdminListFullDetail(t *testing.T) {
 		Relationship: "Parent"}}, true)
 	require.NoError(t, err)
 
-	req := httptest.NewRequest("GET", "/v1/admin/guest-submissions", nil)
+	req := httptest.NewRequest(http.MethodGet, "/v1/admin/guest-submissions", nil)
 	resp, _ := app.Test(req)
 	require.Equal(t, fiber.StatusOK, resp.StatusCode)
 
@@ -289,7 +290,7 @@ func TestController_AdminListPaginated(t *testing.T) {
 	}
 
 	t.Run("page 1 returns the first 10 newest first", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/v1/admin/guest-submissions?page=1", nil)
+		req := httptest.NewRequest(http.MethodGet, "/v1/admin/guest-submissions?page=1", nil)
 		resp, _ := app.Test(req)
 		require.Equal(t, fiber.StatusOK, resp.StatusCode)
 		var page SubmissionPage
@@ -303,7 +304,7 @@ func TestController_AdminListPaginated(t *testing.T) {
 	})
 
 	t.Run("page 2 returns the remainder", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/v1/admin/guest-submissions?page=2", nil)
+		req := httptest.NewRequest(http.MethodGet, "/v1/admin/guest-submissions?page=2", nil)
 		resp, _ := app.Test(req)
 		require.Equal(t, fiber.StatusOK, resp.StatusCode)
 		var page SubmissionPage
@@ -314,7 +315,7 @@ func TestController_AdminListPaginated(t *testing.T) {
 	})
 
 	t.Run("page beyond the end returns empty items", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/v1/admin/guest-submissions?page=5", nil)
+		req := httptest.NewRequest(http.MethodGet, "/v1/admin/guest-submissions?page=5", nil)
 		resp, _ := app.Test(req)
 		require.Equal(t, fiber.StatusOK, resp.StatusCode)
 		var page SubmissionPage
@@ -326,7 +327,7 @@ func TestController_AdminListPaginated(t *testing.T) {
 
 	t.Run("invalid page errors", func(t *testing.T) {
 		for _, p := range []string{"0", "-1", "abc"} {
-			req := httptest.NewRequest("GET", "/v1/admin/guest-submissions?page="+p, nil)
+			req := httptest.NewRequest(http.MethodGet, "/v1/admin/guest-submissions?page="+p, nil)
 			resp, _ := app.Test(req)
 			assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode, "page=%s", p)
 		}
@@ -350,7 +351,7 @@ func TestController_AdminCanEnterFromPending(t *testing.T) {
 	require.NoError(t, err)
 
 	body, _ := json.Marshal(map[string]any{"status": "entered"})
-	req := httptest.NewRequest("PATCH", fmt.Sprintf("/v1/checkins/guest-submissions/%s/status", sub.PublicID), bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPatch, fmt.Sprintf("/v1/checkins/guest-submissions/%s/status", sub.PublicID), bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	resp, _ := app.Test(req)
 	require.Equal(t, fiber.StatusOK, resp.StatusCode)
@@ -385,7 +386,7 @@ func TestController_PatchSubmissionStatusNamesOnly(t *testing.T) {
 	require.NoError(t, err)
 
 	body, _ := json.Marshal(map[string]any{"status": "entered"})
-	req := httptest.NewRequest("PATCH", fmt.Sprintf("/v1/checkins/guest-submissions/%s/status", sub.PublicID), bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPatch, fmt.Sprintf("/v1/checkins/guest-submissions/%s/status", sub.PublicID), bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	resp, _ := app.Test(req)
 	require.Equal(t, fiber.StatusOK, resp.StatusCode)
@@ -415,7 +416,7 @@ func TestController_CreateCheckinsFromEntered(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, repo.UpdateSubmissionStatus(t.Context(), sub.PublicID, guestsubmission.StatusEntered, time.Now().UTC()))
 
-	req := httptest.NewRequest("POST", fmt.Sprintf("/v1/checkins/guest-submissions/%s/checkins", sub.PublicID), nil)
+	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/v1/checkins/guest-submissions/%s/checkins", sub.PublicID), nil)
 	resp, _ := app.Test(req)
 	require.Equal(t, fiber.StatusOK, resp.StatusCode)
 
@@ -448,7 +449,7 @@ func TestController_CreateCheckinsAlreadyExist(t *testing.T) {
 	require.NoError(t, repo.UpdateSubmissionStatus(t.Context(), sub.PublicID, guestsubmission.StatusEntered, time.Now().UTC()))
 	require.NoError(t, repo.CreateManualCheckins(t.Context(), sub.PublicID))
 
-	req := httptest.NewRequest("POST", fmt.Sprintf("/v1/checkins/guest-submissions/%s/checkins", sub.PublicID), nil)
+	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/v1/checkins/guest-submissions/%s/checkins", sub.PublicID), nil)
 	resp, _ := app.Test(req)
 	require.Equal(t, fiber.StatusOK, resp.StatusCode)
 
@@ -461,7 +462,7 @@ func TestController_CreateCheckinsNotFound(t *testing.T) {
 	app, _, testDB := setupAuthedApp(t, "")
 	wipeSubmissionTables(t, testDB)
 
-	req := httptest.NewRequest("POST", "/v1/checkins/guest-submissions/does-not-exist/checkins", nil)
+	req := httptest.NewRequest(http.MethodPost, "/v1/checkins/guest-submissions/does-not-exist/checkins", nil)
 	resp, _ := app.Test(req)
 	require.Equal(t, fiber.StatusNotFound, resp.StatusCode)
 }
@@ -471,7 +472,7 @@ func TestController_PatchSubmissionNotFound(t *testing.T) {
 	wipeSubmissionTables(t, testDB)
 
 	body, _ := json.Marshal(map[string]any{"status": "entered"})
-	req := httptest.NewRequest("PATCH", "/v1/checkins/guest-submissions/does-not-exist/status", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPatch, "/v1/checkins/guest-submissions/does-not-exist/status", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	resp, _ := app.Test(req)
 	require.Equal(t, fiber.StatusNotFound, resp.StatusCode)
@@ -512,7 +513,7 @@ func TestController_EnteredConflictReturnsBadRequest(t *testing.T) {
 	ctrl.RegisterRoutes(app)
 
 	body, _ := json.Marshal(map[string]any{"status": "entered"})
-	req := httptest.NewRequest("PATCH", "/v1/checkins/guest-submissions/abc123/status", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPatch, "/v1/checkins/guest-submissions/abc123/status", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	resp, _ := app.Test(req)
 	require.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
@@ -522,7 +523,7 @@ func TestController_InvalidStatusReturnsBadRequest(t *testing.T) {
 	app, _, testDB := setupAuthedApp(t, "")
 	wipeSubmissionTables(t, testDB)
 
-	req := httptest.NewRequest("GET", "/v1/checkins/guest-submissions?status=bogus", nil)
+	req := httptest.NewRequest(http.MethodGet, "/v1/checkins/guest-submissions?status=bogus", nil)
 	resp, _ := app.Test(req)
 	require.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
 	assert.NotEqual(t, fiber.StatusInternalServerError, resp.StatusCode)
@@ -541,7 +542,7 @@ func TestController_InvalidStatusReturnsBadRequest(t *testing.T) {
 	})
 	NewController(testDB, adminStore).RegisterRoutes(adminApp)
 
-	adminReq := httptest.NewRequest("GET", "/v1/admin/guest-submissions?status=bogus", nil)
+	adminReq := httptest.NewRequest(http.MethodGet, "/v1/admin/guest-submissions?status=bogus", nil)
 	adminResp, _ := adminApp.Test(adminReq)
 	require.Equal(t, fiber.StatusBadRequest, adminResp.StatusCode)
 	assert.NotEqual(t, fiber.StatusInternalServerError, adminResp.StatusCode)
@@ -569,33 +570,33 @@ func TestController_RequiresAuth(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Run("unauthenticated GET guest-submissions redirects to login", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/v1/checkins/guest-submissions", nil)
+		req := httptest.NewRequest(http.MethodGet, "/v1/checkins/guest-submissions", nil)
 		resp, _ := app.Test(req)
 		require.Equal(t, fiber.StatusUnauthorized, resp.StatusCode)
 	})
 
 	t.Run("unauthenticated PATCH guest-submissions redirects to login", func(t *testing.T) {
 		body, _ := json.Marshal(map[string]any{"status": "entered"})
-		req := httptest.NewRequest("PATCH", fmt.Sprintf("/v1/checkins/guest-submissions/%s/status", sub.PublicID), bytes.NewReader(body))
+		req := httptest.NewRequest(http.MethodPatch, fmt.Sprintf("/v1/checkins/guest-submissions/%s/status", sub.PublicID), bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		resp, _ := app.Test(req)
 		require.Equal(t, fiber.StatusUnauthorized, resp.StatusCode)
 	})
 
 	t.Run("unauthenticated POST checkins redirects to login", func(t *testing.T) {
-		req := httptest.NewRequest("POST", fmt.Sprintf("/v1/checkins/guest-submissions/%s/checkins", sub.PublicID), nil)
+		req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/v1/checkins/guest-submissions/%s/checkins", sub.PublicID), nil)
 		resp, _ := app.Test(req)
 		require.Equal(t, fiber.StatusUnauthorized, resp.StatusCode)
 	})
 
 	t.Run("unauthenticated GET admin guest-submissions redirects to login", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/v1/admin/guest-submissions", nil)
+		req := httptest.NewRequest(http.MethodGet, "/v1/admin/guest-submissions", nil)
 		resp, _ := app.Test(req)
 		require.Equal(t, fiber.StatusUnauthorized, resp.StatusCode)
 	})
 
 	t.Run("unauthenticated GET admin guest-entries redirects to login", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/admin/guest-entries", nil)
+		req := httptest.NewRequest(http.MethodGet, "/admin/guest-entries", nil)
 		resp, _ := app.Test(req)
 		require.Equal(t, fiber.StatusFound, resp.StatusCode)
 		require.Contains(t, resp.Header.Get("Location"), "/login")
@@ -607,14 +608,14 @@ func TestController_RequiresAuth(t *testing.T) {
 			"children":   []map[string]any{{"first_name": "Timmy", "last_name": "Smith", "dob": "2020-01-01", "grade": "1st", "gender": "Boy", "relationship": "Parent"}},
 			"safety_ack": true}
 		body, _ := json.Marshal(payload)
-		req := httptest.NewRequest("POST", "/v1/checkins/guest-submissions", bytes.NewReader(body))
+		req := httptest.NewRequest(http.MethodPost, "/v1/checkins/guest-submissions", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		resp, _ := app.Test(req)
 		require.Equal(t, fiber.StatusCreated, resp.StatusCode)
 	})
 
 	t.Run("unauthenticated GET guest-checkin is public 200", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/guest-checkin", nil)
+		req := httptest.NewRequest(http.MethodGet, "/guest-checkin", nil)
 		resp, _ := app.Test(req)
 		require.Equal(t, fiber.StatusOK, resp.StatusCode)
 		assert.Contains(t, resp.Header.Get("Content-Type"), "text/html")
@@ -626,19 +627,19 @@ func TestController_AdminRoutesRequireAdminRole(t *testing.T) {
 	_ = testDB
 
 	t.Run("non-admin GET admin guest-submissions returns 403", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/v1/admin/guest-submissions", nil)
+		req := httptest.NewRequest(http.MethodGet, "/v1/admin/guest-submissions", nil)
 		resp, _ := app.Test(req)
 		require.Equal(t, fiber.StatusForbidden, resp.StatusCode)
 	})
 
 	t.Run("non-admin GET admin guest-entries returns 403", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/admin/guest-entries", nil)
+		req := httptest.NewRequest(http.MethodGet, "/admin/guest-entries", nil)
 		resp, _ := app.Test(req)
 		require.Equal(t, fiber.StatusForbidden, resp.StatusCode)
 	})
 
 	t.Run("non-admin GET guest-submissions allowed", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/v1/checkins/guest-submissions", nil)
+		req := httptest.NewRequest(http.MethodGet, "/v1/checkins/guest-submissions", nil)
 		resp, _ := app.Test(req)
 		require.Equal(t, fiber.StatusOK, resp.StatusCode)
 	})
@@ -656,7 +657,7 @@ func TestController_AdminRoutesRequireAdminRole(t *testing.T) {
 			Relationship: "Parent"}}, true)
 		require.NoError(t, err)
 		body, _ := json.Marshal(map[string]any{"status": "entered"})
-		req := httptest.NewRequest("PATCH", fmt.Sprintf("/v1/checkins/guest-submissions/%s/status", sub.PublicID), bytes.NewReader(body))
+		req := httptest.NewRequest(http.MethodPatch, fmt.Sprintf("/v1/checkins/guest-submissions/%s/status", sub.PublicID), bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		resp, _ := app.Test(req)
 		require.Equal(t, fiber.StatusOK, resp.StatusCode)
@@ -675,7 +676,7 @@ func TestController_AdminRoutesRequireAdminRole(t *testing.T) {
 			Relationship: "Parent"}}, true)
 		require.NoError(t, err)
 		require.NoError(t, repo.UpdateSubmissionStatus(t.Context(), sub.PublicID, guestsubmission.StatusEntered, time.Now().UTC()))
-		req := httptest.NewRequest("POST", fmt.Sprintf("/v1/checkins/guest-submissions/%s/checkins", sub.PublicID), nil)
+		req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/v1/checkins/guest-submissions/%s/checkins", sub.PublicID), nil)
 		resp, _ := app.Test(req)
 		require.Equal(t, fiber.StatusOK, resp.StatusCode)
 	})

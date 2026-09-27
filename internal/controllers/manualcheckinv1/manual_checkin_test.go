@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -43,7 +44,7 @@ func TestController_PostManualCheckin(t *testing.T) {
 		body, err := json.Marshal(payload)
 		require.NoError(t, err)
 
-		req := httptest.NewRequest("POST", "/v1/checkins/manual-checkins", bytes.NewBuffer(body))
+		req := httptest.NewRequest(http.MethodPost, "/v1/checkins/manual-checkins", bytes.NewBuffer(body))
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := app.Test(req)
 		require.NoError(t, err)
@@ -78,7 +79,7 @@ func TestController_PostManualCheckin(t *testing.T) {
 		body, err := json.Marshal(payload)
 		require.NoError(t, err)
 
-		req := httptest.NewRequest("POST", "/v1/checkins/manual-checkins", bytes.NewBuffer(body))
+		req := httptest.NewRequest(http.MethodPost, "/v1/checkins/manual-checkins", bytes.NewBuffer(body))
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := app.Test(req)
 		require.NoError(t, err)
@@ -95,7 +96,7 @@ func TestController_PostManualCheckin(t *testing.T) {
 	})
 
 	t.Run("missing first name", func(t *testing.T) {
-		req := httptest.NewRequest("POST", "/v1/checkins/manual-checkins", bytes.NewBufferString("{\"last_name\":\"zeta\"}"))
+		req := httptest.NewRequest(http.MethodPost, "/v1/checkins/manual-checkins", bytes.NewBufferString("{\"last_name\":\"zeta\"}"))
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := app.Test(req)
 		require.NoError(t, err)
@@ -103,7 +104,7 @@ func TestController_PostManualCheckin(t *testing.T) {
 	})
 
 	t.Run("missing last name", func(t *testing.T) {
-		req := httptest.NewRequest("POST", "/v1/checkins/manual-checkins", bytes.NewBufferString("{\"first_name\":\"jane\"}"))
+		req := httptest.NewRequest(http.MethodPost, "/v1/checkins/manual-checkins", bytes.NewBufferString("{\"first_name\":\"jane\"}"))
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := app.Test(req)
 		require.NoError(t, err)
@@ -113,7 +114,7 @@ func TestController_PostManualCheckin(t *testing.T) {
 	t.Run("whitespace first name maps to 400 via ErrInvalidManualCheckin", func(t *testing.T) {
 		payload := map[string]any{"first_name": "   ", "last_name": "zeta"}
 		body, _ := json.Marshal(payload)
-		req := httptest.NewRequest("POST", "/v1/checkins/manual-checkins", bytes.NewBuffer(body))
+		req := httptest.NewRequest(http.MethodPost, "/v1/checkins/manual-checkins", bytes.NewBuffer(body))
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := app.Test(req)
 		require.NoError(t, err)
@@ -123,7 +124,7 @@ func TestController_PostManualCheckin(t *testing.T) {
 	t.Run("whitespace last name maps to 400 via ErrInvalidManualCheckin", func(t *testing.T) {
 		payload := map[string]any{"first_name": "jane", "last_name": "   "}
 		body, _ := json.Marshal(payload)
-		req := httptest.NewRequest("POST", "/v1/checkins/manual-checkins", bytes.NewBuffer(body))
+		req := httptest.NewRequest(http.MethodPost, "/v1/checkins/manual-checkins", bytes.NewBuffer(body))
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := app.Test(req)
 		require.NoError(t, err)
@@ -166,7 +167,7 @@ func TestController_GetManualCheckins(t *testing.T) {
 	require.NoError(t, err)
 
 	checkedOutAfter := now.Add(-3 * time.Hour).Format(time.RFC3339)
-	req := httptest.NewRequest("GET", "/v1/checkins/manual-checkins?checked_out_after="+checkedOutAfter, nil)
+	req := httptest.NewRequest(http.MethodGet, "/v1/checkins/manual-checkins?checked_out_after="+checkedOutAfter, nil)
 	req.Header.Set("Accept", "application/json")
 	resp, err := app.Test(req)
 	require.NoError(t, err)
@@ -209,7 +210,7 @@ func TestController_PatchManualCheckedOutConfirmed(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Run("success", func(t *testing.T) {
-		req := httptest.NewRequest("PATCH", "/v1/checkins/manual-checkins/manual-public-1/checked_out_confirmed", bytes.NewBufferString("{\"confirmed\":true}"))
+		req := httptest.NewRequest(http.MethodPatch, "/v1/checkins/manual-checkins/manual-public-1/checked_out_confirmed", bytes.NewBufferString("{\"confirmed\":true}"))
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := app.Test(req)
 		require.NoError(t, err)
@@ -229,7 +230,7 @@ func TestController_PatchManualCheckedOutConfirmed(t *testing.T) {
 	})
 
 	t.Run("not found", func(t *testing.T) {
-		req := httptest.NewRequest("PATCH", "/v1/checkins/manual-checkins/missing/checked_out_confirmed", bytes.NewBufferString("{\"confirmed\":true}"))
+		req := httptest.NewRequest(http.MethodPatch, "/v1/checkins/manual-checkins/missing/checked_out_confirmed", bytes.NewBufferString("{\"confirmed\":true}"))
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := app.Test(req)
 		require.NoError(t, err)
@@ -237,14 +238,14 @@ func TestController_PatchManualCheckedOutConfirmed(t *testing.T) {
 	})
 
 	t.Run("missing content type", func(t *testing.T) {
-		req := httptest.NewRequest("PATCH", "/v1/checkins/manual-checkins/manual-public-1/checked_out_confirmed", bytes.NewBufferString("{\"confirmed\":true}"))
+		req := httptest.NewRequest(http.MethodPatch, "/v1/checkins/manual-checkins/manual-public-1/checked_out_confirmed", bytes.NewBufferString("{\"confirmed\":true}"))
 		resp, err := app.Test(req)
 		require.NoError(t, err)
 		assert.Equal(t, fiber.StatusUnsupportedMediaType, resp.StatusCode)
 	})
 
 	t.Run("unsupported content type", func(t *testing.T) {
-		req := httptest.NewRequest("PATCH", "/v1/checkins/manual-checkins/manual-public-1/checked_out_confirmed", bytes.NewBufferString("{\"confirmed\":true}"))
+		req := httptest.NewRequest(http.MethodPatch, "/v1/checkins/manual-checkins/manual-public-1/checked_out_confirmed", bytes.NewBufferString("{\"confirmed\":true}"))
 		req.Header.Set("Content-Type", "text/plain")
 		resp, err := app.Test(req)
 		require.NoError(t, err)
@@ -252,7 +253,7 @@ func TestController_PatchManualCheckedOutConfirmed(t *testing.T) {
 	})
 
 	t.Run("invalid json", func(t *testing.T) {
-		req := httptest.NewRequest("PATCH", "/v1/checkins/manual-checkins/manual-public-1/checked_out_confirmed", bytes.NewBufferString("{bad"))
+		req := httptest.NewRequest(http.MethodPatch, "/v1/checkins/manual-checkins/manual-public-1/checked_out_confirmed", bytes.NewBufferString("{bad"))
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := app.Test(req)
 		require.NoError(t, err)
@@ -260,7 +261,7 @@ func TestController_PatchManualCheckedOutConfirmed(t *testing.T) {
 	})
 
 	t.Run("missing confirmed field", func(t *testing.T) {
-		req := httptest.NewRequest("PATCH", "/v1/checkins/manual-checkins/manual-public-1/checked_out_confirmed", bytes.NewBufferString("{}"))
+		req := httptest.NewRequest(http.MethodPatch, "/v1/checkins/manual-checkins/manual-public-1/checked_out_confirmed", bytes.NewBufferString("{}"))
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := app.Test(req)
 		require.NoError(t, err)
@@ -296,7 +297,7 @@ func TestController_PatchManualCheckedOut(t *testing.T) {
 
 	t.Run("clear checked out", func(t *testing.T) {
 		body := bytes.NewBufferString("{\"checked_out\":false}")
-		req := httptest.NewRequest("PATCH", "/v1/checkins/manual-checkins/"+created.PublicID+"/checked_out", body)
+		req := httptest.NewRequest(http.MethodPatch, "/v1/checkins/manual-checkins/"+created.PublicID+"/checked_out", body)
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := app.Test(req)
 		require.NoError(t, err)
@@ -311,7 +312,7 @@ func TestController_PatchManualCheckedOut(t *testing.T) {
 
 	t.Run("set checked out", func(t *testing.T) {
 		body := bytes.NewBufferString("{\"checked_out\":true}")
-		req := httptest.NewRequest("PATCH", "/v1/checkins/manual-checkins/"+created.PublicID+"/checked_out", body)
+		req := httptest.NewRequest(http.MethodPatch, "/v1/checkins/manual-checkins/"+created.PublicID+"/checked_out", body)
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := app.Test(req)
 		require.NoError(t, err)
@@ -330,7 +331,7 @@ func TestController_ManualCheckinsPage_ServerRenderedMenu(t *testing.T) {
 	controller := NewController(nil, store)
 	controller.RegisterRoutes(app)
 
-	req := httptest.NewRequest("GET", "/manual-checkins", nil)
+	req := httptest.NewRequest(http.MethodGet, "/manual-checkins", nil)
 	req.Header.Set("Accept", "text/html")
 	resp, err := app.Test(req)
 	require.NoError(t, err)
@@ -390,7 +391,7 @@ func TestManualCheckinsPage_SessionStoreFailureDoesNotCrash(t *testing.T) {
 	controller := NewController(testDB, &errSessionStore{})
 	controller.RegisterRoutes(app)
 
-	req := httptest.NewRequest("GET", "/manual-checkins", nil)
+	req := httptest.NewRequest(http.MethodGet, "/manual-checkins", nil)
 	req.Header.Set("Accept", "text/html")
 	resp, err := app.Test(req)
 	require.NoError(t, err)

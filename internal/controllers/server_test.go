@@ -3,6 +3,7 @@ package controllers
 import (
 	"errors"
 	"io"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -34,7 +35,7 @@ func setupHomeApp() (*fiber.App, *session.Store) {
 
 func getHomeHTML(t *testing.T, app *fiber.App) string {
 	t.Helper()
-	req := httptest.NewRequest("GET", "/", nil)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	resp, err := app.Test(req)
 	require.NoError(t, err)
 	require.Equal(t, fiber.StatusOK, resp.StatusCode)
@@ -86,7 +87,7 @@ func TestHomePage_SessionErrorReturns500(t *testing.T) {
 	app.Use(recover.New())
 	app.Get("/", homePageHandler(&errSessionStore{}))
 
-	req := httptest.NewRequest("GET", "/", nil)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	resp, err := app.Test(req)
 	require.NoError(t, err)
 	assert.Equal(t, fiber.StatusInternalServerError, resp.StatusCode)
