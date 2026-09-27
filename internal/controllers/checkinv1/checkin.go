@@ -203,14 +203,20 @@ func sendCheckoutsJSON(c *fiber.Ctx, payload CheckoutsResponse) error {
 	// no-cache (not no-store) so the browser keeps the body and revalidates it
 	// on the next poll instead of refetching every time.
 	c.Set(fiber.HeaderCacheControl, "no-cache")
-	c.Set(fiber.HeaderVary, fiber.HeaderAcceptEncoding)
+	// Vary on Accept-Encoding because compression re-encodes the body, and on
+	// Accept because this route content-negotiates: the same path serves HTML
+	// or this payload depending on the request's Accept header.
+	c.Vary(fiber.HeaderAcceptEncoding, fiber.HeaderAccept)
 	c.Set(fiber.HeaderETag, etag)
 
 	if etagMatches(c.Get(fiber.HeaderIfNoneMatch), etag) {
 		return c.SendStatus(fiber.StatusNotModified)
 	}
 
-	return c.Type(fiber.MIMEApplicationJSON).Send(body)
+	// Set the content type directly rather than via c.Type, which treats its
+	// argument as a file extension and would fall back to octet-stream.
+	c.Set(fiber.HeaderContentType, fiber.MIMEApplicationJSON)
+	return c.Send(body)
 }
 
 // etagMatches reports whether an If-None-Match header covers the current etag.

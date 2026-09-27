@@ -335,8 +335,10 @@ func TestController_Checkouts_conditionalPolling(t *testing.T) {
 			"the 3s poll can only revalidate if the response carries an ETag")
 		assert.Equal(t, "no-cache", resp.Header.Get("Cache-Control"),
 			"no-cache stores the body but forces revalidation; no-store would defeat the ETag")
-		assert.Equal(t, "Accept-Encoding", resp.Header.Get("Vary"),
+		assert.Contains(t, resp.Header.Get("Vary"), fiber.HeaderAcceptEncoding,
 			"the body varies once compression is applied")
+		assert.Contains(t, resp.Header.Get("Vary"), fiber.HeaderAccept,
+			"this route content-negotiates on Accept, so that is a selection variable too")
 	})
 
 	t.Run("matching validator returns 304 with no body", func(t *testing.T) {
@@ -373,6 +375,14 @@ func TestController_Checkouts_conditionalPolling(t *testing.T) {
 		require.NoError(t, json.NewDecoder(after.Body).Decode(&payload))
 		assert.Len(t, payload.Checkins, 1)
 		assert.Equal(t, "jamie", payload.Checkins[0].FirstName)
+	})
+
+	t.Run("200 declares a JSON content type", func(t *testing.T) {
+		resp := poll(t, "")
+		defer resp.Body.Close()
+		require.Equal(t, fiber.StatusOK, resp.StatusCode)
+		assert.Equal(t, fiber.MIMEApplicationJSON, resp.Header.Get("Content-Type"),
+			"the poll is a JSON API; anything sniffing the content type depends on this")
 	})
 
 	t.Run("HTML branch is unaffected", func(t *testing.T) {

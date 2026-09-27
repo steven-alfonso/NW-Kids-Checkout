@@ -105,6 +105,61 @@ func TestCompress(t *testing.T) {
 			"the logo is a base64 PNG inside an SVG; compressing it burns CPU for no gain")
 	})
 
+	t.Run("skips the root-mounted icons", func(t *testing.T) {
+		// These are served from img/ but registered at the route root, so a
+		// /static/img/ prefix check misses them. Their content type is
+		// application/octet-stream, which fasthttp treats as compressible.
+		for _, path := range []string{"/favicon.ico", "/apple-touch-icon.png", "/apple-touch-icon-precomposed.png"} {
+			t.Run(path, func(t *testing.T) {
+				app := newApp()
+				// Mirror the real handlers, which call c.Type("image/png") /
+				// c.Type("image/x-icon"). c.Type treats its argument as a file
+				// extension, so these land on application/octet-stream, which
+				// fasthttp does consider compressible.
+				app.Get(path, func(c *fiber.Ctx) error {
+					if strings.HasSuffix(path, ".ico") {
+						c.Type("image/x-icon")
+					} else {
+						c.Type("image/png")
+					}
+					return c.SendString(payload)
+				})
+
+				req := httptest.NewRequest("GET", path, nil)
+				req.Header.Set("Accept-Encoding", "gzip")
+				resp, err := app.Test(req)
+				require.NoError(t, err)
+				defer resp.Body.Close()
+
+				assert.Empty(t, resp.Header.Get("Content-Encoding"),
+					"icons are already-compressed raster; gzip makes the PNG larger and burns CPU")
+			})
+		}
+	})
+
+	t.Run("leaves a websocket upgrade alone", func(t *testing.T) {
+		app := newApp()
+		app.Get("/ws", func(c *fiber.Ctx) error {
+			// Stand in for the hijack: the upgrade handler writes to the raw
+			// connection, so the response must not be re-encoded underneath it.
+			c.Set("Upgrade", "websocket")
+			c.Set("Connection", "Upgrade")
+			return c.Status(fiber.StatusSwitchingProtocols).SendString(payload)
+		})
+
+		req := httptest.NewRequest("GET", "/ws", nil)
+		req.Header.Set("Accept-Encoding", "gzip")
+		req.Header.Set("Connection", "Upgrade")
+		req.Header.Set("Upgrade", "websocket")
+		resp, err := app.Test(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		assert.Equal(t, fiber.StatusSwitchingProtocols, resp.StatusCode)
+		assert.Empty(t, resp.Header.Get("Content-Encoding"),
+			"compressing a hijacked connection would corrupt the websocket frames")
+	})
+
 	t.Run("sends nothing compressed when the client cannot accept it", func(t *testing.T) {
 		app := newApp()
 		app.Get("/data", func(c *fiber.Ctx) error {
@@ -123,7 +178,7 @@ func TestCompress(t *testing.T) {
 		assert.Contains(t, decoded, "sam")
 	})
 
-	t.Run("still returns a correct body for a 304", func(t *testing.T) {
+	t.Run("a 304 keeps its validator and gains no encoding", func(t *testing.T) {
 		app := newApp()
 		app.Get("/data", func(c *fiber.Ctx) error {
 			c.Set(fiber.HeaderETag, `W/"abc"`)
@@ -143,5 +198,10 @@ func TestCompress(t *testing.T) {
 		require.Equal(t, fiber.StatusNotModified, resp.StatusCode)
 		assert.Equal(t, `W/"abc"`, resp.Header.Get("ETag"),
 			"the poll relies on this header surviving to keep revalidating")
+		assert.Empty(t, resp.Header.Get("Content-Encoding"),
+			"a bodyless 304 must not claim to be encoded")
+		body, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		assert.Empty(t, body, "a 304 carries no body")
 	})
 }
