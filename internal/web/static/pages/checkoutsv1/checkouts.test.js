@@ -780,7 +780,9 @@ describe('checkoutsv1/checkouts', () => {
         const child = overdueChild('a', 9);
         w.__test.setChildrenData([child]);
         w.updateUI();
-        w.updateOverdueUI();
+        // The drawer only renders while open, and a child can only be confirmed
+        // from it while it is open.
+        w.openOverdueSheet();
 
         const mainPill = w.document.querySelector('#children-list .child-time[data-child-id="pc:a"]');
         const sheetPill = w.document.querySelector('#overdue-sheet-list .child-time[data-child-id="pc:a"]');
@@ -799,6 +801,85 @@ describe('checkoutsv1/checkouts', () => {
         const updatedMainPill = w.document.querySelector('#children-list .child-time[data-child-id="pc:a"]');
         expect(updatedMainPill.className).toContain('bg-gray-400');
         expect(updatedMainPill.className).not.toContain('bg-red-500');
+    });
+
+    describe('overdue drawer rendering', () => {
+        function drawerWindow() {
+            return overdueBadgeWindow();
+        }
+
+        function sheetRows(w) {
+            return w.document.querySelectorAll('#overdue-sheet-list > div');
+        }
+
+        async function readyWindow(children) {
+            const w = drawerWindow();
+            w.document.dispatchEvent(new w.Event('DOMContentLoaded'));
+            await new Promise(r => setTimeout(r, 10));
+            w.__test.setChildrenData(children);
+            w.updateUI();
+            return w;
+        }
+
+        it('leaves the overdue drawer untouched while it is closed', async () => {
+            const w = await readyWindow([overdueChild('a', 6), overdueChild('b', 7)]);
+            const sheetList = w.document.getElementById('overdue-sheet-list');
+
+            w.updateOverdueUI();
+
+            // The badge is the visible signal while the drawer is closed, so it
+            // must still update...
+            expect(w.document.getElementById('overdue-badge').textContent).toContain('2 overdue');
+            // ...but the hidden drawer must not be rebuilt for an audience of nobody.
+            expect(sheetRows(w).length).toBe(0);
+        });
+
+        it('renders the current overdue set when the drawer is opened', async () => {
+            const w = await readyWindow([overdueChild('a', 6), overdueChild('b', 7)]);
+
+            w.openOverdueSheet();
+
+            expect(sheetRows(w).length).toBe(2);
+        });
+
+        it('reuses existing drawer rows instead of recreating them', async () => {
+            const w = await readyWindow([overdueChild('a', 6), overdueChild('b', 7)]);
+            w.openOverdueSheet();
+            const rowBefore = sheetRows(w)[0];
+
+            // Same data, no change: the row node must survive rather than be
+            // torn down and rebuilt, which is what innerHTML assignment does.
+            w.updateOverdueUI();
+
+            expect(sheetRows(w).length).toBe(2);
+            expect(sheetRows(w)[0]).toBe(rowBefore);
+        });
+
+        it('adds a row when a child becomes overdue while the drawer is open', async () => {
+            const w = await readyWindow([overdueChild('a', 6)]);
+            w.openOverdueSheet();
+            expect(sheetRows(w).length).toBe(1);
+
+            // 'b' ages past the overdue threshold.
+            w.__test.setChildrenData([overdueChild('a', 8), overdueChild('b', 6)]);
+            w.updateOverdueUI();
+
+            expect(sheetRows(w).length).toBe(2);
+        });
+
+        it('drops the row when a child is confirmed while the drawer is open', async () => {
+            const w = await readyWindow([overdueChild('a', 6), overdueChild('b', 7)]);
+            w.openOverdueSheet();
+            expect(sheetRows(w).length).toBe(2);
+
+            w.__test.setChildrenData([
+                { ...overdueChild('a', 6), checked_out_confirmed_at: new Date().toISOString() },
+                overdueChild('b', 7)
+            ]);
+            w.updateOverdueUI();
+
+            expect(sheetRows(w).length).toBe(1);
+        });
     });
 
     it('refetches and reseeds the flash baseline after re-selecting a group', async () => {

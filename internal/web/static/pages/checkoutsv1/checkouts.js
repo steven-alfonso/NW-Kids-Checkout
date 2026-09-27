@@ -235,14 +235,35 @@ function getOverdueCount(nowMs) {
     return getOverdueChildren(nowMs).length;
 }
 
+// Signature of everything renderOverdueSheet bakes into a row. The drawer's
+// "N min ago" labels and pill colors are refreshed in place by updateTimes, so
+// they are deliberately absent here: if the row set and its confirmed/group
+// state are unchanged, re-rendering would only reproduce identical markup.
+let lastSheetSignature = null;
+
+function overdueGroupLabel(child) {
+    if (child.location_group_id == null) return 'Unassigned';
+    const g = locationGroups.find((lg) => Number(lg.id) === Number(child.location_group_id));
+    return g ? escapeHtml(g.name) : `Group ${escapeHtml(String(child.location_group_id))}`;
+}
+
+function getOverdueSheetSignature(overdue) {
+    return overdue
+        .map((child) => `${getChildId(child)}:${isChildConfirmed(child) ? 1 : 0}:${overdueGroupLabel(child)}`)
+        .join('|');
+}
+
 function renderOverdueSheet(overdue) {
     if (!dom.overdueSheetList) return;
+    const signature = getOverdueSheetSignature(overdue);
+    if (signature === lastSheetSignature) return;
+    lastSheetSignature = signature;
     if (overdue.length === 0) {
         dom.overdueSheetList.innerHTML = '<div class="text-center py-6 text-sm text-slate-500">No overdue checkouts</div>';
         return;
     }
     const nowMs = Date.now();
-    dom.overdueSheetList.innerHTML = overdue.map((child) => {
+    const markup = overdue.map((child) => {
         const name = `${escapeHtml(child.first_name)} ${escapeHtml(child.last_name)}`;
         const code = child.source === 'manual' ? '---' : escapeHtml(child.security_code || '----');
         const childId = escapeHtml(getChildId(child));
@@ -253,10 +274,7 @@ function renderOverdueSheet(overdue) {
         const checkedOutAtMs = child.checked_out_at_ms ?? getCheckedOutTimestamp(child.checked_out_at);
         const confirmed = isChildConfirmed(child);
         const barColor = getLocationGroupColor(child.location_group_id);
-        const groupLabel = child.location_group_id == null ? 'Unassigned' : (() => {
-            const g = locationGroups.find((lg) => Number(lg.id) === Number(child.location_group_id));
-            return g ? escapeHtml(g.name) : `Group ${escapeHtml(String(child.location_group_id))}`;
-        })();
+        const groupLabel = overdueGroupLabel(child);
         return `
             <div class="bg-white rounded-lg shadow flex overflow-hidden">
                 <div style="background-color:${barColor}; width:6px; flex-shrink:0" aria-hidden="true"></div>
@@ -279,6 +297,9 @@ function renderOverdueSheet(overdue) {
             </div>
         `;
     }).join('');
+    // Keyed morph, same as the main list: unchanged rows keep their DOM nodes so
+    // confirming one child in a long drawer patches a single row.
+    morphChildren(dom.overdueSheetList, markup);
     cacheChildTimeElements(dom.overdueSheetList);
 }
 
@@ -347,11 +368,9 @@ function updateOverdueUI() {
 
     lastOverdueCount = count;
 
-    if (dom.overdueSheet) {
-        renderOverdueSheet(overdue);
-        const countEl = document.getElementById('overdue-sheet-count');
-        if (countEl) countEl.textContent = count > 0 ? `${count} overdue` : 'No overdue';
-    }
+    // Drawer is closed: the badge above is the only visible surface, so leave
+    // the hidden list alone. openOverdueSheet re-renders a fresh snapshot, so
+    // nothing here can be seen stale.
 }
 
 let bodyScrollLock = null;
