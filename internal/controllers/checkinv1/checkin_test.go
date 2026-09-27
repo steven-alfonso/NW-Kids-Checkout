@@ -2,14 +2,17 @@ package checkinv1
 
 import (
 	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
+	"kids-checkin/internal/controllers/middleware"
 	"kids-checkin/internal/db"
 	"kids-checkin/internal/repo/checkin"
 	"kids-checkin/internal/repo/manualcheckin"
@@ -395,6 +398,133 @@ func TestController_Checkouts_conditionalPolling(t *testing.T) {
 		assert.Empty(t, resp.Header.Get("ETag"),
 			"only the poll payload is validated; the page itself is already cache-busted by asset hashing")
 	})
+}
+
+// TestController_Checkouts_compressionIntegration runs the real poll route
+// behind the real compress middleware. Both pieces set Vary and both touch the
+// response body, so they are worth exercising together rather than only in
+// isolation: this is the only test that would notice if the compress
+// middleware stopped being registered in server.go.
+func TestController_Checkouts_compressionIntegration(t *testing.T) {
+	app, store := setupAuthedApp()
+	app.Use(middleware.Compress())
+	testDB, cleanup, err := db.PrepareTestDB()
+	require.NoError(t, err)
+	t.Cleanup(cleanup)
+	NewController(testDB, store).RegisterRoutes(app)
+
+	// Enough children to clear fasthttp's 200-byte compression floor.
+	locRes, err := squirrel.Insert("locations").
+		RunWith(testDB).
+		Columns("name", "planning_center_id", "event_id").
+		Values("nursery", "plloc_ci", 1).
+		ExecContext(t.Context())
+	require.NoError(t, err)
+	locationID, err := locRes.LastInsertId()
+	require.NoError(t, err)
+	first := []string{"sam", "jamie", "robin", "dana", "kai", "morgan", "ellis", "quinn"}
+	last := []string{"alpha", "zeta", "beta", "gamma", "delta", "omega", "kappa", "sigma"}
+	for i := range 30 {
+		_, err := squirrel.Insert("checkins").
+			RunWith(testDB).
+			Columns("planning_center_id", "location_id", "first_name", "last_name", "security_code", "checked_out_at").
+			Values(fmt.Sprintf("plc_ci_%02d", i), locationID, first[i%len(first)], last[i%len(last)], "ABC123", time.Now().UTC()).
+			ExecContext(t.Context())
+		require.NoError(t, err)
+	}
+
+	poll := func(t *testing.T, ifNoneMatch string) *http.Response {
+		t.Helper()
+		req := httptest.NewRequest("GET", "/v1/checkins/checkouts?limit=100", nil)
+		req.Header.Set("Accept", "application/json")
+		req.Header.Set("Accept-Encoding", "gzip")
+		if ifNoneMatch != "" {
+			req.Header.Set("If-None-Match", ifNoneMatch)
+		}
+		resp, err := app.Test(req)
+		require.NoError(t, err)
+		return resp
+	}
+
+	t.Run("poll is compressed and still identifies itself as JSON", func(t *testing.T) {
+		resp := poll(t, "")
+		defer resp.Body.Close()
+		require.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+		assert.Equal(t, "gzip", resp.Header.Get("Content-Encoding"),
+			"the poll is the largest recurring transfer; it must be compressed")
+		assert.Equal(t, fiber.MIMEApplicationJSON, resp.Header.Get("Content-Type"))
+
+		// app.Test reads the response with http.ReadResponse, which does no
+		// decompression, so this is the byte count that crosses the wire.
+		compressed, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		zr, err := gzip.NewReader(bytes.NewReader(compressed))
+		require.NoError(t, err)
+		decoded, err := io.ReadAll(zr)
+		require.NoError(t, err)
+		assert.Contains(t, string(decoded), "sam")
+
+		var payload CheckoutsResponse
+		require.NoError(t, json.Unmarshal(decoded, &payload))
+		assert.Len(t, payload.Checkins, 30)
+	})
+
+	t.Run("Vary is not duplicated by the compress middleware", func(t *testing.T) {
+		resp := poll(t, "")
+		defer resp.Body.Close()
+		assert.Equal(t, []string{"Accept-Encoding, Accept"}, resp.Header.Values("Vary"),
+			"the handler sets Vary and fasthttp also sets it; it must not be listed twice")
+	})
+
+	t.Run("revalidation through the compress middleware returns an empty 304", func(t *testing.T) {
+		first := poll(t, "")
+		etag := first.Header.Get("ETag")
+		require.NotEmpty(t, etag)
+		first.Body.Close()
+
+		second := poll(t, etag)
+		defer second.Body.Close()
+		require.Equal(t, fiber.StatusNotModified, second.StatusCode)
+		assert.Empty(t, second.Header.Get("Content-Encoding"),
+			"a bodyless 304 must not claim to be encoded")
+		body, err := io.ReadAll(second.Body)
+		require.NoError(t, err)
+		assert.Empty(t, body)
+	})
+}
+
+func Test_etagMatches(t *testing.T) {
+	const etag = `W/"abc123"`
+
+	tests := []struct {
+		name        string
+		ifNoneMatch string
+		want        bool
+	}{
+		{"absent", "", false},
+		{"exact weak match", `W/"abc123"`, true},
+		{"strong form of the same opaque tag", `"abc123"`, true},
+		{"one of several", `"other", W/"abc123"`, true},
+		{"several, match last", `"a", "b", W/"abc123"`, true},
+		{"wildcard", "*", true},
+		{"wildcard with padding", " * ", true},
+		{"padding around the tag", `  W/"abc123"  `, true},
+		{"trailing comma", `W/"abc123",`, true},
+		{"different tag", `W/"other"`, false},
+		{"prefix of the tag", `W/"abc12"`, false},
+		{"tag with trailing junk", `"abc123"junk`, false},
+		{"unquoted", `abc123`, false},
+		{"quoted wildcard", `"*"`, false},
+		{"lowercase weak prefix is a different token", `w/"abc123"`, false},
+		{"uppercase hex does not match", `W/"ABC123"`, false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, etagMatches(tc.ifNoneMatch, etag))
+		})
+	}
 }
 
 func TestController_Checkouts_filter_validation(t *testing.T) {
