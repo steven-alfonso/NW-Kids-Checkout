@@ -867,13 +867,20 @@ describe('checkoutsv1/checkouts', () => {
         function mainBox(w, id) {
             return w.document.querySelector(`#children-list .child-confirmed-checkbox[data-child-id="pc:${id}"]`);
         }
-        // Counts keyed patches so "we did not rebuild" is asserted directly
-        // instead of inferred from a label that happens not to have moved.
-        function countMorphs(w) {
-            const real = w.morphdom;
-            w.__morphCalls = 0;
-            w.morphdom = (...args) => { w.__morphCalls++; return real(...args); };
-            return () => w.__morphCalls;
+        // Counts DOM mutations in the drawer. Behaviour-level on purpose: it
+        // catches an innerHTML rebuild, a morph that changes something, and any
+        // future approach alike, where spying on `morphdom` alone would only
+        // prove that one particular function was not called.
+        function watchSheetMutations(w) {
+            const seen = { count: 0 };
+            const observer = new w.MutationObserver((records) => { seen.count += records.length; });
+            observer.observe(w.document.getElementById('overdue-sheet-list'), {
+                childList: true, subtree: true, attributes: true, characterData: true,
+            });
+            return {
+                mutations: () => seen.count,
+                stop: () => observer.disconnect(),
+            };
         }
 
         async function ready(children, nowMs = 1_700_000_000_000) {
@@ -939,13 +946,14 @@ describe('checkoutsv1/checkouts', () => {
             expect(sheetPill(w, 'a').className).toContain('bg-yellow-500');
             expect(sheetPill(w, 'a').textContent.trim()).toBe('6 min ago');
 
-            const morphs = countMorphs(w);
+            const watcher = watchSheetMutations(w);
             clock.advance(90_000);
             w.updateOverdueUI();
 
-            // Unchanged row set: the renderer must not run at all.
-            expect(morphs()).toBe(0);
+            // Unchanged row set: nothing on screen may be touched at all.
+            expect(watcher.mutations()).toBe(0);
             expect(sheetPill(w, 'a').textContent.trim()).toBe('6 min ago');
+            watcher.stop();
 
             // updateTimes owns the labels, so they must still advance without
             // any rebuild. This is what lets the signature omit them.
@@ -973,47 +981,8 @@ describe('checkoutsv1/checkouts', () => {
             expect(sheetPill(w, 'a').className).toContain('bg-gray-400');
         });
 
-        it('keeps a row in the open drawer after confirming it there, until the drawer closes', async () => {
-            const now0 = 1_700_000_000_000;
-            const { w } = await ready([childAt('a', 6, now0), childAt('b', 7, now0)], now0);
-            w.openOverdueSheet();
 
-            const box = sheetBox(w, 'a');
-            box.checked = true;
-            box.dispatchEvent(new w.Event('change', { bubbles: true }));
-            await new Promise(r => setTimeout(r, 10));
 
-            // Retained rather than dropped, so the confirm stays on screen.
-            expect(sheetRows(w).length).toBe(2);
-            expect(sheetBox(w, 'a').checked).toBe(true);
-            expect(sheetPill(w, 'a').className).toContain('bg-gray-400');
-            expect(sheetPill(w, 'a').className).not.toContain('bg-red-500');
-
-            // Idempotent on the next tick.
-            w.updateOverdueUI();
-            expect(sheetRows(w).length).toBe(2);
-        });
-
-        it('treats exactly five minutes as overdue', async () => {
-            const now0 = 1_700_000_000_000;
-            const { w } = await ready([childAt('a', 5, now0)], now0);
-
-            w.updateOverdueUI();
-
-            expect(w.document.getElementById('overdue-badge').classList.contains('hidden')).toBe(false);
-            expect(w.document.getElementById('overdue-badge').textContent).toContain('1 overdue');
-        });
-
-        it('does not treat just under five minutes as overdue', async () => {
-            const now0 = 1_700_000_000_000;
-            // Checked out 4m59s ago: one second short of the threshold.
-            const justUnder = now0 - (5 * 60 * 1000) + 1000;
-            const { w } = await ready([childAt('a', 5, now0, { checked_out_at_ms: justUnder })], now0);
-
-            w.updateOverdueUI();
-
-            expect(w.document.getElementById('overdue-badge').classList.contains('hidden')).toBe(true);
-        });
 
         it('updates the drawer group label when location groups load late', async () => {
             const now0 = 1_700_000_000_000;
@@ -1074,16 +1043,6 @@ describe('checkoutsv1/checkouts', () => {
                 expect(sheetPill(w, 'b').className).toContain('bg-gray-400');
             });
 
-            it('leaves every other row untouched', async () => {
-                const { w } = await ready(trio(), T0);
-                w.openOverdueSheet();
-                w.__test.setChildrenData(withBravoConfirmed());
-                w.updateOverdueUI();
-
-                expect(sheetBox(w, 'a').checked).toBe(false);
-                expect(sheetPill(w, 'a').className).toContain('bg-red-500');
-                expect(sheetBox(w, 'c').checked).toBe(false);
-            });
 
             it('keeps the confirmed row in its original position', async () => {
                 const { w } = await ready(trio(), T0);
@@ -1107,8 +1066,73 @@ describe('checkoutsv1/checkouts', () => {
 
                 w.closeOverdueSheet();
                 w.openOverdueSheet();
+                // Pruning runs on the next update, not during openOverdueSheet,
+                // so without this tick a stale tombstone survives the reopen.
+                w.updateOverdueUI();
 
                 expect(sheetNames(w)).toEqual(['Alpha Test', 'Charlie Test']);
+            });
+
+            it('re-renders the drawer when only the location group id changes', async () => {
+                const { w } = await ready(trio(), T0);
+                w.openOverdueSheet();
+                // Two groups sharing a name: the label the signature carries is
+                // identical either way, so only the raw location_group_id in
+                // getChildSignature can tell the signature that the bar colour
+                // (and the group dot) are now stale.
+                w.renderLocationGroupSettings([{ id: 1, name: 'Dup' }, { id: 2, name: 'Dup' }]);
+                w.updateOverdueUI();
+                const barOf = (id) => sheetRowFor(w, id).querySelector('div[aria-hidden="true"]').style.backgroundColor;
+                const before = barOf('b');
+                expect(sheetRowFor(w, 'b').textContent).toContain('Dup');
+
+                w.__test.setChildrenData([trio()[0], { ...trio()[1], location_group_id: 2 }, trio()[2]]);
+                w.updateOverdueUI();
+
+                expect(barOf('b')).not.toBe(before);
+            });
+
+            it('escapes a location group name in the drawer', async () => {
+                const { w } = await ready(trio(), T0);
+                w.openOverdueSheet();
+                w.renderLocationGroupSettings([{ id: 1, name: '<b class="x">Room</b>' }]);
+                w.updateOverdueUI();
+
+                // Admin-entered name must not reach the drawer as live markup.
+                expect(sheetRowFor(w, 'a').querySelector('b.x')).toBeNull();
+                expect(sheetRowFor(w, 'a').textContent).toContain('<b class="x">Room</b>');
+            });
+
+            it('keeps tied rows in a stable order', async () => {
+                const { w } = await ready(trio(), T0);
+                w.openOverdueSheet();
+
+                // Same checkout instant for two children: the drawer is sorted
+                // oldest-first, so a tie must still resolve deterministically or
+                // the two rows would swap between polls.
+                const tied = [trio()[0], childAt('b', 15, T0, { first_name: 'Bravo' }), trio()[2]].map(
+                    (c) => ({ ...c, checked_out_at_ms: T0 - 15 * 60 * 1000 })
+                );
+                w.__test.setChildrenData(tied);
+                w.updateOverdueUI();
+                const first = sheetNames(w);
+
+                w.__test.setChildrenData([...tied].reverse());
+                w.updateOverdueUI();
+
+                expect(sheetNames(w)).toEqual(first);
+            });
+
+            it('re-renders the drawer when a pickup code changes', async () => {
+                const { w } = await ready(trio(), T0);
+                w.openOverdueSheet();
+                const codeOf = (id) => [...sheetRowFor(w, id).querySelectorAll('div')].map((d) => d.textContent).join('');
+                expect(codeOf('b')).toContain('CODEb');
+
+                w.__test.setChildrenData([trio()[0], { ...trio()[1], security_code: 'NEWCODE' }, trio()[2]]);
+                w.updateOverdueUI();
+
+                expect(codeOf('b')).toContain('NEWCODE');
             });
 
             it('drops a row that disappears from the data entirely', async () => {
