@@ -140,3 +140,42 @@ func TestFilteredFSBlocksHTML(t *testing.T) {
 		require.Equal(t, http.StatusOK, resp.StatusCode)
 	})
 }
+
+// TestLogoRungsServe guards the picture ladder used on every page. The
+// extension allowlist silently 404s anything unlisted, so a new rung that is
+// not added there would fail only in the browser.
+func TestLogoRungsServe(t *testing.T) {
+	app := fiber.New()
+	app.Use("/static", filesystem.New(filesystem.Config{
+		Root:       http.FS(NewFilteredFS()),
+		PathPrefix: "",
+		Browse:     true,
+	}))
+
+	for _, tc := range []struct {
+		file      string
+		wantType  string
+		sizeLimit int64
+	}{
+		{"NWKids-logo-320.avif", "image/avif", 20_000},
+		{"NWKids-logo-320.webp", "image/webp", 35_000},
+		{"NWKids-logo-320.png", "image/png", 60_000},
+	} {
+		t.Run(tc.file, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/static/img/"+tc.file, nil)
+			resp, err := app.Test(req)
+			require.NoError(t, err)
+			require.Equal(t, http.StatusOK, resp.StatusCode,
+				"%s must pass the extension allowlist or every page 404s its logo", tc.file)
+
+			ct := resp.Header.Get("Content-Type")
+			require.Equal(t, tc.wantType, ct)
+
+			body, err := io.ReadAll(resp.Body)
+			require.NoError(t, err)
+			require.NoError(t, resp.Body.Close())
+			require.Less(t, int64(len(body)), tc.sizeLimit,
+				"%s regressed in size; the original SVG this replaced was 265042 bytes", tc.file)
+		})
+	}
+}

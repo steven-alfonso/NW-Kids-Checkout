@@ -69,7 +69,11 @@
             
             <div class="flex justify-center items-center mb-6">
                 <a href="/">
-                    <img src="/static/img/NWKids-logo.svg" alt="NWKids Logo" class="h-20 md:h-32 w-auto">
+                    <picture>
+                      <source type="image/avif" srcset="/static/img/NWKids-logo-320.avif">
+                      <source type="image/webp" srcset="/static/img/NWKids-logo-320.webp">
+                      <img src="/static/img/NWKids-logo-320.png" alt="NWKids Logo" class="h-20 md:h-32 w-auto">
+                    </picture>
                 </a>
                 <span class="text-3xl md:text-5xl font-bold ml-2">Checkout</span>
             </div>
