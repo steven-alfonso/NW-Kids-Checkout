@@ -910,15 +910,23 @@ describe('checkoutsv1/checkouts', () => {
             expect(sheetPill(w, 'a')).not.toBeNull();
         });
 
-        it('reuses existing drawer rows instead of recreating them', async () => {
-            const { w } = await ready([childAt('a', 6, 1_700_000_000_000), childAt('b', 7, 1_700_000_000_000)]);
+        it('reuses untouched drawer rows when a sibling row does change', async () => {
+            const now0 = 1_700_000_000_000;
+            const { w } = await ready([childAt('a', 6, now0), childAt('b', 7, now0)], now0);
             w.openOverdueSheet();
-            const rowBefore = sheetRows(w)[0];
+            // Grab 'b' by identity, and confirm the drawer is ordered oldest
+            // first so the row we mutate is not the one we assert on.
+            expect(sheetRows(w).length).toBe(2);
+            const untouchedRow = sheetRowFor(w, 'b');
 
+            // Rename 'a' so the signature changes and a re-render actually runs.
+            w.__test.setChildrenData([childAt('a', 6, now0, { first_name: 'Renamed' }), childAt('b', 7, now0)]);
             w.updateOverdueUI();
 
-            expect(sheetRows(w).length).toBe(2);
-            expect(sheetRows(w)[0]).toBe(rowBefore);
+            expect(sheetRowFor(w, 'a').textContent).toContain('Renamed');
+            // A keyed morph leaves the untouched row's DOM node in place; an
+            // innerHTML assignment would have replaced it.
+            expect(sheetRowFor(w, 'b')).toBe(untouchedRow);
         });
 
         it('does not rebuild the drawer when only time has passed', async () => {
