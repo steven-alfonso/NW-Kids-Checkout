@@ -19,7 +19,6 @@ const FLASH_RESET_DELAY_MS = 4000;
 const OVERDUE_MINUTES = 5;
 let lastOverdueCount = 0;
 let isOverdueSheetOpen = false;
-let overdueSheetNeedsRefresh = false;
 const overdueRetainedIds = new Set();
 const confirmationOverrides = new Map();
 const dom = {
@@ -166,6 +165,7 @@ function getChildSignature(child) {
         child.planning_center_id || '',
         child.public_id || '',
         child.checked_out_at || '',
+        child.checked_out_at_ms ?? '',
         child.first_name || '',
         child.last_name || '',
         child.security_code || '',
@@ -229,10 +229,6 @@ function getOverdueChildren(nowMs) {
         if (isChildConfirmed(child)) return false;
         return now - child.checked_out_at_ms >= cutoff;
     }).sort((a, b) => (a.checked_out_at_ms - b.checked_out_at_ms) || compareByCheckoutId(a, b));
-}
-
-function getOverdueCount(nowMs) {
-    return getOverdueChildren(nowMs).length;
 }
 
 // Signature over everything renderOverdueSheet bakes into a row, so that equal
@@ -309,8 +305,11 @@ function renderOverdueSheet(overdue) {
             </div>
         `;
     }).join('');
-    // Keyed morph, same as the main list: unchanged rows keep their DOM nodes so
-    // confirming one child in a long drawer patches a single row.
+    // Morph rather than replace, same as the main list: unchanged rows keep
+    // their DOM nodes, so confirming one child in a long drawer patches a single
+    // row. The rows carry no id, so morphdom aligns them positionally -- sound
+    // here because a new arrival always appends at the tail (the drawer is
+    // oldest-first) and retentions never reorder.
     morphChildren(dom.overdueSheetList, markup);
     cacheChildTimeElements(dom.overdueSheetList);
 }
@@ -337,7 +336,6 @@ function updateOverdueUI() {
         } else if (isOverdueSheetOpen) {
             // Defer hiding the badge and auto-closing the drawer while the
             // sheet is open — keep confirmed rows visible until close.
-            overdueSheetNeedsRefresh = true;
         } else {
             dom.overdueBadge.classList.add('hidden');
             closeOverdueSheet();
@@ -354,7 +352,6 @@ function updateOverdueUI() {
         if (!childrenData.length) return;
 
         if (count !== lastOverdueCount) {
-            overdueSheetNeedsRefresh = true;
         }
         lastOverdueCount = count;
 
@@ -436,7 +433,6 @@ function unlockBodyScroll() {
 function openOverdueSheet() {
     if (!dom.overdueSheet || !dom.overdueSheetBackdrop) return;
     isOverdueSheetOpen = true;
-    overdueSheetNeedsRefresh = false;
     overdueRetainedIds.clear();
     // Fresh snapshot on every open so prior confirms are reflected
     const overdue = getOverdueChildren();
@@ -464,10 +460,6 @@ function closeOverdueSheet() {
     }
     overdueRetainedIds.clear();
     drawerRenderedIds = new Set();
-    if (overdueSheetNeedsRefresh && !isOverdueSheetOpen) {
-        overdueSheetNeedsRefresh = false;
-        updateOverdueUI();
-    }
 }
 
 function syncConfirmedStates() {
@@ -716,7 +708,6 @@ if (typeof window !== 'undefined') {
     window.syncLocationGroupUIFromURL = syncLocationGroupUIFromURL;
     window.fetchLocationGroups = fetchLocationGroups;
     window.getOverdueChildren = getOverdueChildren;
-    window.getOverdueCount = getOverdueCount;
     window.updateOverdueUI = updateOverdueUI;
     window.jiggleOverdueBadge = jiggleOverdueBadge;
     window.openOverdueSheet = openOverdueSheet;
@@ -1181,10 +1172,12 @@ document.addEventListener('DOMContentLoaded', function () {
         const source = checkbox.dataset.source;
         const label = checkbox.closest('[data-confirmed-label]');
         const previousConfirmed = label?.dataset.confirmedState === 'confirmed';
-        // Retain confirmed overdue rows in the drawer until it closes.
-        if (wasOverdue && !previousConfirmed && checkbox.checked && isOverdueSheetOpen) {
-            overdueRetainedIds.add(childId);
-        } else if (!checkbox.checked) {
+        // Un-ticking drops the row from the retained set immediately. The
+        // seeding in updateOverdueUI re-adds every rendered id on every tick, so
+        // this delete is the only thing that can un-retain a row before the
+        // retention loop notices it is live overdue again. (The matching *add*
+        // used to live here and is now redundant: the seeding covers it.)
+        if (!checkbox.checked) {
             overdueRetainedIds.delete(childId);
         }
         updateConfirmedIcon(checkbox);
