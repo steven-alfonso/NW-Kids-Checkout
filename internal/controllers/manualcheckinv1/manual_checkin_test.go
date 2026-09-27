@@ -375,7 +375,13 @@ func (e *errSessionStore) Get(c *fiber.Ctx) (*session.Session, error) {
 func (e *errSessionStore) Reset() error           { return nil }
 func (e *errSessionStore) Delete(id string) error { return nil }
 
-func TestManualCheckinsPage_SessionErrorReturns500(t *testing.T) {
+// The /manual-checkins route sits behind authRequired, so a failing session
+// store panics inside the middleware (AuthRequired discards the error from
+// sessionStore.Get) and recover.New converts it to a 500. This asserts the app
+// does not crash the process; ManualCheckinsPage's own session-error branch is
+// not what answers here.
+// TODO(auth): see TestCheckouts_SessionStoreFailureDoesNotCrash in checkinv1.
+func TestManualCheckinsPage_SessionStoreFailureDoesNotCrash(t *testing.T) {
 	app := fiber.New()
 	app.Use(recover.New())
 	testDB, cleanup, err := db.PrepareTestDB()

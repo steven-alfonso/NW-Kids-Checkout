@@ -654,13 +654,13 @@ func TestController_Checkouts_location_group_filtering(t *testing.T) {
 		assert.Len(t, payload.ManualCheckins, 0)
 	})
 
-	t.Run("single group filter still returns manual checkins", func(t *testing.T) {
+	// A populated group filter and include_unassigned both take the same
+	// "filter applies to checkins only" branch, so assert them together.
+	t.Run("checkin-only filters leave manual checkins visible", func(t *testing.T) {
 		_, payload := idsFor(t, "/v1/checkins/checkouts?location_group_id=10")
 		assert.Len(t, payload.ManualCheckins, 1)
-	})
 
-	t.Run("include unassigned only returns manual checkins", func(t *testing.T) {
-		_, payload := idsFor(t, "/v1/checkins/checkouts?include_unassigned=1")
+		_, payload = idsFor(t, "/v1/checkins/checkouts?include_unassigned=1")
 		assert.Len(t, payload.ManualCheckins, 1)
 	})
 }
@@ -689,7 +689,14 @@ func (e *errSessionStore) Get(c *fiber.Ctx) (*session.Session, error) {
 func (e *errSessionStore) Reset() error           { return nil }
 func (e *errSessionStore) Delete(id string) error { return nil }
 
-func TestCheckouts_SessionErrorReturns500(t *testing.T) {
+// A session store that errors returns a nil *session.Session. AuthRequired
+// discards that error (sess, _ := sessionStore.Get(c)) and then calls
+// sess.Get, so the request dies in the middleware and recover.New turns the
+// panic into a 500. This asserts the app does not crash the process on a
+// session-store failure; the handler's own 500 branch is never reached.
+// TODO(auth): AuthRequired should handle the error from sessionStore.Get and
+// return a 500 itself, at which point this should assert that body instead.
+func TestCheckouts_SessionStoreFailureDoesNotCrash(t *testing.T) {
 	app := fiber.New()
 	app.Use(recover.New())
 	testDB, cleanup, err := db.PrepareTestDB()
@@ -698,19 +705,9 @@ func TestCheckouts_SessionErrorReturns500(t *testing.T) {
 	controller := NewController(testDB, &errSessionStore{})
 	controller.RegisterRoutes(app)
 
-	t.Run("json checkouts returns 500 on session error via auth panic", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/v1/checkins/checkouts", nil)
-		req.Header.Set("Accept", "application/json")
-		resp, err := app.Test(req)
-		require.NoError(t, err)
-		assert.Equal(t, fiber.StatusInternalServerError, resp.StatusCode)
-	})
-
-	t.Run("html checkouts returns 500 on session error via auth panic", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/v1/checkins/checkouts", nil)
-		req.Header.Set("Accept", "text/html")
-		resp, err := app.Test(req)
-		require.NoError(t, err)
-		assert.Equal(t, fiber.StatusInternalServerError, resp.StatusCode)
-	})
+	req := httptest.NewRequest("GET", "/v1/checkins/checkouts", nil)
+	req.Header.Set("Accept", "application/json")
+	resp, err := app.Test(req)
+	require.NoError(t, err)
+	assert.Equal(t, fiber.StatusInternalServerError, resp.StatusCode)
 }

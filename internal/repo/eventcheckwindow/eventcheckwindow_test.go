@@ -122,10 +122,19 @@ func Test_sqliteRepo_ListCheckWindows(t *testing.T) {
 		ExecContext(t.Context())
 	require.NoError(t, err)
 
+	// A second window for the same event so a positive Limit can be observed
+	// truncating the result set.
+	_, err = squirrel.Insert("event_check_windows").
+		RunWith(testDB).
+		Columns("event_id", "start_day_of_week", "start_time", "end_day_of_week", "end_time", "timezone").
+		Values(eventID, 3, "18:00", 3, "20:00", "America/Los_Angeles").
+		ExecContext(t.Context())
+	require.NoError(t, err)
+
 	t.Run("list all", func(t *testing.T) {
 		windows, err := windowRepo.ListCheckWindows(t.Context(), Filter{})
 		require.NoError(t, err)
-		assert.Len(t, windows, 1)
+		assert.Len(t, windows, 2)
 	})
 
 	t.Run("filter by id", func(t *testing.T) {
@@ -139,11 +148,11 @@ func Test_sqliteRepo_ListCheckWindows(t *testing.T) {
 	t.Run("filter by event id", func(t *testing.T) {
 		windows, err := windowRepo.ListCheckWindows(t.Context(), Filter{EventID: eventID})
 		require.NoError(t, err)
-		assert.Len(t, windows, 1)
+		assert.Len(t, windows, 2)
 	})
 
-	t.Run("filter by limit", func(t *testing.T) {
-		windows, err := windowRepo.ListCheckWindows(t.Context(), Filter{Limit: 0})
+	t.Run("filter by limit truncates", func(t *testing.T) {
+		windows, err := windowRepo.ListCheckWindows(t.Context(), Filter{Limit: 1})
 		require.NoError(t, err)
 		assert.Len(t, windows, 1)
 	})
@@ -181,6 +190,8 @@ func Test_sqliteRepo_CreateCheckWindow(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, created.ID, loaded.ID)
 
+	// The validation rules themselves are covered by Test_validateWindow; this
+	// only pins that CreateCheckWindow routes through it before writing.
 	t.Run("invalid input calls validate", func(t *testing.T) {
 		_, err := windowRepo.CreateCheckWindow(t.Context(), EventCheckWindow{
 			EventID:        eventID,
@@ -190,7 +201,7 @@ func Test_sqliteRepo_CreateCheckWindow(t *testing.T) {
 			EndTime:        "12:00",
 			Timezone:       "America/Los_Angeles",
 		})
-		assert.Error(t, err)
+		require.ErrorContains(t, err, "start_day_of_week must be between 1 and 7")
 	})
 }
 
@@ -246,6 +257,8 @@ func Test_sqliteRepo_UpdateCheckWindow(t *testing.T) {
 		assert.ErrorIs(t, err, repo.ErrNotFound)
 	})
 
+	// Pins that UpdateCheckWindow validates before writing; see Test_validateWindow
+	// for the rules themselves.
 	t.Run("invalid input calls validate", func(t *testing.T) {
 		err := windowRepo.UpdateCheckWindow(t.Context(), EventCheckWindow{
 			ID:             windowID,
@@ -256,7 +269,7 @@ func Test_sqliteRepo_UpdateCheckWindow(t *testing.T) {
 			EndTime:        "13:00",
 			Timezone:       "America/Los_Angeles",
 		})
-		assert.Error(t, err)
+		require.ErrorContains(t, err, "start_day_of_week must be between 1 and 7")
 	})
 }
 
