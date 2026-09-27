@@ -60,7 +60,7 @@ func TestController_PatchCheckedOutConfirmed(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Run("success", func(t *testing.T) {
-		req := httptest.NewRequest("PATCH", "/v1/checkins/plc_1234/checked_out_confirmed", bytes.NewBufferString("{\"confirmed\":true}"))
+		req := httptest.NewRequest(http.MethodPatch, "/v1/checkins/plc_1234/checked_out_confirmed", bytes.NewBufferString("{\"confirmed\":true}"))
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := app.Test(req)
 		require.NoError(t, err)
@@ -79,7 +79,7 @@ func TestController_PatchCheckedOutConfirmed(t *testing.T) {
 	})
 
 	t.Run("not found", func(t *testing.T) {
-		req := httptest.NewRequest("PATCH", "/v1/checkins/missing/checked_out_confirmed", bytes.NewBufferString("{\"confirmed\":true}"))
+		req := httptest.NewRequest(http.MethodPatch, "/v1/checkins/missing/checked_out_confirmed", bytes.NewBufferString("{\"confirmed\":true}"))
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := app.Test(req)
 		require.NoError(t, err)
@@ -87,14 +87,14 @@ func TestController_PatchCheckedOutConfirmed(t *testing.T) {
 	})
 
 	t.Run("missing content type", func(t *testing.T) {
-		req := httptest.NewRequest("PATCH", "/v1/checkins/plc_1234/checked_out_confirmed", bytes.NewBufferString("{\"confirmed\":true}"))
+		req := httptest.NewRequest(http.MethodPatch, "/v1/checkins/plc_1234/checked_out_confirmed", bytes.NewBufferString("{\"confirmed\":true}"))
 		resp, err := app.Test(req)
 		require.NoError(t, err)
 		assert.Equal(t, fiber.StatusUnsupportedMediaType, resp.StatusCode)
 	})
 
 	t.Run("unsupported content type", func(t *testing.T) {
-		req := httptest.NewRequest("PATCH", "/v1/checkins/plc_1234/checked_out_confirmed", bytes.NewBufferString("{\"confirmed\":true}"))
+		req := httptest.NewRequest(http.MethodPatch, "/v1/checkins/plc_1234/checked_out_confirmed", bytes.NewBufferString("{\"confirmed\":true}"))
 		req.Header.Set("Content-Type", "text/plain")
 		resp, err := app.Test(req)
 		require.NoError(t, err)
@@ -102,7 +102,7 @@ func TestController_PatchCheckedOutConfirmed(t *testing.T) {
 	})
 
 	t.Run("invalid json", func(t *testing.T) {
-		req := httptest.NewRequest("PATCH", "/v1/checkins/plc_1234/checked_out_confirmed", bytes.NewBufferString("{bad"))
+		req := httptest.NewRequest(http.MethodPatch, "/v1/checkins/plc_1234/checked_out_confirmed", bytes.NewBufferString("{bad"))
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := app.Test(req)
 		require.NoError(t, err)
@@ -110,7 +110,7 @@ func TestController_PatchCheckedOutConfirmed(t *testing.T) {
 	})
 
 	t.Run("missing confirmed field", func(t *testing.T) {
-		req := httptest.NewRequest("PATCH", "/v1/checkins/plc_1234/checked_out_confirmed", bytes.NewBufferString("{}"))
+		req := httptest.NewRequest(http.MethodPatch, "/v1/checkins/plc_1234/checked_out_confirmed", bytes.NewBufferString("{}"))
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := app.Test(req)
 		require.NoError(t, err)
@@ -124,7 +124,7 @@ func TestController_CheckoutsWeb_PreviewTag(t *testing.T) {
 	controller.RegisterRoutes(app)
 
 	request := func(t *testing.T) string {
-		req := httptest.NewRequest("GET", "/v1/checkins/checkouts", nil)
+		req := httptest.NewRequest(http.MethodGet, "/v1/checkins/checkouts", nil)
 		req.Header.Set("Accept", "text/html")
 		resp, err := app.Test(req)
 		require.NoError(t, err)
@@ -281,7 +281,7 @@ func Test_buildFilter_location_group_id(t *testing.T) {
 				got, gotErr = buildFilter(c)
 				return c.SendStatus(fiber.StatusOK)
 			})
-			req := httptest.NewRequest("GET", tc.url, nil)
+			req := httptest.NewRequest(http.MethodGet, tc.url, nil)
 			_, err := app.Test(req)
 			require.NoError(t, err)
 			tc.assert(t, got, gotErr)
@@ -321,7 +321,7 @@ func TestController_Checkouts_conditionalPolling(t *testing.T) {
 
 	poll := func(t *testing.T, ifNoneMatch string) *http.Response {
 		t.Helper()
-		req := httptest.NewRequest("GET", "/v1/checkins/checkouts?limit=100", nil)
+		req := httptest.NewRequest(http.MethodGet, "/v1/checkins/checkouts?limit=100", nil)
 		req.Header.Set("Accept", "application/json")
 		if ifNoneMatch != "" {
 			req.Header.Set("If-None-Match", ifNoneMatch)
@@ -389,7 +389,7 @@ func TestController_Checkouts_conditionalPolling(t *testing.T) {
 	})
 
 	t.Run("HTML branch is unaffected", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/v1/checkins/checkouts", nil)
+		req := httptest.NewRequest(http.MethodGet, "/v1/checkins/checkouts", nil)
 		req.Header.Set("Accept", "text/html")
 		resp, err := app.Test(req)
 		require.NoError(t, err)
@@ -435,7 +435,7 @@ func TestController_Checkouts_compressionIntegration(t *testing.T) {
 
 	poll := func(t *testing.T, ifNoneMatch string) *http.Response {
 		t.Helper()
-		req := httptest.NewRequest("GET", "/v1/checkins/checkouts?limit=100", nil)
+		req := httptest.NewRequest(http.MethodGet, "/v1/checkins/checkouts?limit=100", nil)
 		req.Header.Set("Accept", "application/json")
 		req.Header.Set("Accept-Encoding", "gzip")
 		if ifNoneMatch != "" {
@@ -536,7 +536,7 @@ func TestController_Checkouts_filter_validation(t *testing.T) {
 	c.RegisterRoutes(app)
 
 	t.Run("invalid location_group_id returns 400", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/v1/checkins/checkouts?location_group_id=abc", nil)
+		req := httptest.NewRequest(http.MethodGet, "/v1/checkins/checkouts?location_group_id=abc", nil)
 		req.Header.Set("Accept", "application/json")
 		resp, err := app.Test(req)
 		require.NoError(t, err)
@@ -544,7 +544,7 @@ func TestController_Checkouts_filter_validation(t *testing.T) {
 	})
 
 	t.Run("negative location_group_id returns 400", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/v1/checkins/checkouts?location_group_id=-1", nil)
+		req := httptest.NewRequest(http.MethodGet, "/v1/checkins/checkouts?location_group_id=-1", nil)
 		req.Header.Set("Accept", "application/json")
 		resp, err := app.Test(req)
 		require.NoError(t, err)
@@ -611,7 +611,7 @@ func TestController_Checkouts_location_group_filtering(t *testing.T) {
 
 	idsFor := func(t *testing.T, url string) (map[string]bool, CheckoutsResponse) {
 		t.Helper()
-		req := httptest.NewRequest("GET", url, nil)
+		req := httptest.NewRequest(http.MethodGet, url, nil)
 		req.Header.Set("Accept", "application/json")
 		resp, err := app.Test(req)
 		require.NoError(t, err)
@@ -705,7 +705,7 @@ func TestCheckouts_SessionStoreFailureDoesNotCrash(t *testing.T) {
 	controller := NewController(testDB, &errSessionStore{})
 	controller.RegisterRoutes(app)
 
-	req := httptest.NewRequest("GET", "/v1/checkins/checkouts", nil)
+	req := httptest.NewRequest(http.MethodGet, "/v1/checkins/checkouts", nil)
 	req.Header.Set("Accept", "application/json")
 	resp, err := app.Test(req)
 	require.NoError(t, err)
