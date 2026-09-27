@@ -347,6 +347,12 @@ function updateOverdueUI() {
     // While the drawer is open, keep confirmed rows visible until close,
     // but still allow newly-overdue children to appear.
     if (isOverdueSheetOpen) {
+        // A failed poll empties childrenData. With nothing to compare against we
+        // cannot know what changed, so leave the drawer exactly as it is. Pruning
+        // against an empty list would empty the open drawer and then rebuild it
+        // from scratch on recovery -- the exact reflow this guards against.
+        if (!childrenData.length) return;
+
         if (count !== lastOverdueCount) {
             overdueSheetNeedsRefresh = true;
         }
@@ -380,7 +386,10 @@ function updateOverdueUI() {
             );
             renderOverdueSheet(drawerOverdue);
             const countEl = document.getElementById('overdue-sheet-count');
-            if (countEl) countEl.textContent = drawerOverdue.length > 0 ? `${drawerOverdue.length} overdue` : 'No overdue';
+            // Count the live overdue children, not the rows on screen, so this
+            // agrees with the badge right above it rather than counting
+            // tombstones.
+            if (countEl) countEl.textContent = count > 0 ? `${count} overdue` : 'No overdue';
         }
         return;
     }

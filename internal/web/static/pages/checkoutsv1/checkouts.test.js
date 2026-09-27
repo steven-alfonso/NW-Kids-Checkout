@@ -815,6 +815,7 @@ describe('checkoutsv1/checkouts', () => {
                     <div id="overdue-sheet" class="translate-y-full"></div>
                     <div id="overdue-sheet-backdrop" class="hidden"></div>
                     <div id="location-group-checkboxes"></div>
+                    <span id="overdue-sheet-count"></span>
                     <div id="overdue-sheet-list"><div class="text-center py-6 text-sm text-slate-500">No overdue checkouts</div></div>
                 </body></html>`,
                 fetchImpl: async () => ({ ok: true, json: async () => ({ checkins: [], manual_checkins: [] }) })
@@ -1119,6 +1120,80 @@ describe('checkoutsv1/checkouts', () => {
                 w.updateOverdueUI();
 
                 expect(sheetNames(w)).toEqual(['Alpha Test', 'Charlie Test']);
+            });
+
+            it('reports the live overdue count in the header, matching the badge', async () => {
+                const { w } = await ready(trio(), T0);
+                w.openOverdueSheet();
+                const header = () => w.document.getElementById('overdue-sheet-count').textContent.trim();
+                expect(header()).toBe('3 overdue');
+
+                w.__test.setChildrenData(withBravoConfirmed());
+                w.updateOverdueUI();
+
+                // Three rows are on screen but only two are still overdue, and
+                // the badge 40px above says so. The header must not disagree.
+                expect(sheetRows(w).length).toBe(3);
+                expect(header()).toBe('2 overdue');
+                expect(w.document.getElementById('overdue-badge').textContent).toContain('2 overdue');
+            });
+        });
+
+        // ---- failed poll ----
+        // fetchChildrenData's catch empties childrenData. Retention is keyed off
+        // childrenData, so a wifi blip used to empty the whole open drawer and
+        // then rebuild it from scratch -- the exact reflow this feature exists
+        // to prevent.
+        describe('when a poll fails while the drawer is open', () => {
+            const T0 = 1_700_000_000_000;
+            const kids = () => [
+                childAt('a', 20, T0, { first_name: 'Alpha' }),
+                childAt('b', 15, T0, { first_name: 'Bravo' }),
+                childAt('c', 10, T0, { first_name: 'Charlie' }),
+            ];
+            const sheetNames = (w) => sheetRows(w).map((r) => r.querySelector('.font-bold')?.textContent.trim());
+
+            async function failTheNextPoll(w) {
+                w.fetch = async () => { throw new Error('offline'); };
+                await w.fetchChildrenData();
+                expect(w.__test.getChildrenData()).toEqual([]);
+            }
+
+            it('leaves every row on screen', async () => {
+                const { w } = await ready(kids(), T0);
+                w.openOverdueSheet();
+                expect(sheetNames(w)).toEqual(['Alpha Test', 'Bravo Test', 'Charlie Test']);
+
+                await failTheNextPoll(w);
+                w.updateOverdueUI();
+
+                expect(sheetRows(w).length).toBe(3);
+                expect(sheetNames(w)).toEqual(['Alpha Test', 'Bravo Test', 'Charlie Test']);
+            });
+
+            it('keeps the same DOM nodes, so nothing moves under the reader', async () => {
+                const { w } = await ready(kids(), T0);
+                w.openOverdueSheet();
+                const rowB = sheetRowFor(w, 'b');
+
+                await failTheNextPoll(w);
+                w.updateOverdueUI();
+
+                expect(sheetRowFor(w, 'b')).toBe(rowB);
+            });
+
+            it('does not rewrite the header count', async () => {
+                const { w } = await ready(kids(), T0);
+                w.openOverdueSheet();
+                const header = w.document.getElementById('overdue-sheet-count');
+                expect(header.textContent.trim()).toBe('3 overdue');
+
+                await failTheNextPoll(w);
+                w.updateOverdueUI();
+
+                // We have no data, so the count is unknown, not zero. Freezing
+                // it keeps the header consistent with the badge.
+                expect(header.textContent.trim()).toBe('3 overdue');
             });
         });
     });
