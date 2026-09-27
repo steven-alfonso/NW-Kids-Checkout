@@ -162,7 +162,11 @@
     <header class="relative flex justify-between items-center w-full z-20 px-6 pt-4 lg:fixed">
         <div class="flex justify-between items-center">
             <a href="/">
-                <img src="/static/img/NWKids-logo.svg" alt="NWKids Logo" class="h-16 md:h-24 w-auto">
+                <picture>
+                  <source type="image/avif" srcset="/static/img/NWKids-logo-320.avif">
+                  <source type="image/webp" srcset="/static/img/NWKids-logo-320.webp">
+                  <img src="/static/img/NWKids-logo-320.png" alt="NWKids Logo" class="h-16 md:h-24 w-auto">
+                </picture>
             </a>
         </div>
 

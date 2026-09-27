@@ -39,7 +39,13 @@
 <body class="min-h-screen bg-slate-50 text-slate-900">
 <div class="mx-auto w-full px-6 py-10" style="max-width: 720px;">
     <header class="flex flex-col items-center gap-4 mb-8">
-        <a href="/"><img src="/static/img/NWKids-logo.svg" alt="NWKids Logo" class="h-16 w-auto"></a>
+        <a href="/">
+            <picture>
+                <source type="image/avif" srcset="/static/img/NWKids-logo-320.avif">
+                <source type="image/webp" srcset="/static/img/NWKids-logo-320.webp">
+                <img src="/static/img/NWKids-logo-320.png" alt="NWKids Logo" class="h-16 w-auto">
+            </picture>
+        </a>
         <h1 class="text-2xl font-semibold text-center">Guest Check-In</h1>
         <p class="text-sm text-slate-600 text-center">Share your family's info and we'll take care of the rest.</p>
     </header>

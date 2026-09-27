@@ -19,7 +19,11 @@
     <header class="flex flex-col gap-2 mb-8">
         <div class="flex items-center gap-3">
             <a href="/admin">
-                <img src="/static/img/NWKids-logo.svg" alt="NWKids Logo" class="h-16 md:h-24 w-auto">
+                <picture>
+                  <source type="image/avif" srcset="/static/img/NWKids-logo-320.avif">
+                  <source type="image/webp" srcset="/static/img/NWKids-logo-320.webp">
+                  <img src="/static/img/NWKids-logo-320.png" alt="NWKids Logo" class="h-16 md:h-24 w-auto">
+                </picture>
             </a>
             <h1 class="text-3xl font-semibold">Fetcher Status</h1>
         </div>
