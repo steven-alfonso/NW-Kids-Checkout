@@ -78,13 +78,32 @@ func (controller *Controller) PostLogin(c *fiber.Ctx) error {
 	}
 
 	if redirectTo != "" {
-		if !strings.HasPrefix(redirectTo, "/") {
+		// Reject anything that would send the browser off this origin. A plain
+		// "/" prefix check is not enough: "//evil.example.com" passes it, and
+		// browsers read a protocol-relative Location as an absolute URL. They
+		// also fold a backslash into a slash, so "/\evil.example.com" is the
+		// same attack wearing a different character.
+		if !isSameOriginPath(redirectTo) {
 			redirectTo = "/"
 		}
 		return c.Redirect(redirectTo)
 	}
 
 	return c.Redirect("/")
+}
+
+// isSameOriginPath reports whether target is a path on this origin that is
+// safe to redirect to. It must start with a single "/" followed by neither a
+// slash nor a backslash, which rules out absolute URLs, protocol-relative
+// URLs, and the backslash variants browsers normalize to "//".
+func isSameOriginPath(target string) bool {
+	if len(target) == 0 || target[0] != '/' {
+		return false
+	}
+	if len(target) > 1 && (target[1] == '/' || target[1] == '\\') {
+		return false
+	}
+	return true
 }
 
 func (controller *Controller) GetLogout(c *fiber.Ctx) error {
