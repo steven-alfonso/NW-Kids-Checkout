@@ -1184,6 +1184,32 @@ describe('checkoutsv1/checkouts', () => {
                 expect(sheetNames(w)).toEqual(['Alpha Test', 'Charlie Test']);
             });
 
+            // Reopening with NO data change in between. The board polls every 3s,
+            // so in a quiet room this is the common case, not a race. The drawer
+            // rebuilds its "rows on screen" state on open -- but that rebuild must
+            // not sit behind the signature guard, or the state stays empty after
+            // closeOverdueSheet cleared it, and the reopened drawer holds nothing
+            // steady for the whole of that session.
+            it('keeps the row when the drawer is reopened and the data has not changed', async () => {
+                const { w } = await ready(trio(), T0);
+                w.openOverdueSheet();
+                w.closeOverdueSheet();
+                w.openOverdueSheet();
+                // Bravo is not confirmed yet, so he is correctly listed.
+                expect(sheetNames(w)).toEqual(['Alpha Test', 'Bravo Test', 'Charlie Test']);
+                const rowB = sheetRowFor(w, 'b');
+
+                // The drawer is open. Another device confirms Bravo, seconds later.
+                w.__test.setChildrenData(withBravoConfirmed());
+                w.updateOverdueUI();
+
+                expect(sheetNames(w)).toEqual(['Alpha Test', 'Bravo Test', 'Charlie Test']);
+                expect(sheetRows(w).indexOf(sheetRowFor(w, 'b'))).toBe(1);
+                expect(sheetRowFor(w, 'b')).toBe(rowB);
+                expect(sheetBox(w, 'b').checked).toBe(true);
+                expect(sheetPill(w, 'b').className).toContain('bg-gray-400');
+            });
+
             it('re-renders the drawer when only the location group id changes', async () => {
                 const { w } = await ready(trio(), T0);
                 w.openOverdueSheet();

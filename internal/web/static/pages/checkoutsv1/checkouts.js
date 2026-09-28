@@ -292,14 +292,21 @@ function getOverdueSheetSignature(overdue) {
 function renderOverdueSheet(overdue) {
     if (!dom.overdueSheetList) return;
     const signature = getOverdueSheetSignature(overdue);
-    if (signature === lastSheetSignature) return;
-    lastSheetSignature = signature;
-    // Rebuilt from what is actually rendered, so the cache can never hold a row
-    // that is not on screen, and every tombstone in the list stays cached.
+    // MUST be assigned above the signature guard, not below it.
+    // openOverdueSheet always calls this, but it returns early when the row set
+    // is unchanged, and closeOverdueSheet has just cleared both. Reopening with
+    // no data change -- the common case, since the board polls every 3s and a
+    // quiet room returns identical rows -- would then leave them empty while the
+    // list still had rows on screen, and updateOverdueUI seeds retention only
+    // from drawerRenderedIds. The reopened drawer would then hold nothing steady
+    // for the rest of that session: the next confirmation deletes the row and
+    // shifts everything below it up one.
     drawerRenderedIds = new Set(overdue.map(getChildId).filter(Boolean));
     drawerRowCache = new Map(
         overdue.map((child) => [getChildId(child), child]).filter(([id]) => Boolean(id))
     );
+    if (signature === lastSheetSignature) return;
+    lastSheetSignature = signature;
     if (overdue.length === 0) {
         dom.overdueSheetList.innerHTML = '<div class="text-center py-6 text-sm text-slate-500">No overdue checkouts</div>';
         return;
