@@ -94,29 +94,18 @@ func TestHomePage_SessionErrorReturns500(t *testing.T) {
 }
 
 func TestStaticCacheControl(t *testing.T) {
-	// Dev is the case that was broken. cmd/assets returns early when
-	// ENVIRONMENT=dev, leaving ?v=dev constant in the HTML, so an immutable
-	// header would pin the last build's JS in the browser while the HTML
-	// revalidates underneath it.
 	t.Run("dev forbids reuse outright", func(t *testing.T) {
 		t.Setenv("ENVIRONMENT", "dev")
-		// no-cache would require a validator to be meaningful, and static
-		// responses carry no ETag or Last-Modified. no-store needs neither, so
-		// it is what actually clears an already-poisoned browser cache.
 		assert.Equal(t, "no-store", staticCacheControl(),
 			"no-cache is unenforceable without an ETag or Last-Modified to revalidate against")
 	})
 
-	// Production is unaffected: cmd/assets bakes a content hash into ?v=, so a
-	// changed file is a changed URL and there is nothing to revalidate.
 	t.Run("production stays immutable", func(t *testing.T) {
 		t.Setenv("ENVIRONMENT", "production")
 		assert.Equal(t, "public, max-age=31536000, immutable", staticCacheControl())
 	})
 
-	// Unset must not be treated as dev. A container that forgets ENVIRONMENT
-	// would otherwise silently lose the immutable caching that production
-	// depends on.
+	// A container that forgets ENVIRONMENT should not lose production caching.
 	t.Run("unset environment is treated as production", func(t *testing.T) {
 		t.Setenv("ENVIRONMENT", "")
 		assert.Equal(t, "public, max-age=31536000, immutable", staticCacheControl(),

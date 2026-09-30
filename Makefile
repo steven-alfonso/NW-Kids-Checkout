@@ -57,15 +57,10 @@ web: build
 	go tool godotenv $(BIN_PATH) apiserver
 
 .PHONY: web-lr
-# include_ext is load-bearing, not a convenience. The static assets under
-# internal/web/static are compiled into the binary with go:embed, so a .js or
-# .css edit cannot be observed by the running server until it is rebuilt and
-# restarted. air's default include_ext does not list .js or .css, so without
-# this an edit to checkouts.js is silently ignored: air logs the directory as
-# watched, never rebuilds, and the browser keeps getting the previously
-# embedded copy. That reads as a browser cache problem and is not one --
-# hard-refreshing will not help either, because the old bytes are in the
-# binary, not in the cache.
+# include_ext matters because static assets are compiled in with go:embed: a
+# .js or .css edit is unobservable until the binary rebuilds, and air's default
+# include_ext lists neither. Without this, air reports the directory as watched
+# but never rebuilds, and the browser keeps getting the previously embedded copy.
 web-lr:
 	go tool air --build.cmd="make build" --build.full_bin="go tool godotenv $(BIN_PATH) apiserver" --build.exclude_dir="bin,database,node_modules" --build.include_ext="go,html,js,css,svg,png,ico,webmanifest,json"
 

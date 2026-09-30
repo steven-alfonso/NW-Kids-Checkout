@@ -167,14 +167,6 @@ func StartServer(port int, dbFilepath string) error {
 			c.Type(filepath.Ext(c.Path()))
 			return c.Send(data)
 		}
-		// In dev, cmd/assets skips asset versioning (it returns early when
-		// ENVIRONMENT=dev), so the ?v= on every script tag stays a constant
-		// "dev". A constant cache-buster cannot bust anything, and pairing it
-		// with immutable pinned the previous build's JS in the browser for a
-		// year -- the HTML is revalidated on every load while the JS it pulls
-		// in is not, so after a `git pull` a page can run new markup against
-		// old script. That is a version-skew failure, not a rendering one, and
-		// it presents as erratic UI behavior that clears on a hard refresh.
 		c.Set("Cache-Control", staticCacheControl())
 		return c.Next()
 	})
@@ -198,28 +190,11 @@ func StartServer(port int, dbFilepath string) error {
 // staticCacheControl returns the Cache-Control header for a file served out of
 // /static.
 //
-// Production serves these immutable, which is correct there because the Docker
-// build runs cmd/assets with ENVIRONMENT=production: that bakes a SHA-256 of
-// each asset into the ?v= query on every script and link tag, so the URL itself
-// changes whenever the file's contents do. A changed file is therefore a
-// changed URL, and there is nothing to revalidate.
-//
-// Dev has no such guarantee. cmd/assets returns early when ENVIRONMENT=dev, so
-// the ?v= stays the literal "dev" in the checked-in HTML -- and the Makefile
-// defaults ASSET_BUILD to 0, so `make build` never runs it at all. The
-// cache-buster is constant and cannot bust anything. Combined with immutable
-// that pins the previously-built JS in the browser for a year while the HTML,
-// which is revalidated on every load, moves underneath it. After a `git pull`
-// a page can run new markup against old script, which surfaces as erratic UI
-// behavior that clears on a hard refresh.
-//
-// no-store rather than no-cache. Static responses from the embedded FS carry
-// no ETag and no Last-Modified, so there is no validator for a revalidating
-// cache to compare against -- and an already-populated browser cache holding
-// the previous build's JS is exactly the state this is meant to recover from.
-// no-store forbids reuse outright and needs no validator, which is the only
-// option that reliably fixes a cache that is already poisoned. On localhost
-// the bandwidth argument for no-cache does not apply.
+// Production is immutable and safe: cmd/assets bakes a content hash into each
+// asset's ?v=, so a changed file is a changed URL. Dev has no such guarantee --
+// the ?v= stays a constant "dev" -- and the embedded FS serves no ETag or
+// Last-Modified, so no-cache would have nothing to revalidate against. Hence
+// no-store, which forbids reuse outright.
 func staticCacheControl() string {
 	if static.IsDev() {
 		return "no-store"
