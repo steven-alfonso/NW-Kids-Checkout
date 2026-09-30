@@ -167,7 +167,7 @@ func StartServer(port int, dbFilepath string) error {
 			c.Type(filepath.Ext(c.Path()))
 			return c.Send(data)
 		}
-		c.Set("Cache-Control", "public, max-age=31536000, immutable")
+		c.Set("Cache-Control", staticCacheControl())
 		return c.Next()
 	})
 	app.Use("/static", filesystem.New(filesystem.Config{
@@ -185,6 +185,21 @@ func StartServer(port int, dbFilepath string) error {
 
 	slog.Info("server stopped")
 	return nil
+}
+
+// staticCacheControl returns the Cache-Control header for a file served out of
+// /static.
+//
+// Production is immutable and safe: cmd/assets bakes a content hash into each
+// asset's ?v=, so a changed file is a changed URL. Dev has no such guarantee --
+// the ?v= stays a constant "dev" -- and the embedded FS serves no ETag or
+// Last-Modified, so no-cache would have nothing to revalidate against. Hence
+// no-store, which forbids reuse outright.
+func staticCacheControl() string {
+	if static.IsDev() {
+		return "no-store"
+	}
+	return "public, max-age=31536000, immutable"
 }
 
 func homePageHandler(sessionStore session.Storer) fiber.Handler {

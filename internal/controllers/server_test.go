@@ -92,3 +92,23 @@ func TestHomePage_SessionErrorReturns500(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, fiber.StatusInternalServerError, resp.StatusCode)
 }
+
+func TestStaticCacheControl(t *testing.T) {
+	t.Run("dev forbids reuse outright", func(t *testing.T) {
+		t.Setenv("ENVIRONMENT", "dev")
+		assert.Equal(t, "no-store", staticCacheControl(),
+			"no-cache is unenforceable without an ETag or Last-Modified to revalidate against")
+	})
+
+	t.Run("production stays immutable", func(t *testing.T) {
+		t.Setenv("ENVIRONMENT", "production")
+		assert.Equal(t, "public, max-age=31536000, immutable", staticCacheControl())
+	})
+
+	// A container that forgets ENVIRONMENT should not lose production caching.
+	t.Run("unset environment is treated as production", func(t *testing.T) {
+		t.Setenv("ENVIRONMENT", "")
+		assert.Equal(t, "public, max-age=31536000, immutable", staticCacheControl(),
+			"an unset ENVIRONMENT must not silently downgrade to dev caching")
+	})
+}
