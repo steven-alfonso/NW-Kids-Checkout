@@ -92,3 +92,39 @@ func TestHomePage_SessionErrorReturns500(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, fiber.StatusInternalServerError, resp.StatusCode)
 }
+
+func TestStaticCacheControl(t *testing.T) {
+	// Dev is the case that was broken. cmd/assets returns early when
+	// ENVIRONMENT=dev, leaving ?v=dev constant in the HTML, so an immutable
+	// header would pin the last build's JS in the browser while the HTML
+	// revalidates underneath it.
+	t.Run("dev revalidates instead of pinning for a year", func(t *testing.T) {
+		t.Setenv("ENVIRONMENT", "dev")
+		assert.Equal(t, "no-cache", staticCacheControl(),
+			"a constant ?v= cannot bust a cache, so dev must not be immutable")
+	})
+
+	// no-store would also fix the staleness but forces a full re-download on
+	// every reload; no-cache keeps conditional requests cheap.
+	t.Run("dev still allows conditional requests", func(t *testing.T) {
+		t.Setenv("ENVIRONMENT", "dev")
+		assert.NotEqual(t, "no-store", staticCacheControl(),
+			"no-store defeats revalidation and re-downloads unchanged assets every load")
+	})
+
+	// Production is unaffected: cmd/assets bakes a content hash into ?v=, so a
+	// changed file is a changed URL and there is nothing to revalidate.
+	t.Run("production stays immutable", func(t *testing.T) {
+		t.Setenv("ENVIRONMENT", "production")
+		assert.Equal(t, "public, max-age=31536000, immutable", staticCacheControl())
+	})
+
+	// Unset must not be treated as dev. A container that forgets ENVIRONMENT
+	// would otherwise silently lose the immutable caching that production
+	// depends on.
+	t.Run("unset environment is treated as production", func(t *testing.T) {
+		t.Setenv("ENVIRONMENT", "")
+		assert.Equal(t, "public, max-age=31536000, immutable", staticCacheControl(),
+			"an unset ENVIRONMENT must not silently downgrade to dev caching")
+	})
+}
