@@ -550,6 +550,65 @@ func TestController_Checkouts_filter_validation(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
 	})
+
+	t.Run("limit=0 returns 400", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/v1/checkins/checkouts?limit=0", nil)
+		req.Header.Set("Accept", "application/json")
+		resp, err := app.Test(req)
+		require.NoError(t, err)
+		assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
+	})
+
+	t.Run("negative limit returns 400", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/v1/checkins/checkouts?limit=-1", nil)
+		req.Header.Set("Accept", "application/json")
+		resp, err := app.Test(req)
+		require.NoError(t, err)
+		assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
+	})
+
+	t.Run("non-numeric limit returns 400", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/v1/checkins/checkouts?limit=abc", nil)
+		req.Header.Set("Accept", "application/json")
+		resp, err := app.Test(req)
+		require.NoError(t, err)
+		assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
+	})
+
+	t.Run("limit above the maximum returns 400", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/v1/checkins/checkouts?limit=999999999", nil)
+		req.Header.Set("Accept", "application/json")
+		resp, err := app.Test(req)
+		require.NoError(t, err)
+		assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
+	})
+
+	t.Run("limit at the maximum is accepted", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/v1/checkins/checkouts?limit=1000", nil)
+		req.Header.Set("Accept", "application/json")
+		resp, err := app.Test(req)
+		require.NoError(t, err)
+		assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+	})
+
+	// checkoutsv1/checkouts.js sends limit=100 on every poll.
+	t.Run("limit=100 used by the checkouts page is accepted", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/v1/checkins/checkouts?limit=100", nil)
+		req.Header.Set("Accept", "application/json")
+		resp, err := app.Test(req)
+		require.NoError(t, err)
+		assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+	})
+
+	// manual-checkins.js omits limit and is unbounded today; bounding the
+	// default is out of scope, so pin the current behavior.
+	t.Run("omitted limit stays accepted", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/v1/checkins/checkouts", nil)
+		req.Header.Set("Accept", "application/json")
+		resp, err := app.Test(req)
+		require.NoError(t, err)
+		assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+	})
 }
 
 func TestController_Checkouts_location_group_filtering(t *testing.T) {

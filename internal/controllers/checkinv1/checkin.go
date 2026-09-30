@@ -35,6 +35,14 @@ import (
 
 const defaultCheckedOutAfterDelta = -12 * time.Hour
 
+// Ceiling on an explicit ?limit=, well above the 100 the UI asks for. The repo
+// skips its LIMIT clause when filter.Limit is 0, so an unbounded caller gets
+// the whole table -- every child's name, security_code, and checkout time.
+//
+// Only an explicit limit is capped. Omitting ?limit= is still unbounded,
+// which is what manual-checkins.js relies on today.
+const maxCheckoutsLimit = 1000
+
 type Controller struct {
 	checkinRepo  checkin.Repo
 	manualRepo   manualcheckin.Repo
@@ -393,8 +401,13 @@ func buildFilter(c *fiber.Ctx) (checkin.Filter, error) {
 		if err != nil {
 			return checkin.Filter{}, errors.New("cannot parse limit")
 		}
-		if limitInt < 0 {
+		// <= 0, not < 0: the repo treats Limit 0 as no limit at all, so
+		// accepting it returned the whole checkins table.
+		if limitInt <= 0 {
 			return checkin.Filter{}, errors.New("limit must be positive")
+		}
+		if limitInt > maxCheckoutsLimit {
+			return checkin.Filter{}, fmt.Errorf("limit must not exceed %d", maxCheckoutsLimit)
 		}
 		filter.Limit = limitInt
 	}
