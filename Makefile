@@ -45,34 +45,35 @@ db-new-migration:
 .PHONY: build
 build:
 	mkdir -pv bin && \
-	if [ "$(ASSET_BUILD)" = "1" ]; then godotenv $(ASSET_SCRIPT); fi && \
-    godotenv go build -o $(BIN_PATH) main.go
+	if [ "$(ASSET_BUILD)" = "1" ]; then go tool godotenv $(ASSET_SCRIPT); fi && \
+    go tool godotenv go build -o $(BIN_PATH) main.go
 
 .PHONY: assets
 assets:
-	godotenv $(ASSET_SCRIPT)
+	go tool godotenv $(ASSET_SCRIPT)
 
 .PHONY: web
 web: build
-	godotenv $(BIN_PATH) apiserver
+	go tool godotenv $(BIN_PATH) apiserver
 
 .PHONY: web-lr
+# All air configuration lives in .air.toml.
 web-lr:
-	go tool air --build.cmd="make build" --build.full_bin="godotenv $(BIN_PATH) apiserver" --build.exclude_dir="bin,database"
+	go tool air
 
 .PHONY: checkout-fetcher
 checkout-fetcher: build
-	godotenv $(BIN_PATH) checkout-fetcher --use-check-windows --service
+	go tool godotenv $(BIN_PATH) checkout-fetcher --use-check-windows --service
 
 .PHONY: test
 test:
-	godotenv go test ./...
+	go tool godotenv go test ./...
 	npm test
 
 .PHONY: db-seed
 db-seed:
-	godotenv ./bin/db-seed
+	go tool godotenv ./bin/db-seed
 
 .PHONY: random-data
 random-data:
-	godotenv go run ./cmd/random-data --db-file $(KIDS_CHECKIN_DB_FILE)
+	go tool godotenv go run ./cmd/random-data --db-file $(KIDS_CHECKIN_DB_FILE)

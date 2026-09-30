@@ -1,18 +1,32 @@
 # air (live reload) configuration for `make web-lr`.
 #
-# This file exists to declare `build.entrypoint`, the non-deprecated way to tell
-# air which binary `build.cmd` produces. Without it, air v1.64 prints
-# "[warning] build.bin is deprecated; set build.entrypoint instead" on every
-# start.
+# entrypoint is declared here rather than passed as --build.entrypoint because
+# air calls warnDeprecatedBin() on the config-file/default state *before* it
+# applies CLI flags, so the flag has no effect on that warning. Declaring it
+# here is what silences it.
 #
-# The warning cannot be silenced from the command line: air calls
-# warnDeprecatedBin() on the config-file/default state *before* it applies CLI
-# flags, so --build.entrypoint has no effect on it. Declaring entrypoint here
-# is what actually silences it.
-#
-# The Makefile still passes --build.cmd, --build.full_bin, and
-# --build.exclude_dir; entrypoint is not redundant with those. air ignores
-# entrypoint's arguments while full_bin is set, and full_bin remains the
-# command that is actually run, because it needs the `godotenv` env-var prefix.
+# The rest of the build/run wiring lives here too, so `make web-lr` is a bare
+# `go tool air` and running air by hand behaves identically. CLI flags would
+# work as well, but they take precedence over this file -- so a flag on the
+# command line silently overrides whatever is written below.
+
 [build]
+# Rebuild via make so the binary is built the way `make build` builds it.
+cmd = "make build"
+
+# Run through `go tool godotenv` so .env is loaded, matching `make web`.
+full_bin = "go tool godotenv ./bin/kids-checkin apiserver"
+
 entrypoint = "./bin/kids-checkin"
+
+# bin/ is the build output and database/ holds the sqlite file; watching either
+# would rebuild on air's own writes. node_modules is thousands of directories,
+# so any npm install would otherwise churn rebuilds.
+exclude_dir = ["bin", "database", "node_modules"]
+
+# include_ext is load-bearing. Assets under internal/web/static are compiled in
+# with go:embed, so a .js or .css edit is unobservable until the binary
+# rebuilds -- and air's default list contains neither. Without this air reports
+# the directory as watched but never rebuilds, and the browser keeps getting
+# the previously embedded copy.
+include_ext = ["go", "html", "js", "css", "svg", "png", "ico", "webmanifest", "json"]

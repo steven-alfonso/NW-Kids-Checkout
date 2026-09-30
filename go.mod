@@ -52,5 +52,7 @@ require (
 
 tool (
 	github.com/air-verse/air
-	github.com/godotenv/godotenv
+	// The CLI is cmd/godotenv; the module root is a library and makes
+	// `go tool godotenv` fail with "not a main package".
+	github.com/godotenv/godotenv/cmd/godotenv
 )
