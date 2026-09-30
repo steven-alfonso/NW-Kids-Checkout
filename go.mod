@@ -52,5 +52,10 @@ require (
 
 tool (
 	github.com/air-verse/air
-	github.com/godotenv/godotenv
+	// The tool directive needs the main package, not the module root. The root
+	// (github.com/godotenv/godotenv) is a library, so pointing at it made
+	// `go tool godotenv` fail with "not a main package". The CLI lives at
+	// cmd/godotenv. See also the Makefile, which invokes `go tool godotenv`
+	// rather than a bare `godotenv` so a fresh clone needs no PATH install.
+	github.com/godotenv/godotenv/cmd/godotenv
 )

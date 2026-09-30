@@ -98,18 +98,13 @@ func TestStaticCacheControl(t *testing.T) {
 	// ENVIRONMENT=dev, leaving ?v=dev constant in the HTML, so an immutable
 	// header would pin the last build's JS in the browser while the HTML
 	// revalidates underneath it.
-	t.Run("dev revalidates instead of pinning for a year", func(t *testing.T) {
+	t.Run("dev forbids reuse outright", func(t *testing.T) {
 		t.Setenv("ENVIRONMENT", "dev")
-		assert.Equal(t, "no-cache", staticCacheControl(),
-			"a constant ?v= cannot bust a cache, so dev must not be immutable")
-	})
-
-	// no-store would also fix the staleness but forces a full re-download on
-	// every reload; no-cache keeps conditional requests cheap.
-	t.Run("dev still allows conditional requests", func(t *testing.T) {
-		t.Setenv("ENVIRONMENT", "dev")
-		assert.NotEqual(t, "no-store", staticCacheControl(),
-			"no-store defeats revalidation and re-downloads unchanged assets every load")
+		// no-cache would require a validator to be meaningful, and static
+		// responses carry no ETag or Last-Modified. no-store needs neither, so
+		// it is what actually clears an already-poisoned browser cache.
+		assert.Equal(t, "no-store", staticCacheControl(),
+			"no-cache is unenforceable without an ETag or Last-Modified to revalidate against")
 	})
 
 	// Production is unaffected: cmd/assets bakes a content hash into ?v=, so a

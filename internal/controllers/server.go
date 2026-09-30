@@ -213,11 +213,16 @@ func StartServer(port int, dbFilepath string) error {
 // a page can run new markup against old script, which surfaces as erratic UI
 // behavior that clears on a hard refresh.
 //
-// no-cache rather than no-store, so an unchanged asset still costs a
-// conditional request instead of a full re-download on every reload.
+// no-store rather than no-cache. Static responses from the embedded FS carry
+// no ETag and no Last-Modified, so there is no validator for a revalidating
+// cache to compare against -- and an already-populated browser cache holding
+// the previous build's JS is exactly the state this is meant to recover from.
+// no-store forbids reuse outright and needs no validator, which is the only
+// option that reliably fixes a cache that is already poisoned. On localhost
+// the bandwidth argument for no-cache does not apply.
 func staticCacheControl() string {
 	if static.IsDev() {
-		return "no-cache"
+		return "no-store"
 	}
 	return "public, max-age=31536000, immutable"
 }

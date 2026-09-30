@@ -45,34 +45,43 @@ db-new-migration:
 .PHONY: build
 build:
 	mkdir -pv bin && \
-	if [ "$(ASSET_BUILD)" = "1" ]; then godotenv $(ASSET_SCRIPT); fi && \
-    godotenv go build -o $(BIN_PATH) main.go
+	if [ "$(ASSET_BUILD)" = "1" ]; then go tool godotenv $(ASSET_SCRIPT); fi && \
+    go tool godotenv go build -o $(BIN_PATH) main.go
 
 .PHONY: assets
 assets:
-	godotenv $(ASSET_SCRIPT)
+	go tool godotenv $(ASSET_SCRIPT)
 
 .PHONY: web
 web: build
-	godotenv $(BIN_PATH) apiserver
+	go tool godotenv $(BIN_PATH) apiserver
 
 .PHONY: web-lr
+# include_ext is load-bearing, not a convenience. The static assets under
+# internal/web/static are compiled into the binary with go:embed, so a .js or
+# .css edit cannot be observed by the running server until it is rebuilt and
+# restarted. air's default include_ext does not list .js or .css, so without
+# this an edit to checkouts.js is silently ignored: air logs the directory as
+# watched, never rebuilds, and the browser keeps getting the previously
+# embedded copy. That reads as a browser cache problem and is not one --
+# hard-refreshing will not help either, because the old bytes are in the
+# binary, not in the cache.
 web-lr:
-	go tool air --build.cmd="make build" --build.full_bin="godotenv $(BIN_PATH) apiserver" --build.exclude_dir="bin,database"
+	go tool air --build.cmd="make build" --build.full_bin="go tool godotenv $(BIN_PATH) apiserver" --build.exclude_dir="bin,database,node_modules" --build.include_ext="go,html,js,css,svg,png,ico,webmanifest,json"
 
 .PHONY: checkout-fetcher
 checkout-fetcher: build
-	godotenv $(BIN_PATH) checkout-fetcher --use-check-windows --service
+	go tool godotenv $(BIN_PATH) checkout-fetcher --use-check-windows --service
 
 .PHONY: test
 test:
-	godotenv go test ./...
+	go tool godotenv go test ./...
 	npm test
 
 .PHONY: db-seed
 db-seed:
-	godotenv ./bin/db-seed
+	go tool godotenv ./bin/db-seed
 
 .PHONY: random-data
 random-data:
-	godotenv go run ./cmd/random-data --db-file $(KIDS_CHECKIN_DB_FILE)
+	go tool godotenv go run ./cmd/random-data --db-file $(KIDS_CHECKIN_DB_FILE)
