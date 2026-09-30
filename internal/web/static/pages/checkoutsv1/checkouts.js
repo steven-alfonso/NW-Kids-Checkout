@@ -508,6 +508,9 @@ function openOverdueSheet() {
     if (countEl) countEl.textContent = overdue.length > 0 ? `${overdue.length} overdue` : 'No overdue';
     dom.overdueSheet.classList.remove('translate-y-full');
     dom.overdueSheet.setAttribute('aria-hidden', 'false');
+    // Must come before the focus() call below: an inert element cannot take
+    // focus, so leaving this set would silently strand focus on the opener.
+    dom.overdueSheet.removeAttribute('inert');
     dom.overdueSheetBackdrop.classList.remove('hidden');
     lockBodyScroll();
     // preventScroll so focusing does not fight the body-scroll lock.
@@ -538,6 +541,18 @@ function closeOverdueSheet() {
         && typeof returnFocus.focus === 'function') {
         returnFocus.focus({ preventScroll: true });
     }
+    // Set after the focus restore above, never before: an inert subtree cannot
+    // take focus, so marking it first would make that restore a no-op and
+    // strand focus on <body>.
+    //
+    // translate-y-full alone does not hide this drawer from the tab order. The
+    // sheet keeps visibility:visible and pointer-events:auto while parked below
+    // the viewport, so all ~60 row checkboxes stay focusable and Space on one
+    // confirms a real checkout the user cannot see. inert drops the subtree
+    // from tab order, blocks pointer events, and hides it from the a11y tree in
+    // one attribute; aria-hidden above only covers assistive tech and does not
+    // affect focusability.
+    dom.overdueSheet.setAttribute('inert', '');
 }
 
 function syncConfirmedStates() {

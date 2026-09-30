@@ -814,7 +814,7 @@ describe('checkoutsv1/checkouts', () => {
                 html: `<!doctype html><html><body>
                     <div id="children-list"></div>
                     <button id="overdue-badge" class="hidden"></button>
-                    <div id="overdue-sheet" class="translate-y-full" role="dialog" tabindex="-1"></div>
+                    <div id="overdue-sheet" class="translate-y-full" role="dialog" tabindex="-1" inert></div>
                     <div id="overdue-sheet-backdrop" class="hidden"></div>
                     <div id="location-group-checkboxes"></div>
                     <span id="overdue-sheet-count"></span>
@@ -1119,6 +1119,58 @@ describe('checkoutsv1/checkouts', () => {
 
             w.closeOverdueSheet();
 
+            expect(w.document.activeElement).toBe(badge);
+        });
+
+        // translate-y-full parks the sheet below the viewport but leaves it
+        // visibility:visible and pointer-events:auto, so every row checkbox stays
+        // in the tab order. Tabbing in from the board lands on the closed drawer's
+        // controls, and Space there confirms a real checkout the user cannot see.
+        // inert is what takes the subtree out of the tab order; aria-hidden does
+        // not, because it only informs assistive tech.
+        //
+        // These assert the attribute rather than the focus behavior on purpose:
+        // jsdom reflects `inert` but does not implement it, so a focus-based
+        // assertion here would pass no matter what the code did. The behavior is
+        // covered by the browser regression noted on the commit.
+        it('marks the sheet inert when closed so it leaves the tab order', async () => {
+            const { w } = await ready([childAt('a', 6, 1_700_000_000_000)]);
+            const sheet = w.document.getElementById('overdue-sheet');
+
+            // Closed is the state the page ships in, so it must ship inert.
+            expect(sheet.hasAttribute('inert')).toBe(true);
+
+            w.openOverdueSheet();
+            expect(sheet.hasAttribute('inert')).toBe(false);
+
+            w.closeOverdueSheet();
+            expect(sheet.hasAttribute('inert')).toBe(true);
+        });
+
+        it('clears inert before focusing the sheet on open', async () => {
+            const { w } = await ready([childAt('a', 6, 1_700_000_000_000)]);
+            const sheet = w.document.getElementById('overdue-sheet');
+            expect(sheet.hasAttribute('inert')).toBe(true);
+
+            w.openOverdueSheet();
+
+            // Order matters: an inert element cannot take focus, so removing the
+            // attribute after focus() would leave focus stranded on the badge.
+            expect(sheet.hasAttribute('inert')).toBe(false);
+            expect(sheet.contains(w.document.activeElement)).toBe(true);
+        });
+
+        it('restores focus on close even though the sheet goes inert', async () => {
+            const { w } = await ready([childAt('a', 6, 1_700_000_000_000)]);
+            const badge = w.document.getElementById('overdue-badge');
+            badge.focus();
+
+            w.openOverdueSheet();
+            w.closeOverdueSheet();
+
+            // Order matters here too: marking the sheet inert first would make
+            // the focus restore a no-op and strand focus on <body>.
+            expect(w.document.getElementById('overdue-sheet').hasAttribute('inert')).toBe(true);
             expect(w.document.activeElement).toBe(badge);
         });
 
