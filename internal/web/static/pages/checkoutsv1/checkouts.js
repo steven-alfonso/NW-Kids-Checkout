@@ -19,9 +19,16 @@ const FLASH_RESET_DELAY_MS = 4000;
 const OVERDUE_MINUTES = 5;
 let lastOverdueCount = 0;
 let isOverdueSheetOpen = false;
-let overdueSheetNeedsRefresh = false;
 const overdueRetainedIds = new Set();
 const confirmationOverrides = new Map();
+// True only while the most recent completed poll errored. An empty childrenData
+// is NOT evidence of failure: the production entry links pin
+// checked_out_after=-31m, so a successful poll legitimately reports nothing
+// once every checkout has aged out of the window. The open drawer must be able
+// to tell those two cases apart, or it freezes on rows that are already gone.
+let lastPollFailed = false;
+// Element focused before the overdue sheet opened, so close can restore it.
+let overdueSheetReturnFocus = null;
 const dom = {
     childrenList: null,
     currentTime: null,
@@ -161,16 +168,22 @@ function getConfirmationOverride(childId) {
 
 function getChildSignature(child) {
     if (!child) return 'empty';
-    return [
+    // JSON.stringify, not Array#join('|'): a '|' inside any field (a name, a
+    // pickup code) would shift the field boundary and let two different children
+    // hash to the same signature, which silently skips the re-render that would
+    // have corrected the row. Callers that concatenate signatures must still use
+    // an unambiguous separator.
+    return JSON.stringify([
         child.source || '',
         child.planning_center_id || '',
         child.public_id || '',
         child.checked_out_at || '',
+        child.checked_out_at_ms ?? '',
         child.first_name || '',
         child.last_name || '',
         child.security_code || '',
         child.location_group_id != null ? String(child.location_group_id) : ''
-    ].join('|');
+    ]);
 }
 
 function getVisibleChildren() {
@@ -228,21 +241,72 @@ function getOverdueChildren(nowMs) {
         if (!child.checked_out_at_ms) return false;
         if (isChildConfirmed(child)) return false;
         return now - child.checked_out_at_ms >= cutoff;
-    }).sort((a, b) => (a.checked_out_at_ms - b.checked_out_at_ms) || compareByCheckoutId(a, b));
+    // Newest first: the child who was handed over most recently is the one most
+    // likely to still be standing there, and it is also what makes the drawer
+    // stable. See the snapshot note in updateOverdueUI.
+    }).sort((a, b) => (b.checked_out_at_ms - a.checked_out_at_ms) || compareByCheckoutId(a, b));
 }
 
-function getOverdueCount(nowMs) {
-    return getOverdueChildren(nowMs).length;
+// Signature over everything renderOverdueSheet bakes into a row that is not
+// derived from the wall clock, so an unchanged signature means the rebuild would
+// reproduce identical markup and is pure waste. It is NOT byte-identical: the
+// "N min ago" label and the pill colour are functions of Date.now(), which is
+// deliberately excluded because updateTimes() rewrites both in place on every
+// tick, outside this guard. getChildSignature covers the name, code, source,
+// ids, checked_out_at and the raw location_group_id (which drives the bar
+// colour via getLocationGroupColor, a pure function of that id); the confirmed
+// flag covers the checkbox and pill; and the resolved group label is included
+// because locationGroups arrives asynchronously, so a late load must re-render
+// exactly once.
+let lastSheetSignature = null;
+// Child ids currently shown in the drawer, plus the data behind them. While the
+// drawer is open these rows are never pulled out from under the reader's finger:
+// if one becomes confirmed -- here or on another device -- or ages out of the
+// polled window, it is kept in place and repainted instead of being removed, so
+// the list cannot reflow mid-read. Cleared on close.
+// Both are assigned only in renderOverdueSheet, after the signature guard, so
+// they describe exactly what is on screen. That coupling is load-bearing:
+// openOverdueSheet does not always re-render, because an unchanged signature
+// skips it, and clearing these on close is only safe because an unchanged
+// signature also implies an unchanged id set (the signature covers every field
+// getChildId reads). Narrow the signature and both assumptions break.
+let drawerRenderedIds = new Set();
+
+function overdueGroupLabel(child) {
+    if (child.location_group_id == null) return 'Unassigned';
+    const g = locationGroups.find((lg) => Number(lg.id) === Number(child.location_group_id));
+    return g ? escapeHtml(g.name) : `Group ${escapeHtml(String(child.location_group_id))}`;
+}
+
+function getOverdueSheetSignature(overdue) {
+    return JSON.stringify(overdue.map((child) => [
+        getChildSignature(child),
+        isChildConfirmed(child) ? 1 : 0,
+        overdueGroupLabel(child),
+    ]));
 }
 
 function renderOverdueSheet(overdue) {
     if (!dom.overdueSheetList) return;
+    const signature = getOverdueSheetSignature(overdue);
+    // MUST be assigned above the signature guard, not below it.
+    // openOverdueSheet always calls this, but it returns early when the row set
+    // is unchanged, and closeOverdueSheet has just cleared both. Reopening with
+    // no data change -- the common case, since the board polls every 3s and a
+    // quiet room returns identical rows -- would then leave them empty while the
+    // list still had rows on screen, and updateOverdueUI seeds retention only
+    // from drawerRenderedIds. The reopened drawer would then hold nothing steady
+    // for the rest of that session: the next confirmation deletes the row and
+    // shifts everything below it up one.
+    drawerRenderedIds = new Set(overdue.map(getChildId).filter(Boolean));
+    if (signature === lastSheetSignature) return;
+    lastSheetSignature = signature;
     if (overdue.length === 0) {
         dom.overdueSheetList.innerHTML = '<div class="text-center py-6 text-sm text-slate-500">No overdue checkouts</div>';
         return;
     }
     const nowMs = Date.now();
-    dom.overdueSheetList.innerHTML = overdue.map((child) => {
+    const markup = overdue.map((child) => {
         const name = `${escapeHtml(child.first_name)} ${escapeHtml(child.last_name)}`;
         const code = child.source === 'manual' ? '---' : escapeHtml(child.security_code || '----');
         const childId = escapeHtml(getChildId(child));
@@ -253,10 +317,7 @@ function renderOverdueSheet(overdue) {
         const checkedOutAtMs = child.checked_out_at_ms ?? getCheckedOutTimestamp(child.checked_out_at);
         const confirmed = isChildConfirmed(child);
         const barColor = getLocationGroupColor(child.location_group_id);
-        const groupLabel = child.location_group_id == null ? 'Unassigned' : (() => {
-            const g = locationGroups.find((lg) => Number(lg.id) === Number(child.location_group_id));
-            return g ? escapeHtml(g.name) : `Group ${escapeHtml(String(child.location_group_id))}`;
-        })();
+        const groupLabel = overdueGroupLabel(child);
         return `
             <div class="bg-white rounded-lg shadow flex overflow-hidden">
                 <div style="background-color:${barColor}; width:6px; flex-shrink:0" aria-hidden="true"></div>
@@ -279,6 +340,15 @@ function renderOverdueSheet(overdue) {
             </div>
         `;
     }).join('');
+    // Morph rather than replace, same as the main list: unchanged rows keep
+    // their DOM nodes, so confirming one child in a long drawer patches a single
+    // row. The rows carry no id, so morphdom aligns them positionally. That is
+    // sound because the drawer is sorted oldest-first and every newly-overdue
+    // child is by definition the newest, so an arrival always appends at the
+    // tail. A cross-device *un*-confirm does insert mid-list, at the child's
+    // chronological position -- correct, but every row from there down is
+    // rewritten rather than one row patched.
+    morphChildren(dom.overdueSheetList, markup);
     cacheChildTimeElements(dom.overdueSheetList);
 }
 
@@ -301,26 +371,61 @@ function updateOverdueUI() {
             if (count > lastOverdueCount) {
                 jiggleOverdueBadge();
             }
-        } else if (isOverdueSheetOpen) {
-            // Defer hiding the badge and auto-closing the drawer while the
-            // sheet is open — keep confirmed rows visible until close.
-            overdueSheetNeedsRefresh = true;
         } else {
+            // The badge is occluded by the open sheet (z-30, bottom-4, behind an
+            // opaque z-40 panel covering the bottom 80vh), so hiding it changes
+            // nothing on screen -- but the deferred hide used to leave the badge
+            // showing its last non-zero count, which put "12 overdue. Tap to
+            // view" directly above a header reading "No overdue".
             dom.overdueBadge.classList.add('hidden');
-            closeOverdueSheet();
+            dom.overdueBadge.textContent = 'overdue';
+            dom.overdueBadge.setAttribute('aria-label', 'No overdue checkouts');
+            // Defer only the auto-close, so confirmed rows stay visible until
+            // the reader dismisses the drawer.
+            if (!isOverdueSheetOpen) {
+                closeOverdueSheet();
+            }
         }
     }
 
     // While the drawer is open, keep confirmed rows visible until close,
     // but still allow newly-overdue children to appear.
     if (isOverdueSheetOpen) {
-        if (count !== lastOverdueCount) {
-            overdueSheetNeedsRefresh = true;
-        }
+        // A failed poll empties childrenData. With nothing to compare against we
+        // cannot know what changed, so leave the drawer exactly as it is. Pruning
+        // against an empty list would empty the open drawer and then rebuild it
+        // from scratch on recovery -- the exact reflow this guards against.
+        // Keyed on the failure flag, NOT on childrenData being empty: an empty
+        // payload is also what a *successful* poll reports once every checkout
+        // has aged past checked_out_after (-31m in the production entry links),
+        // and those rows really are gone and must be dropped.
+        if (lastPollFailed) return;
+
         lastOverdueCount = count;
 
         if (dom.overdueSheet) {
-            const liveIds = new Set(overdue.map(getChildId));
+            // The drawer is a frozen snapshot of who was overdue when it opened.
+            // Three things together mean the list cannot move under the reader:
+            //
+            //   1. Nothing is ever inserted. A child crossing the 5-minute
+            //      threshold while the drawer is open is not added; close and
+            //      reopen to see them. That is what stops the top of the list
+            //      being pushed down by every new arrival.
+            //   2. The only rows removed are children aging out of the polled
+            //      window (-31m). Those are the oldest, so newest-first keeps
+            //      them at the tail, where a removal disturbs nothing above it.
+            //   3. A confirmation repaints in place rather than removing.
+            //
+            // A row the payload no longer carries is dropped outright rather than
+            // held from a cache: inventing data for it would be a second kind of
+            // lie, and the drawer is not meant to be kept open long enough for
+            // that to matter. The one case that can still shift the list is a
+            // *confirmed* child aging out of the window, because a tombstone
+            // keeps its chronological position rather than moving to the tail.
+            drawerRenderedIds.forEach((id) => overdueRetainedIds.add(id));
+            const snapshotIds = drawerRenderedIds;
+            const frozen = overdue.filter((child) => snapshotIds.has(getChildId(child)));
+            const liveIds = new Set(frozen.map(getChildId));
             const retainedChildren = [];
             overdueRetainedIds.forEach((id) => {
                 if (liveIds.has(id)) {
@@ -332,26 +437,28 @@ function updateOverdueUI() {
                 if (child) {
                     retainedChildren.push(child);
                 } else {
+                    // Left the payload: drop it rather than keep a stale copy.
                     overdueRetainedIds.delete(id);
                 }
             });
-            const drawerOverdue = [...overdue, ...retainedChildren].sort(
-                (a, b) => ((a.checked_out_at_ms ?? 0) - (b.checked_out_at_ms ?? 0)) || compareByCheckoutId(a, b)
+            const drawerOverdue = [...frozen, ...retainedChildren].sort(
+                (a, b) => ((b.checked_out_at_ms ?? 0) - (a.checked_out_at_ms ?? 0)) || compareByCheckoutId(a, b)
             );
             renderOverdueSheet(drawerOverdue);
             const countEl = document.getElementById('overdue-sheet-count');
-            if (countEl) countEl.textContent = drawerOverdue.length > 0 ? `${drawerOverdue.length} overdue` : 'No overdue';
+            // Count the live overdue children, not the rows on screen, so this
+            // agrees with the badge right above it rather than counting
+            // tombstones.
+            if (countEl) countEl.textContent = count > 0 ? `${count} overdue` : 'No overdue';
         }
         return;
     }
 
     lastOverdueCount = count;
 
-    if (dom.overdueSheet) {
-        renderOverdueSheet(overdue);
-        const countEl = document.getElementById('overdue-sheet-count');
-        if (countEl) countEl.textContent = count > 0 ? `${count} overdue` : 'No overdue';
-    }
+    // Drawer is closed: the badge above is the only visible surface, so leave
+    // the hidden list alone. openOverdueSheet re-renders a fresh snapshot, so
+    // nothing here can be seen stale.
 }
 
 let bodyScrollLock = null;
@@ -389,7 +496,10 @@ function unlockBodyScroll() {
 function openOverdueSheet() {
     if (!dom.overdueSheet || !dom.overdueSheetBackdrop) return;
     isOverdueSheetOpen = true;
-    overdueSheetNeedsRefresh = false;
+    // Captured before the focus move below, so close can put it back. The sheet is
+    // a role="dialog" that occludes the badge, so leaving focus on whatever opened
+    // it strands keyboard and screen-reader users on an invisible control.
+    overdueSheetReturnFocus = document.activeElement;
     overdueRetainedIds.clear();
     // Fresh snapshot on every open so prior confirms are reflected
     const overdue = getOverdueChildren();
@@ -398,8 +508,13 @@ function openOverdueSheet() {
     if (countEl) countEl.textContent = overdue.length > 0 ? `${overdue.length} overdue` : 'No overdue';
     dom.overdueSheet.classList.remove('translate-y-full');
     dom.overdueSheet.setAttribute('aria-hidden', 'false');
+    // Must come before the focus() call below: an inert element cannot take
+    // focus, so leaving this set would silently strand focus on the opener.
+    dom.overdueSheet.removeAttribute('inert');
     dom.overdueSheetBackdrop.classList.remove('hidden');
     lockBodyScroll();
+    // preventScroll so focusing does not fight the body-scroll lock.
+    dom.overdueSheet.focus({ preventScroll: true });
 }
 
 function closeOverdueSheet() {
@@ -416,10 +531,28 @@ function closeOverdueSheet() {
         isOverdueSheetOpen = false;
     }
     overdueRetainedIds.clear();
-    if (overdueSheetNeedsRefresh && !isOverdueSheetOpen) {
-        overdueSheetNeedsRefresh = false;
-        updateOverdueUI();
+    drawerRenderedIds = new Set();
+    // Hand focus back to whatever opened the sheet. Skipped when there is
+    // nothing worth restoring to, e.g. the badge auto-close path, and when the
+    // opener has since left the document.
+    const returnFocus = overdueSheetReturnFocus;
+    overdueSheetReturnFocus = null;
+    if (returnFocus && returnFocus !== document.body && returnFocus.isConnected
+        && typeof returnFocus.focus === 'function') {
+        returnFocus.focus({ preventScroll: true });
     }
+    // Set after the focus restore above, never before: an inert subtree cannot
+    // take focus, so marking it first would make that restore a no-op and
+    // strand focus on <body>.
+    //
+    // translate-y-full alone does not hide this drawer from the tab order. The
+    // sheet keeps visibility:visible and pointer-events:auto while parked below
+    // the viewport, so all ~60 row checkboxes stay focusable and Space on one
+    // confirms a real checkout the user cannot see. inert drops the subtree
+    // from tab order, blocks pointer events, and hides it from the a11y tree in
+    // one attribute; aria-hidden above only covers assistive tech and does not
+    // affect focusability.
+    dom.overdueSheet.setAttribute('inert', '');
 }
 
 function syncConfirmedStates() {
@@ -668,7 +801,6 @@ if (typeof window !== 'undefined') {
     window.syncLocationGroupUIFromURL = syncLocationGroupUIFromURL;
     window.fetchLocationGroups = fetchLocationGroups;
     window.getOverdueChildren = getOverdueChildren;
-    window.getOverdueCount = getOverdueCount;
     window.updateOverdueUI = updateOverdueUI;
     window.jiggleOverdueBadge = jiggleOverdueBadge;
     window.openOverdueSheet = openOverdueSheet;
@@ -763,14 +895,12 @@ function updateTimes() {
     // Also update any overdue-sheet pills that share the same child id
     if (dom.overdueSheetList) {
         dom.overdueSheetList.querySelectorAll('.child-time[data-child-id]').forEach((el) => {
-            const id = el.dataset.childId;
-            const child = childrenData.find((c) => getChildId(c) === id);
+            const child = childrenData.find((c) => getChildId(c) === el.dataset.childId);
             if (!child) return;
             const checkedOutAtMs = child.checked_out_at_ms ?? getCheckedOutTimestamp(child.checked_out_at);
             const nextValue = calculateMinutesAgoFromTimestamp(checkedOutAtMs, nowMs);
             if (el.textContent !== nextValue) el.textContent = nextValue;
-            const confirmed = isChildConfirmed(child);
-            applyPillColor(el, child, confirmed, nowMs);
+            applyPillColor(el, child, isChildConfirmed(child), nowMs);
         });
     }
 }
@@ -828,6 +958,7 @@ async function fetchChildrenData() {
             .sort((a, b) => (b.checked_out_at_ms - a.checked_out_at_ms) || compareByCheckoutId(a, b));
 
         childrenData = sortedData;
+        lastPollFailed = false;
         if (filterChanged) {
             // Filter changed: treat this response as the new baseline rather
             // than a set of arrivals, so existing children don't flash.
@@ -865,6 +996,7 @@ async function fetchChildrenData() {
         if (error?.name === 'AbortError') return;
         console.error('Error fetching children data:', error);
         childrenData = [];
+        lastPollFailed = true;
         lastListSignature = '';
         if (!dom.childrenList) {
             dom.childrenList = document.getElementById('children-list');
@@ -1133,12 +1265,11 @@ document.addEventListener('DOMContentLoaded', function () {
         const source = checkbox.dataset.source;
         const label = checkbox.closest('[data-confirmed-label]');
         const previousConfirmed = label?.dataset.confirmedState === 'confirmed';
-        // Retain confirmed overdue rows in the drawer until it closes.
-        if (wasOverdue && !previousConfirmed && checkbox.checked && isOverdueSheetOpen) {
-            overdueRetainedIds.add(childId);
-        } else if (!checkbox.checked) {
-            overdueRetainedIds.delete(childId);
-        }
+        // No retention bookkeeping here. An un-ticked child is immediately live
+        // overdue again, and the retention loop in updateOverdueUI drops any
+        // retained id that is in the live set on the very next tick -- which
+        // this path always reaches, since it calls updateOverdueUI() below.
+        // Deleting a matching statement here changed nothing observable.
         updateConfirmedIcon(checkbox);
         confirmCheckedOut(source, planningCenterId, publicId, checkbox, checkbox.checked, previousConfirmed);
         const child = childrenData.find((item) => getChildId(item) === childId);
