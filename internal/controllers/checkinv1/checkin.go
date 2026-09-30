@@ -35,16 +35,12 @@ import (
 
 const defaultCheckedOutAfterDelta = -12 * time.Hour
 
-// Ceiling on an explicit ?limit=. The repo layer skips its LIMIT clause when
-// filter.Limit is 0, so an unbounded caller asks for the whole table in one
-// response: every child's name, security_code (the code that releases them),
-// and exact checkout timestamps. This bound is deliberately far above what the
-// UI asks for -- checkoutsv1/checkouts.js sends 100 -- so it cannot clip a real
-// request, while still keeping one response from materializing the full table.
+// Ceiling on an explicit ?limit=, well above the 100 the UI asks for. The repo
+// skips its LIMIT clause when filter.Limit is 0, so an unbounded caller gets
+// the whole table -- every child's name, security_code, and checkout time.
 //
-// This caps only an explicit limit. A request that omits ?limit= is unchanged
-// and still unbounded, which is what manual-checkins.js relies on today; making
-// the default bounded is a separate behavior change.
+// Only an explicit limit is capped. Omitting ?limit= is still unbounded,
+// which is what manual-checkins.js relies on today.
 const maxCheckoutsLimit = 1000
 
 type Controller struct {
@@ -405,11 +401,8 @@ func buildFilter(c *fiber.Ctx) (checkin.Filter, error) {
 		if err != nil {
 			return checkin.Filter{}, errors.New("cannot parse limit")
 		}
-		// <= 0, not < 0. The repo treats Limit 0 as "no limit at all"
-		// (checkin.ListCheckins only applies a LIMIT when Limit > 0), so
-		// accepting 0 let ?limit=0 return the entire checkins table while
-		// claiming to be a limit. Rejecting only negatives also contradicted
-		// this error message.
+		// <= 0, not < 0: the repo treats Limit 0 as no limit at all, so
+		// accepting it returned the whole checkins table.
 		if limitInt <= 0 {
 			return checkin.Filter{}, errors.New("limit must be positive")
 		}
