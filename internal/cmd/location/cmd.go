@@ -24,7 +24,7 @@ var Commands = []*cli.Command{
 			},
 			&cli.StringFlag{
 				Name:    "db-file",
-				Value:   "kids-checkin.db",
+				Value:   db.DefaultDBFile,
 				Sources: cli.NewValueSourceChain(cli.EnvVar("DB_FILE")),
 			},
 		},

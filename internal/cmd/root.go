@@ -7,6 +7,7 @@ import (
 	"kids-checkin/internal/cmd/checkins"
 	"kids-checkin/internal/cmd/checkoutsfetcher"
 	"kids-checkin/internal/cmd/location"
+	"kids-checkin/internal/db"
 
 	"github.com/urfave/cli/v3"
 )
@@ -25,7 +26,7 @@ func NewCommand() *cli.Command {
 					},
 					&cli.StringFlag{
 						Name:    "db-file",
-						Value:   "kids-checkin.db",
+						Value:   db.DefaultDBFile,
 						Sources: cli.NewValueSourceChain(cli.EnvVar("DB_FILE")),
 					},
 				},
@@ -37,7 +38,7 @@ func NewCommand() *cli.Command {
 				Flags: []cli.Flag{
 					&cli.StringFlag{
 						Name:    "db-file",
-						Value:   "kids-checkin.db",
+						Value:   db.DefaultDBFile,
 						Sources: cli.NewValueSourceChain(cli.EnvVar("DB_FILE")),
 					},
 					&cli.DurationFlag{

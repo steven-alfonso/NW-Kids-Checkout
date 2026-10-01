@@ -10,6 +10,19 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
+// DefaultDBFile is the path used when neither --db-file nor DB_FILE is set.
+//
+// It must match KIDS_CHECKIN_DB_FILE in the Makefile, because `make db-reset`
+// and `make db-seed` write there. The two had drifted: the Makefile used
+// database/kids-checkin.db while every CLI flag defaulted to kids-checkin.db in
+// the repo root, so running the binary without DB_FILE silently opened a
+// different file than the one just seeded -- usually an empty or session-only
+// sqlite file, which fails at query time rather than at startup.
+//
+// cmd/random-data already used the database/ path; it now shares this
+// constant so the next flag cannot drift either.
+const DefaultDBFile = "database/kids-checkin.db"
+
 // InitDB initializes the database connection.
 func InitDB(dataSourceName string) (*sql.DB, error) {
 	if dataSourceName == "" {

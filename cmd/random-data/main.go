@@ -30,7 +30,7 @@ func main() {
 	if dbFile == "" {
 		dbFile = os.Getenv("DB_FILE")
 		if dbFile == "" {
-			dbFile = "database/kids-checkin.db"
+			dbFile = db.DefaultDBFile
 		}
 	}
 
