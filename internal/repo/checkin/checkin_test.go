@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	dbschema "kids-checkin/db"
 	"kids-checkin/internal/db"
 	"kids-checkin/internal/repo"
 
@@ -613,8 +612,7 @@ func Test_sqliteRepo_ListCheckins_filter_by_EventID(t *testing.T) {
 func Test_sqliteRepo_ListCheckins_includes_location_group_id(t *testing.T) {
 	tDB, err := sql.Open("sqlite3", ":memory:")
 	require.NoError(t, err)
-	_, err = tDB.Exec(dbschema.Schema)
-	require.NoError(t, err)
+	execSchema(t, tDB)
 	t.Cleanup(func() { _ = tDB.Close() })
 	s := NewRepo(tDB)
 
@@ -669,8 +667,7 @@ func Test_sqliteRepo_ListCheckins_includes_location_group_id(t *testing.T) {
 func Test_sqliteRepo_ListCheckins_filter_by_multiple_location_group_ids(t *testing.T) {
 	tDB, err := sql.Open("sqlite3", ":memory:")
 	require.NoError(t, err)
-	_, err = tDB.Exec(dbschema.Schema)
-	require.NoError(t, err)
+	execSchema(t, tDB)
 	t.Cleanup(func() { _ = tDB.Close() })
 	s := NewRepo(tDB)
 
@@ -741,4 +738,14 @@ func Test_sqliteRepo_ListCheckins_filter_by_multiple_location_group_ids(t *testi
 		require.NoError(t, err)
 		require.Len(t, list, 3)
 	})
+}
+
+// execSchema applies db/structure.sql to tDB. The schema snapshot is read from
+// disk rather than embedded, so tests reach it through internal/db.
+func execSchema(t *testing.T, tDB *sql.DB) {
+	t.Helper()
+	schema, err := db.StructureSQL()
+	require.NoError(t, err)
+	_, err = tDB.Exec(schema)
+	require.NoError(t, err)
 }

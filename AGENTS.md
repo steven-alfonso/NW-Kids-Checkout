@@ -13,10 +13,11 @@ This file guides coding agents working in this repo. Keep changes small, follow 
 - Run checkout fetcher worker: `make checkout-fetcher`
 
 ### Database tasks
-- Reset DB: `make db-reset`
+- Reset DB (empty schema): `make db-reset`
+- Build dev DB (schema + Planning Center reference topology): `make db-init`
 - Run migrations: `make db-migrate`
 - Create migration: `make db-new-migration NAME=<migration_name>`
-- Seed DB: `make db-seed`
+- Add random per-visit check-in data: `make random-data`
 
 ### Tests
 - Run all tests: `make test` (runs `godotenv go test ./...`)
@@ -49,7 +50,8 @@ This file guides coding agents working in this repo. Keep changes small, follow 
 - CLI commands: `internal/cmd/*` (e.g., `apiserver`, `checkout-fetcher`).
 - HTTP controllers: `internal/controllers/*` (versioned packages like `checkinv1`).
 - Repos and DB access: `internal/repo/*` using `squirrel` and `context.Context`.
-- DB helpers: `internal/db/*` (test DB prep, DB init).
+- The only package named `db`: `internal/db/*` (DB init, the shared `--db-file`
+  flag, schema snapshot reader, test DB prep). `db/` is data only.
 - Static web assets: `internal/web/static` (embedded FS via `cmd/assets`).
 - Migrations: `db/migrations` and schema snapshots in `db/structure.sql`.
 - Domain helpers/constants: `internal/static`.
@@ -130,6 +132,34 @@ This file guides coding agents working in this repo. Keep changes small, follow 
 - Static pages are loaded from `internal/web/static` and embedded FS.
 - When adding assets, check the embedding pipeline in `cmd/assets`.
 - Tailwind output lives at `internal/web/static/css/tailwind.css`.
+
+### Database paths
+- The database file path is defined **once**, as `db.DefaultDBFile`, and must
+  match `KIDS_CHECKIN_DB_FILE` in the Makefile. Commands get it from
+  `db.DBFileFlag()`; never spell out a path or define your own `db-file` flag.
+- Precedence is `--db-file` > `$DB_FILE` > `db.DefaultDBFile`. Do not set
+  `DB_FILE` in `.env` — the default already matches the Makefile, and an extra
+  copy is what let the two drift apart before. The Dockerfile's
+  `DB_FILE=/data/kids-checkin.db` is a deliberate override for the container
+  volume.
+- `TestDefaultDBFileMatchesMakefile` and `TestEveryDBCommandUsesTheSharedFlag`
+  in `internal/cmd` fail if either half drifts.
+
+### Schema
+- Migrations are applied by the `migrate` CLI, **not** by the application
+  binary. `db/structure.sql` is the snapshot `make db-migrate` generates from
+  them; the test database and `make db-init` load that snapshot.
+- `db/structure_test.go` fails if the snapshot drifts from the migrations.
+- The snapshot is read from disk via `internal/db.StructureSQL()`, not
+  `//go:embed` — nothing in production uses it, and embedding it shipped the
+  schema in every release binary.
+
+### Dev-only commands
+- `make db-init` builds a development database (schema + the real Planning
+  Center reference topology in `internal/cmd/dbinit/fixture.json`).
+- The `db-init` command is behind the `//go:build dev` tag, so it is absent from
+  production binaries, and it refuses to run unless `static.IsDev()`. A new
+  dev-only command should do both. `make db-init` applies `-tags dev` itself.
 
 ### Dev-only assets (debug tooling)
 - Dev/debug tools live in `internal/web/dev-assets/` and are served at `/static/dev/*` **only when `ENVIRONMENT=dev`** (via `static.IsDev()`); in production they 404 and are not embedded into the binary. See `internal/web/dev-assets/README.md`.

@@ -23,11 +23,7 @@ var Commands = []*cli.Command{
 				Value:   -7 * 24 * time.Hour, // 7 days ago
 				Sources: cli.NewValueSourceChain(cli.EnvVar("CHECKINS_DELETE_OLDER_THAN_AGE")),
 			},
-			&cli.StringFlag{
-				Name:    "db-file",
-				Value:   db.DefaultDBFile,
-				Sources: cli.NewValueSourceChain(cli.EnvVar("DB_FILE")),
-			},
+			db.DBFileFlag(),
 		},
 		Action: deleteOlderThanCmd,
 	},
@@ -39,11 +35,7 @@ var Commands = []*cli.Command{
 				Name:  "force",
 				Usage: "Required to confirm destructive delete",
 			},
-			&cli.StringFlag{
-				Name:    "db-file",
-				Value:   db.DefaultDBFile,
-				Sources: cli.NewValueSourceChain(cli.EnvVar("DB_FILE")),
-			},
+			db.DBFileFlag(),
 		},
 		Action: seedPreviewCmd,
 	},

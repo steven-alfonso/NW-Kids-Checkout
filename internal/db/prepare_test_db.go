@@ -2,24 +2,30 @@ package db
 
 import (
 	"database/sql"
-
-	"kids-checkin/db"
 )
+
+// inMemoryDSN is the DSN for the shared in-memory database tests run against.
+// It carries no parameters of its own: InitDB appends the same
+// _foreign_keys/_busy_timeout/_txlock set production gets, so the test
+// database cannot drift from the real one on connection settings.
+const inMemoryDSN = "file::memory:?cache=shared"
 
 type Cleanup func()
 
 func PrepareTestDB() (*sql.DB, Cleanup, error) {
-	tempDB, err := sql.Open("sqlite3", "file::memory:?cache=shared&_foreign_keys=on&_busy_timeout=5000&_txlock=immediate")
+	tempDB, err := InitDB(inMemoryDSN)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	// DSN params _foreign_keys, _busy_timeout, _txlock are the load-bearing
-	// per-connection settings; no one-shot PRAGMA Exec needed here.
-
-	// Apply the schema to the in-memory database
-	_, err = tempDB.Exec(db.Schema)
+	schema, err := StructureSQL()
 	if err != nil {
+		_ = tempDB.Close()
+		return nil, nil, err
+	}
+
+	if _, err := tempDB.Exec(schema); err != nil {
+		_ = tempDB.Close()
 		return nil, nil, err
 	}
 

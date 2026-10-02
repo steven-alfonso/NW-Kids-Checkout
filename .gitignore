@@ -1,11 +1,13 @@
 node_modules/
 package-lock.json
 .DS_Store
-kids-checkin.db*
+
+# The local sqlite database and its WAL sidecars.
+database/
+
 bin/kids-checkin
 /kids-checkin
 .env
 tmp/*
 
-fiber.sqlite3
 .worktrees/

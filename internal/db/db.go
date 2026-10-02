@@ -2,9 +2,10 @@ package db
 
 import (
 	"database/sql"
-	"errors"
+	"fmt"
 	"log/slog"
 	"net/url"
+	"path/filepath"
 	"strings"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -13,25 +14,28 @@ import (
 // DefaultDBFile is the path used when neither --db-file nor DB_FILE is set.
 //
 // It must match KIDS_CHECKIN_DB_FILE in the Makefile, because `make db-reset`
-// and `make db-seed` write there. The two had drifted: the Makefile used
+// and `make db-init` write there. The two had drifted: the Makefile used
 // database/kids-checkin.db while every CLI flag defaulted to kids-checkin.db in
 // the repo root, so running the binary without DB_FILE silently opened a
 // different file than the one just seeded -- usually an empty or session-only
 // sqlite file, which fails at query time rather than at startup.
 //
-// cmd/random-data already used the database/ path; it now shares this
-// constant so the next flag cannot drift either.
+// Do not spell this path out anywhere else. Commands get it from DBFileFlag;
+// TestDefaultDBFileMatchesMakefile in internal/cmd ties it to the Makefile.
 const DefaultDBFile = "database/kids-checkin.db"
 
 // InitDB initializes the database connection.
 func InitDB(dataSourceName string) (*sql.DB, error) {
 	if dataSourceName == "" {
-		return nil, errors.New("missing database DSN")
+		// A blank DB_FILE in the environment resolves to an empty flag value
+		// rather than falling back to the default, so name the ways out.
+		return nil, fmt.Errorf("missing database DSN: pass --db-file, or set $%s, or unset it to use the default %s", EnvDBFile, DefaultDBFile)
 	}
 
-	slog.Info("initializing database connection", slog.String("dsn", dataSourceName))
+	dsn := resolveDSN(dataSourceName)
 
-	dsn := dataSourceName
+	slog.Info("initializing database connection", slog.String("dsn", dsn))
+
 	for _, kv := range [][2]string{
 		{"_foreign_keys", "on"},
 		{"_busy_timeout", "5000"},
@@ -63,6 +67,29 @@ func InitDB(dataSourceName string) (*sql.DB, error) {
 
 	slog.Info("database connection established")
 	return db, nil
+}
+
+// resolveDSN makes a plain file path absolute before it is opened, so the
+// database a process ends up using does not depend on its working directory.
+//
+// DefaultDBFile is relative, and that is precisely how the db-file/Makefile
+// drift stayed invisible: sqlite creates a missing file on demand, so a run
+// from the wrong directory opened a brand new, empty database and started
+// cleanly. Absolutizing makes the log line name the file that was actually
+// opened.
+//
+// A DSN carrying a query string (":memory:", cache=shared, mode=memory) is not
+// a file path and is passed through untouched -- absolutizing one would change
+// its meaning.
+func resolveDSN(dsn string) string {
+	if strings.ContainsAny(dsn, "?") || strings.Contains(dsn, ":memory:") {
+		return dsn
+	}
+	abs, err := filepath.Abs(dsn)
+	if err != nil {
+		return dsn
+	}
+	return abs
 }
 
 // ensureDSNParam appends "?key=value" or "&key=value" only if key is absent

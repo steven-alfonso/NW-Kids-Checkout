@@ -21,10 +21,15 @@ The project is structured as a command-line application with commands:
 ```shell
 touch .env
 ```
-2. Initialize and seed the database:
+2. Build a development database with the Planning Center reference topology:
 ```shell
-make db-reset db-seed
+make db-init
 ```
+`db-init` applies the schema and seeds 2 events, 3 location groups, 33 rooms,
+and 2 check windows, using their real Planning Center ids. It only exists in
+builds made with the `dev` build tag and refuses to run unless
+`ENVIRONMENT=dev`, so it cannot touch a production database. Add per-visit
+check-in data afterwards with `make random-data`.
 3. In one terminal, start the checkout fetcher:
 ```shell
 make checkout-fetcher
@@ -79,8 +84,10 @@ This will build the application and start the fetcher process.
 
 Delete old checkins (default 7 days):
 ```sh
-./bin/kids-checkin checkins delete-old --age -168h --db-file kids-checkin.db
-# Or via env: DB_FILE=kids-checkin.db godotenv ./bin/kids-checkin checkins delete-old
+./bin/kids-checkin checkins delete-old --age -168h
+# The database path comes from --db-file, then $DB_FILE, then the default
+# database/kids-checkin.db. It matches the Makefile, so `make db-reset` and a
+# bare `./bin/kids-checkin` always mean the same file.
 ```
 
 Seed preview data (DB equivalent of `internal/web/dev-assets/preview.js`):
@@ -90,7 +97,6 @@ This mirrors `loadPreviewData()` in the browser but writes directly to SQLite vi
 ```sh
 # Requires --force (destructive operation). Respects --db-file / $DB_FILE.
 godotenv ./bin/kids-checkin checkins seed-preview --force
-godotenv ./bin/kids-checkin checkins seed-preview --force --db-file database/kids-checkin.db
 ```
 
 Without `--force` the command exits with `must pass --force to seed preview data`.
@@ -126,9 +132,29 @@ make test
 
 The project uses SQLite for its database. Database migrations are managed with the `migrate` tool.
 
-- **Resetting the database:** `make db-reset`
+- **Resetting the database (empty schema):** `make db-reset`
+- **Building a development database (schema + reference topology):** `make db-init`
 - **Running migrations:** `make db-migrate`
 - **Creating a new migration:** `make db-new-migration NAME=<migration_name>`
+
+Migrations are applied by the `migrate` CLI, not by the application binary.
+`db/structure.sql` is the snapshot `make db-migrate` generates from them, and
+it is what the test database and `db-init` load. `db/structure_test.go` fails if
+the snapshot drifts from the migrations.
+
+The database path is defined once, in `db.DefaultDBFile`, and every command
+takes it from `db.DBFileFlag()`:
+
+| Source | Precedence |
+| --- | --- |
+| `--db-file` | highest |
+| `$DB_FILE` | |
+| `db.DefaultDBFile` (`database/kids-checkin.db`) | lowest |
+
+Do not set `DB_FILE` in `.env` unless you need to point at a different file --
+the default already matches the Makefile, and an extra copy is what let the two
+drift apart before. Production sets `DB_FILE=/data/kids-checkin.db` in the
+Dockerfile, which is a deliberate override for the container's volume.
 
 ### Production Migrations
 Connect to a shell and run:

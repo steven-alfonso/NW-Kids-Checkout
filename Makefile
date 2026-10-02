@@ -12,6 +12,9 @@ help:
 	@grep -vE '^(\.PHONY|.*:=)' Makefile | grep '^[^#[:space:]].*:' | cut -d: -f1
 
 .PHONY: db-reset
+# Drops and recreates an empty database with the current schema. For a
+# development database with the Planning Center reference topology use
+# `make db-init` instead.
 db-reset:
 	rm -f $(KIDS_CHECKIN_DB_FILE) && \
     touch $(KIDS_CHECKIN_DB_FILE) && \
@@ -70,9 +73,20 @@ test:
 	go tool godotenv go test ./...
 	npm test
 
-.PHONY: db-seed
-db-seed:
-	go tool godotenv ./bin/db-seed
+.PHONY: db-init
+# Builds a development database: schema, migration stamp, and the Planning
+# Center reference topology. The db-init command only exists under the `dev`
+# build tag and refuses to run unless ENVIRONMENT=dev, so the tag is applied
+# here rather than left to the caller to remember.
+#
+# This replaces the old `make db-seed`, which shelled out to a checked-in bash
+# script (bin/db-seed) and a committed sqlite fixture (seed/seed.db). The
+# topology now lives in internal/cmd/dbinit/fixture.json and is applied through
+# parameterized statements, so it can no longer drift from the schema.
+#
+# Use `make random-data` afterwards for per-visit check-in data.
+db-init:
+	go tool godotenv go run -tags dev . db-init --db-file $(KIDS_CHECKIN_DB_FILE)
 
 .PHONY: random-data
 random-data:

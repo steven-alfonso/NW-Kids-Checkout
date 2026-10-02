@@ -32,6 +32,3 @@ Thumbs.db
 
 # air live reload
 tmp
-
-# Seed database used for testing
-seed
