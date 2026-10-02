@@ -808,14 +808,46 @@ if (typeof window !== 'undefined') {
     window.OVERDUE_MINUTES = OVERDUE_MINUTES;
 }
 
-const PILL_BG_CLASSES = ['bg-gray-400', 'bg-green-500', 'bg-yellow-500', 'bg-red-500'];
+// Pill classes, in the order they escalate. pill-clock-skew is the outlier: it
+// does not mean "overdue", it means the timestamp is not believable (see
+// signedMinutesFromTimestamp). It has to be in this list because applyPillColor
+// strips exactly these classes before adding the next one, so a pill that keeps
+// an old colour would silently fail to repaint when a child crosses the skew
+// boundary on a later tick.
+//
+// pill-clock-skew is defined in checkouts.html rather than as a Tailwind class:
+// tailwind.css is a committed build artifact and the Tailwind CLI cannot run in
+// every environment, so adding a utility colour there would mean hand-editing
+// generated output. A one-off class next to the page's other bespoke styles is
+// honest about that and keeps the generated file untouched.
+const PILL_BG_CLASSES = ['bg-gray-400', 'bg-green-500', 'bg-yellow-500', 'bg-red-500', 'pill-clock-skew'];
+
+// A checked_out_at later than the browser clock is always a defect -- either the
+// host and browser clocks disagree or Planning Center sent a bad value. It must
+// not be clamped to zero: that renders the child as "0 min ago" with the green
+// "just handed over" pill and sorts it to the top of the board, which reads as
+// the freshest, least-urgent checkout on the desk. Worse, the clamp hides the
+// skew entirely, so nobody knows to go fix the clock.
+//
+// Returns the signed minutes: negative means the timestamp is in the future.
+// Callers decide how to present that; nothing clamps it here.
+function signedMinutesFromTimestamp(checkedOutAtMs, nowMs) {
+    if (!checkedOutAtMs) return 0;
+    const now = typeof nowMs === 'number' ? nowMs : Date.now();
+    return Math.floor((now - checkedOutAtMs) / (1000 * 60));
+}
 
 function getTimePillClass(checkedOutAtMs, confirmed, nowMs) {
     if (confirmed) return 'bg-gray-400';
     if (!checkedOutAtMs) return 'bg-green-500';
 
-    const now = typeof nowMs === 'number' ? nowMs : Date.now();
-    const diffInMinutes = Math.max(0, (now - checkedOutAtMs) / (1000 * 60));
+    // Positive for a past checkout, negative for one ahead of the clock.
+    const diffInMinutes = signedMinutesFromTimestamp(checkedOutAtMs, nowMs);
+
+    // Flagged before the age thresholds so skew never borrows a colour that
+    // means something else. It is not part of the green->yellow->red
+    // escalation, so it cannot be mistaken for a real overdue reading.
+    if (diffInMinutes < 0) return 'pill-clock-skew';
 
     if (diffInMinutes >= 8) {
         return 'bg-red-500';
@@ -846,8 +878,12 @@ function getCheckedOutTimestamp(value) {
 function calculateMinutesAgoFromTimestamp(checkedOutAtMs, nowMs) {
     if (!checkedOutAtMs) return '0 min ago';
 
-    const now = typeof nowMs === 'number' ? nowMs : Date.now();
-    const diffInMinutes = Math.max(0, Math.floor((now - checkedOutAtMs) / (1000 * 60)));
+    const diffInMinutes = signedMinutesFromTimestamp(checkedOutAtMs, nowMs);
+
+    // Named rather than clamped, so the skew is visible on the pill itself and
+    // not only in its colour. "45 min ahead" is also what makes the cause
+    // obvious to whoever is standing at the desk.
+    if (diffInMinutes < 0) return `${-diffInMinutes} min ahead`;
 
     return `${diffInMinutes} min ago`;
 }

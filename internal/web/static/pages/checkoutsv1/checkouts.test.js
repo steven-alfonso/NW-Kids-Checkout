@@ -183,6 +183,45 @@ describe('checkoutsv1/checkouts', () => {
         expect(window.getTimePillClass(0, false, Date.now())).toBe('bg-green-500');
     });
 
+    it('flags a future checkout timestamp instead of reporting 0 min ago', () => {
+        const window = loadWindow();
+        const now = Date.parse('2024-06-01T12:00:00Z');
+        const ahead = (minutes) => now + minutes * 60 * 1000;
+
+        // A timestamp ahead of the clock is a data/clock problem, not a
+        // just-handed-over child. It must not read as the greenest, newest row.
+        expect(window.calculateMinutesAgoFromTimestamp(ahead(45), now)).toBe('45 min ahead');
+        expect(window.calculateMinutesAgoFromTimestamp(ahead(1), now)).toBe('1 min ahead');
+        expect(window.getTimePillClass(ahead(45), false, now)).toBe('pill-clock-skew');
+        expect(window.getTimePillClass(ahead(45), true, now)).toBe('bg-gray-400');
+
+        // Boundary: the same second is not "ahead", it is 0 min ago.
+        expect(window.calculateMinutesAgoFromTimestamp(now, now)).toBe('0 min ago');
+        expect(window.getTimePillClass(now, false, now)).toBe('bg-green-500');
+
+        // Past timestamps are untouched by this change.
+        expect(window.calculateMinutesAgoFromTimestamp(now - 3 * 60 * 1000, now)).toBe('3 min ago');
+        expect(window.getTimePillClass(now - 3 * 60 * 1000, false, now)).toBe('bg-green-500');
+    });
+
+    it('keeps a future-timestamped child out of the overdue list', () => {
+        const window = loadWindow();
+        window.__test.setChildrenData([
+            {
+                source: 'planning_center',
+                planning_center_id: 'future',
+                first_name: 'Future',
+                last_name: 'Kid',
+                security_code: '1',
+                location_group_id: 1,
+                checked_out_at_ms: Date.now() + 45 * 60 * 1000
+            },
+            pcChild('past')
+        ]);
+        const overdue = window.getOverdueChildren(Date.now());
+        expect(overdue.map((c) => c.planning_center_id)).not.toContain('future');
+    });
+
     it('swaps the pill class when confirmed state changes', () => {
         const html = `<!doctype html>
             <html>

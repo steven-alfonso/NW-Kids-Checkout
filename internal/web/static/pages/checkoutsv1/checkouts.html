@@ -41,6 +41,15 @@
             filter: var(--confirmed-filter);
         }
 
+        /* A checked_out_at ahead of the browser clock means the host and browser
+           disagree, or Planning Center sent a bad value. Deliberately outside the
+           green -> yellow -> red escalation so it cannot be misread as a real
+           overdue reading, and not a Tailwind utility: tailwind.css is a committed
+           build artifact that cannot be regenerated in every environment. */
+        .pill-clock-skew {
+            background-color: #f97316;
+        }
+
         #search-input::-webkit-search-cancel-button {
             cursor: pointer;
         }
