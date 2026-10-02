@@ -14,16 +14,10 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
-// The db-file default and the Makefile's KIDS_CHECKIN_DB_FILE drifted apart:
-// the Makefile seeded database/kids-checkin.db while every CLI flag defaulted
-// to kids-checkin.db in the repo root, so running the binary without DB_FILE
-// opened a different file than `make db-seed` had just populated. sqlite
-// creates that file on demand, so the server started cleanly and only failed
-// at query time.
-//
-// The flag defaults are all db.DefaultDBFile, so the compiler already ties
-// them together. What it cannot check is that the constant still matches the
-// Makefile, which is the half that actually drifted.
+// The flag defaults are db.DefaultDBFile, so the compiler already ties them
+// together. What it cannot check is that the constant still matches the
+// Makefile -- the half that actually drifted, and the half that let a run
+// without DB_FILE open a different file than `make db-reset` had written.
 func TestDefaultDBFileMatchesMakefile(t *testing.T) {
 	mk, err := os.ReadFile(filepath.Join("..", "..", "Makefile"))
 	require.NoError(t, err)

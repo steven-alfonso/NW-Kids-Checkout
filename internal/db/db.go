@@ -12,16 +12,13 @@ import (
 )
 
 // DefaultDBFile is the path used when neither --db-file nor DB_FILE is set.
+// Commands take it from DBFileFlag rather than repeating it.
 //
-// It must match KIDS_CHECKIN_DB_FILE in the Makefile, because `make db-reset`
-// and `make db-init` write there. The two had drifted: the Makefile used
-// database/kids-checkin.db while every CLI flag defaulted to kids-checkin.db in
-// the repo root, so running the binary without DB_FILE silently opened a
-// different file than the one just seeded -- usually an empty or session-only
-// sqlite file, which fails at query time rather than at startup.
-//
-// Do not spell this path out anywhere else. Commands get it from DBFileFlag;
-// TestDefaultDBFileMatchesMakefile in internal/cmd ties it to the Makefile.
+// It must match KIDS_CHECKIN_DB_FILE in the Makefile, since that is where
+// `make db-reset` and `make db-init` write. The two once drifted apart, and a
+// run without DB_FILE then opened a different file than the one just seeded.
+// The compiler ties the flags to this constant but nothing ties it to the
+// Makefile, so TestDefaultDBFileMatchesMakefile in internal/cmd does that.
 const DefaultDBFile = "database/kids-checkin.db"
 
 // InitDB initializes the database connection.
