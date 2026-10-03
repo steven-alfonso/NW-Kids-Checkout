@@ -17,10 +17,12 @@ The project is structured as a command-line application with commands:
 - [godotenv](https://github.com/joho/godotenv). Install via `go install github.com/joho/godotenv/cmd/godotenv@latest` once Golang is installed.
 
 ## Quick Start
-1. Create a `.env` file if it does not exist:
+1. Create a `.env` file if it does not exist. Copy the example and fill it in:
 ```shell
-touch .env
+cp .env.example .env
 ```
+An empty `.env` is not enough: `.env.example` is where `ENVIRONMENT=dev` lives,
+and step 2 below needs it.
 2. Build a development database with the Planning Center reference topology:
 ```shell
 make db-init
@@ -30,6 +32,11 @@ and 2 check windows, using their real Planning Center ids. It only exists in
 builds made with the `dev` build tag and refuses to run unless
 `ENVIRONMENT=dev`, so it cannot touch a production database. Add per-visit
 check-in data afterwards with `make random-data`.
+
+To rebuild a database that already has schema, pass `FORCE=1`:
+```shell
+make db-init FORCE=1
+```
 3. In one terminal, start the checkout fetcher:
 ```shell
 make checkout-fetcher

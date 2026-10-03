@@ -15,8 +15,13 @@ help:
 # Drops and recreates an empty database with the current schema. For a
 # development database with the Planning Center reference topology use
 # `make db-init` instead.
+#
+# The mkdir matters: database/ is gitignored, so it does not exist on a fresh
+# clone and both `touch` and sqlite3 would otherwise fail with a bare
+# "no such file or directory".
 db-reset:
-	rm -f $(KIDS_CHECKIN_DB_FILE) && \
+	mkdir -p $(dir $(KIDS_CHECKIN_DB_FILE)) && \
+    rm -f $(KIDS_CHECKIN_DB_FILE) && \
     touch $(KIDS_CHECKIN_DB_FILE) && \
     set -e; sqlite3 $(KIDS_CHECKIN_DB_FILE) < db/structure.sql && \
     latest=$$(ls db/migrations/*.up.sqlite | sort | tail -1 | xargs basename | cut -d_ -f1) && \
@@ -69,9 +74,21 @@ checkout-fetcher: build
 	go tool godotenv $(BIN_PATH) checkout-fetcher --use-check-windows --service
 
 .PHONY: test
+# Both tag sets are run. The dev-tagged packages hold every test for the
+# dev-only db-init command; without -tags dev those packages are skipped
+# entirely, which is how a few hundred lines of dbinit tests went unrun.
 test:
 	go tool godotenv go test ./...
+	go tool godotenv go test -tags dev ./...
 	npm test
+
+.PHONY: test-trimpath
+# Same suite with -trimpath. The schema snapshot is read from disk, and its
+# path is resolved from runtime.Caller, which -trimpath rewrites to a
+# module-relative path -- so this catches resolution that only works when the
+# build happens to record absolute source paths.
+test-trimpath:
+	go tool godotenv go test -trimpath ./...
 
 .PHONY: db-init
 # Builds a development database: schema, migration stamp, and the Planning
@@ -85,8 +102,16 @@ test:
 # parameterized statements, so it can no longer drift from the schema.
 #
 # Use `make random-data` afterwards for per-visit check-in data.
+#
+# ENVIRONMENT=dev is set here rather than left to .env: the command refuses to
+# run without it, and a fresh clone has no .env at all, so relying on it made
+# the documented first-run path fail. --force is opt-in via
+# `make db-init FORCE=1` so that rebuilding an existing database is possible
+# without hand-typing the go run invocation.
 db-init:
-	go tool godotenv go run -tags dev . db-init --db-file $(KIDS_CHECKIN_DB_FILE)
+	mkdir -p $(dir $(KIDS_CHECKIN_DB_FILE)) && \
+    ENVIRONMENT=dev go tool godotenv go run -tags dev . db-init \
+      --db-file $(KIDS_CHECKIN_DB_FILE) $(if $(FORCE),--force,)
 
 .PHONY: random-data
 random-data:

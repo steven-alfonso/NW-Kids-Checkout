@@ -20,7 +20,9 @@ This file guides coding agents working in this repo. Keep changes small, follow 
 - Add random per-visit check-in data: `make random-data`
 
 ### Tests
-- Run all tests: `make test` (runs `godotenv go test ./...`)
+- Run all tests: `make test` (runs `godotenv go test ./...`, then the same with
+  `-tags dev`, then `npm test`)
+- Run all tests under `-trimpath`: `make test-trimpath`
 - Run a single package: `godotenv go test ./internal/repo/checkin`
 - Run a single test: `godotenv go test ./internal/repo/checkin -run Test_sqliteRepo_ListCheckins`
 - Run a subtest: `godotenv go test ./internal/repo/checkin -run Test_sqliteRepo_ListCheckins/filter_by_location_ID`
@@ -50,8 +52,11 @@ This file guides coding agents working in this repo. Keep changes small, follow 
 - CLI commands: `internal/cmd/*` (e.g., `apiserver`, `checkout-fetcher`).
 - HTTP controllers: `internal/controllers/*` (versioned packages like `checkinv1`).
 - Repos and DB access: `internal/repo/*` using `squirrel` and `context.Context`.
-- The only package named `db`: `internal/db/*` (DB init, the shared `--db-file`
-  flag, schema snapshot reader, test DB prep). `db/` is data only.
+- Two packages are named `db`: the Go package `internal/db/*` (DB init, the
+  shared `--db-file` flag, schema snapshot reader, test DB prep) and the
+  `kids-checkin/db` package made of `db/*_test.go`, which is where the snapshot
+  drift test lives. The `db/` directory is otherwise data: migrations and
+  `structure.sql`.
 - Static web assets: `internal/web/static` (embedded FS via `cmd/assets`).
 - Migrations: `db/migrations` and schema snapshots in `db/structure.sql`.
 - Domain helpers/constants: `internal/static`.
@@ -142,8 +147,24 @@ This file guides coding agents working in this repo. Keep changes small, follow 
   copy is what let the two drift apart before. The Dockerfile's
   `DB_FILE=/data/kids-checkin.db` is a deliberate override for the container
   volume.
-- `TestDefaultDBFileMatchesMakefile` and `TestEveryDBCommandUsesTheSharedFlag`
-  in `internal/cmd` fail if either half drifts.
+- Five tests in `internal/cmd/dbfile_test.go` guard this. Keep all five honest:
+  the first originally asserted nothing at all, and the third could not see a
+  whole class of regressions:
+  - `TestDefaultDBFileMatchesMakefile` ties the constant to the Makefile.
+  - `TestEnvExampleDoesNotPinDBFile` keeps `.env.example` free of `DB_FILE`.
+    `.env` itself is gitignored, so a stale `DB_FILE` there is still invisible;
+    only the tracked example can be checked.
+  - `TestEveryDBCommandUsesTheSharedFlag` walks the live command tree, so it
+    cannot see `cmd/random-data` (a separate `main`) or a command that opens the
+    database without declaring a flag at all.
+  - `TestDbFileFlagIsNeverRedefined` and `TestDBInitCallSiteDoesNotHardcodePath`
+    are the structural backstops: an AST rule forbidding any `StringFlag{Name:
+    "db-file"}` literal, and any `db.InitDB("literal")`. They need no list of
+    commands, which is what makes them complete where the tree walk is not.
+  - When adding a guard on AST or source text, check that it actually fires.
+    `assert.NotRegexp` takes the string to match as its third argument, and
+    `ast.BasicLit.Value` for a string keeps its quotes — both mistakes produce a
+    test that passes forever.
 
 ### Schema
 - Migrations are applied by the `migrate` CLI, **not** by the application
@@ -153,13 +174,25 @@ This file guides coding agents working in this repo. Keep changes small, follow 
 - The snapshot is read from disk via `internal/db.StructureSQL()`, not
   `//go:embed` — nothing in production uses it, and embedding it shipped the
   schema in every release binary.
+- That path is resolved from `runtime.Caller`, which `-trimpath` rewrites to a
+  module-relative path, so the candidate is verified before it is trusted and a
+  walk up from the working directory backs it up. `internal/db/schema_test.go`
+  covers the walk; `make test-trimpath` is what proves the whole suite survives
+  a trimmed build. The same trap exists in `internal/web/static.DevAssetsDir`.
 
 ### Dev-only commands
 - `make db-init` builds a development database (schema + the real Planning
   Center reference topology in `internal/cmd/dbinit/fixture.json`).
 - The `db-init` command is behind the `//go:build dev` tag, so it is absent from
   production binaries, and it refuses to run unless `static.IsDev()`. A new
-  dev-only command should do both. `make db-init` applies `-tags dev` itself.
+  dev-only command should do both. `make db-init` applies `-tags dev` itself,
+  and sets `ENVIRONMENT=dev` so the target does not depend on `.env` having
+  been filled in. `make db-init FORCE=1` passes `--force` to rebuild.
+- Its tests are behind the same tag, so `make test` runs `-tags dev ./...` as
+  well; without that, `internal/cmd/dbinit` is skipped entirely.
+- `make db-init` and `make db-reset` both `mkdir -p` the database directory.
+  `database/` is gitignored, so it is absent on a fresh clone and sqlite3
+  creates a missing file but never a missing directory.
 
 ### Dev-only assets (debug tooling)
 - Dev/debug tools live in `internal/web/dev-assets/` and are served at `/static/dev/*` **only when `ENVIRONMENT=dev`** (via `static.IsDev()`); in production they 404 and are not embedded into the binary. See `internal/web/dev-assets/README.md`.

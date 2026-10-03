@@ -5,6 +5,12 @@ package-lock.json
 # The local sqlite database and its WAL sidecars.
 database/
 
+# Also keep ignoring the pre-move repo-root path. It costs nothing and it
+# matters for a release or two: a stale binary, or any leftover --db-file
+# kids-checkin.db, would otherwise leave an untracked file at the root that
+# looks perfectly committable.
+kids-checkin.db*
+
 bin/kids-checkin
 /kids-checkin
 .env

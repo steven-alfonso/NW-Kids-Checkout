@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"kids-checkin/internal/db"
@@ -76,7 +77,7 @@ func Commands() []*cli.Command {
 				db.DBFileFlag(),
 				&cli.BoolFlag{
 					Name:  "force",
-					Usage: "Required to rebuild a database that already has data",
+					Usage: "Required to rebuild a database that already has schema",
 				},
 			},
 			Action: Run,
@@ -85,7 +86,15 @@ func Commands() []*cli.Command {
 }
 
 // Flags returns just the flags, for tests that drive Run directly.
-func Flags() []cli.Flag { return Commands()[0].Flags }
+func Flags() []cli.Flag {
+	commands := Commands()
+	if len(commands) == 0 {
+		// Commands is a literal, so this cannot happen today. Indexing [0]
+		// without it would turn a future edit into a panic in a test helper.
+		return nil
+	}
+	return commands[0].Flags
+}
 
 func Run(ctx context.Context, cmd *cli.Command) error {
 	log := slog.Default()
@@ -101,19 +110,29 @@ func Run(ctx context.Context, cmd *cli.Command) error {
 
 	log.Info("db-init: starting", slog.String("db_file", dbFile), slog.Bool("force", force))
 
+	// database/ is gitignored, so it does not exist on a fresh clone, and
+	// sqlite3 will not create a missing parent directory -- it only creates a
+	// missing file. Without this the documented first-run path fails with a
+	// bare "unable to open database file".
+	if dir := filepath.Dir(dbFile); dir != "" && dir != "." {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return fmt.Errorf("create database directory %s: %w", dir, err)
+		}
+	}
+
 	database, err := db.InitDB(dbFile)
 	if err != nil {
 		return fmt.Errorf("init db: %w", err)
 	}
 	defer func() { _ = database.Close() }()
 
-	populated, err := hasData(ctx, database)
+	populated, err := hasSchema(ctx, database)
 	if err != nil {
 		return err
 	}
 	switch {
 	case populated && !force:
-		return fmt.Errorf("%s already has data; re-run with --force to rebuild it", dbFile)
+		return fmt.Errorf("%s already has schema; re-run with --force to rebuild it", dbFile)
 	case populated:
 		log.Warn("db-init: rebuilding an existing database", slog.String("db_file", dbFile))
 		if err := dropEverything(ctx, database); err != nil {
@@ -135,12 +154,19 @@ func Run(ctx context.Context, cmd *cli.Command) error {
 	return nil
 }
 
-// hasData reports whether the app schema is already present. A missing or empty
-// file is fine to initialise; a populated one needs --force.
-func hasData(ctx context.Context, database *sql.DB) (bool, error) {
+// hasSchema reports whether the app schema is already present. A missing or
+// empty file is fine to initialise; one that already has tables needs --force.
+//
+// This counts every non-internal object rather than looking for one table by
+// name. Keying on a single table made the check lie in both directions: a
+// database left by `make db-reset` (schema, zero rows) was reported as
+// "already has data", while a database missing that one table took the
+// populate path and then failed inside applySchema with "table already exists",
+// which points at neither --force nor the real cause.
+func hasSchema(ctx context.Context, database *sql.DB) (bool, error) {
 	var n int
 	err := database.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='locations'`).Scan(&n)
+		`SELECT COUNT(*) FROM sqlite_master WHERE name NOT LIKE 'sqlite\_%' ESCAPE '\'`).Scan(&n)
 	if err != nil {
 		return false, fmt.Errorf("inspect existing schema: %w", err)
 	}
@@ -159,10 +185,18 @@ var keepTables = map[string]bool{
 	"fiber_storage": true,
 }
 
-// dropEverything removes every table except those in keepTables, so --force
-// yields a clean rebuild.
+// dropEverything removes every table, view and trigger except the ones in
+// keepTables, so --force yields a clean rebuild.
 func dropEverything(ctx context.Context, database *sql.DB) error {
-	names, err := tableNames(ctx, database)
+	tables, err := objectNames(ctx, database, "table")
+	if err != nil {
+		return err
+	}
+	views, err := objectNames(ctx, database, "view")
+	if err != nil {
+		return err
+	}
+	triggers, err := objectNames(ctx, database, "trigger")
 	if err != nil {
 		return err
 	}
@@ -182,12 +216,33 @@ func dropEverything(ctx context.Context, database *sql.DB) error {
 		return fmt.Errorf("defer foreign keys: %w", err)
 	}
 
-	for _, name := range names {
+	for _, name := range tables {
 		if keepTables[name] {
 			continue
 		}
 		if _, err := tx.ExecContext(ctx, `DROP TABLE IF EXISTS `+quoteIdentifier(name)); err != nil {
 			return fmt.Errorf("drop table %s: %w", name, err)
+		}
+	}
+
+	// Views and triggers have no such dependency on the tables above, so
+	// dropping them first would be safe too -- but they are dropped after for
+	// the same reason the tables are: a view left behind by a previous
+	// --force would otherwise survive the rebuild and collide with the schema
+	// being applied. A standalone index goes away with its table, and an index
+	// attached to a kept table is left alone, which is the intent of
+	// keepTables.
+	for _, kind := range []struct {
+		keyword string
+		names   []string
+	}{
+		{"VIEW", views},
+		{"TRIGGER", triggers},
+	} {
+		for _, name := range kind.names {
+			if _, err := tx.ExecContext(ctx, `DROP `+kind.keyword+` IF EXISTS `+quoteIdentifier(name)); err != nil {
+				return fmt.Errorf("drop %s %s: %w", strings.ToLower(kind.keyword), name, err)
+			}
 		}
 	}
 
@@ -197,15 +252,15 @@ func dropEverything(ctx context.Context, database *sql.DB) error {
 	return nil
 }
 
-// tableNames lists the user tables. SQLite's own bookkeeping tables
-// (sqlite_sequence and friends) are excluded, as is anything beginning with
-// "sqlite_": the LIKE pattern escapes the underscore so it cannot act as a
-// single-character wildcard.
-func tableNames(ctx context.Context, database *sql.DB) ([]string, error) {
+// objectNames lists the user-defined objects of one sqlite_master type.
+// SQLite's own bookkeeping (sqlite_sequence and anything beginning with
+// "sqlite_") is excluded: the LIKE pattern escapes the underscore so it cannot
+// act as a single-character wildcard.
+func objectNames(ctx context.Context, database *sql.DB, kind string) ([]string, error) {
 	rows, err := database.QueryContext(ctx,
-		`SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite\_%' ESCAPE '\' ORDER BY name`)
+		`SELECT name FROM sqlite_master WHERE type = ? AND name NOT LIKE 'sqlite\_%' ESCAPE '\' ORDER BY name`, kind)
 	if err != nil {
-		return nil, fmt.Errorf("list tables: %w", err)
+		return nil, fmt.Errorf("list %ss: %w", kind, err)
 	}
 	defer func() { _ = rows.Close() }()
 
@@ -213,12 +268,12 @@ func tableNames(ctx context.Context, database *sql.DB) ([]string, error) {
 	for rows.Next() {
 		var name string
 		if err := rows.Scan(&name); err != nil {
-			return nil, fmt.Errorf("scan table name: %w", err)
+			return nil, fmt.Errorf("scan %s name: %w", kind, err)
 		}
 		names = append(names, name)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("list tables: %w", err)
+		return nil, fmt.Errorf("list %ss: %w", kind, err)
 	}
 	return names, nil
 }
@@ -277,6 +332,22 @@ func applyFixture(ctx context.Context, database *sql.DB) error {
 	var f fixture
 	if err := json.Unmarshal(fixtureJSON, &f); err != nil {
 		return fmt.Errorf("parse fixture.json: %w", err)
+	}
+	// An empty collection parses cleanly and seeds nothing, so a truncated or
+	// mistyped fixture would otherwise report "db-init: complete" with zero
+	// rooms. Every section is required.
+	for _, section := range []struct {
+		name string
+		n    int
+	}{
+		{"location_groups", len(f.LocationGroups)},
+		{"events", len(f.Events)},
+		{"locations", len(f.Locations)},
+		{"event_check_windows", len(f.EventCheckWindows)},
+	} {
+		if section.n == 0 {
+			return fmt.Errorf("fixture.json has no %s; refusing to build an empty reference topology", section.name)
+		}
 	}
 
 	tx, err := database.BeginTx(ctx, nil)
@@ -359,12 +430,34 @@ func applyFixture(ctx context.Context, database *sql.DB) error {
 		return fmt.Errorf("commit fixture: %w", err)
 	}
 
+	// Counted from the database rather than from the fixture slices. Several of
+	// these repos upsert, so a duplicate planning_center_id -- the single most
+	// likely fixture edit -- inserts fewer rows than the fixture lists, and
+	// logging len(f.Locations) would report rooms that are not there.
+	counts, err := fixtureCounts(ctx, database)
+	if err != nil {
+		return err
+	}
 	slog.InfoContext(ctx, "db-init: seeded reference topology",
-		slog.Int("location_groups", len(f.LocationGroups)),
-		slog.Int("events", len(f.Events)),
-		slog.Int("locations", len(f.Locations)),
-		slog.Int("event_check_windows", len(f.EventCheckWindows)))
+		slog.Int("location_groups", counts["location_groups"]),
+		slog.Int("events", counts["events"]),
+		slog.Int("locations", counts["locations"]),
+		slog.Int("event_check_windows", counts["event_check_windows"]))
 	return nil
+}
+
+// fixtureCounts reads back the number of rows each seeded table ended up with.
+func fixtureCounts(ctx context.Context, database *sql.DB) (map[string]int, error) {
+	tables := []string{"location_groups", "events", "locations", "event_check_windows"}
+	counts := make(map[string]int, len(tables))
+	for _, table := range tables {
+		var n int
+		if err := database.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+quoteIdentifier(table)).Scan(&n); err != nil {
+			return nil, fmt.Errorf("count %s: %w", table, err)
+		}
+		counts[table] = n
+	}
+	return counts, nil
 }
 
 // resolveGroup turns a fixture's optional group name into the optional id the

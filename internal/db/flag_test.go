@@ -44,6 +44,15 @@ func TestDBFileFlag_precedence(t *testing.T) {
 		{"neither flag nor env falls back to the default", nil, nil, db.DefaultDBFile},
 		{"env supplies the path when no flag is given", ptr("/tmp/from-env.db"), nil, "/tmp/from-env.db"},
 		{"flag wins over env", ptr("/tmp/from-env.db"), []string{"--db-file", "/tmp/from-flag.db"}, "/tmp/from-flag.db"},
+
+		// These two pin the behaviour internal/db/db.go documents in its
+		// missing-DSN error: a blank DB_FILE does NOT fall back to the default,
+		// and an explicitly empty --db-file does not fall back either. Without
+		// them a future urfave/cli release that started trimming empty env
+		// values would silently change documented behaviour with a green suite.
+		{"blank env does not fall back to the default", ptr(""), nil, ""},
+		{"explicit empty flag does not fall back to env", ptr("/tmp/from-env.db"), []string{"--db-file", ""}, ""},
+		{"whitespace env is preserved for InitDB to reject", ptr("   "), nil, "   "},
 	}
 
 	for _, tc := range tests {

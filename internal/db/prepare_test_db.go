@@ -2,6 +2,7 @@ package db
 
 import (
 	"database/sql"
+	"fmt"
 )
 
 // inMemoryDSN is the DSN for the shared in-memory database tests run against.
@@ -12,21 +13,29 @@ const inMemoryDSN = "file::memory:?cache=shared"
 
 type Cleanup func()
 
+// PrepareTestDB opens the shared in-memory test database and applies the schema
+// snapshot to it.
+//
+// This file is deliberately not a _test.go file: PrepareTestDB is called from
+// test helpers in other packages. The cost of that is that it, and the dbDir
+// resolution behind StructureSQL, are linked into production binaries as dead
+// code. Nothing at runtime calls either; keeping them here is a deliberate
+// trade for not duplicating the helper into every package that needs it.
 func PrepareTestDB() (*sql.DB, Cleanup, error) {
 	tempDB, err := InitDB(inMemoryDSN)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("open in-memory test database: %w", err)
 	}
 
 	schema, err := StructureSQL()
 	if err != nil {
 		_ = tempDB.Close()
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("prepare test database: %w", err)
 	}
 
 	if _, err := tempDB.Exec(schema); err != nil {
 		_ = tempDB.Close()
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("apply schema to test database: %w", err)
 	}
 
 	return tempDB, func() { _ = tempDB.Close() }, nil

@@ -23,9 +23,12 @@ const DefaultDBFile = "database/kids-checkin.db"
 
 // InitDB initializes the database connection.
 func InitDB(dataSourceName string) (*sql.DB, error) {
-	if dataSourceName == "" {
+	if strings.TrimSpace(dataSourceName) == "" {
 		// A blank DB_FILE in the environment resolves to an empty flag value
 		// rather than falling back to the default, so name the ways out.
+		// Whitespace is rejected too: "   " is not a usable DSN, and accepting
+		// it created a file whose name is three spaces, silently, under an
+		// authoritative-looking absolute path in the log line below.
 		return nil, fmt.Errorf("missing database DSN: pass --db-file, or set $%s, or unset it to use the default %s", EnvDBFile, DefaultDBFile)
 	}
 
@@ -66,20 +69,36 @@ func InitDB(dataSourceName string) (*sql.DB, error) {
 	return db, nil
 }
 
-// resolveDSN makes a plain file path absolute before it is opened, so the
-// database a process ends up using does not depend on its working directory.
+// resolveDSN makes a plain file path absolute before it is opened, so the log
+// line names the file that was actually opened.
 //
-// DefaultDBFile is relative, and that is precisely how the db-file/Makefile
-// drift stayed invisible: sqlite creates a missing file on demand, so a run
-// from the wrong directory opened a brand new, empty database and started
-// cleanly. Absolutizing makes the log line name the file that was actually
-// opened.
+// It does not make the database independent of the working directory: a
+// relative path is resolved against the CWD, so running the binary from
+// elsewhere still opens a different file. That is a property of the default
+// being relative, not of this function -- what this buys is that the failure is
+// visible in the logs instead of silent.
 //
-// A DSN carrying a query string (":memory:", cache=shared, mode=memory) is not
-// a file path and is passed through untouched -- absolutizing one would change
-// its meaning.
+// A DSN that is not a plain path is passed through untouched. Absolutizing one
+// would change its meaning: ":memory:" and cache=shared are not files, and a
+// leading "file:" is a SQLite URI that mattn/go-sqlite3 recognises. Prepending
+// the working directory to "file:foo.db" buries the prefix mid-path, the driver
+// stops recognising it, and SQLite creates a file literally named "file:foo.db".
+// ResolvePath reports the file path InitDB would actually open for a DSN,
+// without opening it.
+//
+// Callers that need to open the same database a second time -- the Fiber
+// session store points at the app database and builds its own DSN -- should
+// take the path from here. Otherwise the app database is opened twice under two
+// spellings of the same relative path, which is exactly the ambiguity the
+// db-file/Makefile drift came from.
+//
+// It is idempotent: passing the result back through is a no-op.
+func ResolvePath(dsn string) string {
+	return resolveDSN(dsn)
+}
+
 func resolveDSN(dsn string) string {
-	if strings.ContainsAny(dsn, "?") || strings.Contains(dsn, ":memory:") {
+	if strings.ContainsAny(dsn, "?") || strings.Contains(dsn, ":memory:") || strings.HasPrefix(dsn, "file:") {
 		return dsn
 	}
 	abs, err := filepath.Abs(dsn)

@@ -148,6 +148,13 @@ func TestRun_forceDropsUnknownTablesButKeepsSessionStorage(t *testing.T) {
 	require.NoError(t, err)
 	_, err = database.Exec(`INSERT INTO table_from_a_future_migration (id) VALUES (1)`)
 	require.NoError(t, err)
+	// A view and a trigger have no dependency on the tables above, so unlike an
+	// index they are not removed along with the table they belong to. Left
+	// behind, they survive the rebuild and collide with the schema applied next.
+	_, err = database.Exec(`CREATE VIEW view_from_a_future_migration AS SELECT 1 AS one`)
+	require.NoError(t, err)
+	_, err = database.Exec(`CREATE TRIGGER trigger_from_a_future_migration AFTER INSERT ON locations BEGIN SELECT 1; END`)
+	require.NoError(t, err)
 	require.NoError(t, database.Close())
 
 	initDBAt(t, path, "--force")
@@ -160,6 +167,12 @@ func TestRun_forceDropsUnknownTablesButKeepsSessionStorage(t *testing.T) {
 	require.NoError(t, database.QueryRow(
 		`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='table_from_a_future_migration'`).Scan(&n))
 	assert.Zero(t, n, "a table the schema does not know about must not survive a rebuild")
+
+	for _, kind := range []string{"view", "trigger"} {
+		require.NoError(t, database.QueryRow(
+			`SELECT COUNT(*) FROM sqlite_master WHERE type = ? AND name = ?`, kind, kind+"_from_a_future_migration").Scan(&n))
+		assert.Zero(t, n, "a %s the schema does not know about must not survive a rebuild", kind)
+	}
 
 	// The session table and its row are left alone.
 	var sessions int
@@ -297,8 +310,41 @@ func TestRun_rejectsEmptyDBFile(t *testing.T) {
 	assert.Contains(t, err.Error(), "missing database DSN")
 }
 
-func TestMain(m *testing.M) {
-	// The gate reads ENVIRONMENT; make the default case explicit so a stray
-	// ambient value cannot make these tests pass or fail for the wrong reason.
-	os.Exit(m.Run())
+// database/ is gitignored, so it is absent on a fresh clone. sqlite3 creates a
+// missing file but never a missing directory, so without the MkdirAll in Run the
+// documented first-run path fails outright.
+func TestRun_createsTheDatabaseDirectory(t *testing.T) {
+	// A nested path whose parent does not exist, which is the fresh-clone case.
+	path := filepath.Join(t.TempDir(), "database", "kids-checkin.db")
+	require.NoDirExists(t, filepath.Dir(path))
+
+	initDBAt(t, path)
+
+	assert.FileExists(t, path, "db-init should have created the database directory and the file")
+}
+
+// A database built by `make db-reset` has schema and zero rows. It is still
+// "already built", and saying so in terms of schema rather than data is what
+// makes the refusal actionable.
+func TestRun_refusesAResetDatabaseWithoutForce(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "dev.db")
+	initDBAt(t, path)
+
+	// Leave schema in place with no fixture rows, the way `make db-reset` does.
+	database, err := db.InitDB(path)
+	require.NoError(t, err)
+	for _, table := range []string{"locations", "events", "location_groups", "event_check_windows"} {
+		_, err := database.Exec(`DELETE FROM ` + table)
+		require.NoError(t, err)
+	}
+	var rows int
+	require.NoError(t, database.QueryRow(`SELECT COUNT(*) FROM locations`).Scan(&rows))
+	require.Zero(t, rows)
+	require.NoError(t, database.Close())
+
+	cmd := &cli.Command{Flags: dbinit.Flags(), Action: dbinit.Run}
+	err = cmd.Run(context.Background(), []string{"prog", "--db-file", path})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "already has schema")
+	assert.NotContains(t, err.Error(), "already has data")
 }
