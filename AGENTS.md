@@ -20,6 +20,9 @@ This file guides coding agents working in this repo. Keep changes small, follow 
 
 ### Tests
 - Run all tests: `make test` (runs `godotenv go test ./...`)
+- CI runs `go test` directly rather than through `make test`: godotenv exits
+  non-zero when `.env` is absent, and it is gitignored. No test reads a real
+  `.env`; the ones that care about a variable set it with `t.Setenv`.
 - Run a single package: `godotenv go test ./internal/repo/checkin`
 - Run a single test: `godotenv go test ./internal/repo/checkin -run Test_sqliteRepo_ListCheckins`
 - Run a subtest: `godotenv go test ./internal/repo/checkin -run Test_sqliteRepo_ListCheckins/filter_by_location_ID`
@@ -33,6 +36,8 @@ This file guides coding agents working in this repo. Keep changes small, follow 
 ### Lint/format
 - Lint: no dedicated lint config found.
 - Format: use `gofmt` (Go standard). Use `go fmt ./...` before committing when editing Go code.
+- CI enforces `gofmt -l .` and `go vet ./...` (plus `-tags dev`), so an
+  unformatted file or a vet failure fails the build. `.github/workflows/ci.yml`.
 
 ## Repo structure and key tech
 
