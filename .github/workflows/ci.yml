@@ -86,38 +86,21 @@ jobs:
       - name: Test with the dev build tag
         run: go test -tags dev ./...
 
-      # TEMPORARY: these two are non-blocking, and should be made required once
-      # the db-file branch merges.
-      #
       # -trimpath is here for the same reason the Go version is not pinned in
-      # this file: it tests how the shipped binary is actually built. Once the
-      # db-file branch merges, db/structure.sql is read from disk and located
-      # via runtime.Caller, which -trimpath rewrites to a module-relative path.
-      # Resolution that works in a normal build can then fail in a trimmed one,
-      # and a plain `go test ./...` cannot see it.
+      # this file: it tests how the shipped binary is actually built. It needs
+      # its own pass because a plain `go test ./...` cannot see this class of
+      # failure at all.
       #
-      # Until that merge they fail for an unrelated, pre-existing reason:
-      # main's internal/web/static.DevAssetsDir resolves its path from
-      # runtime.Caller without verifying the result, so TestReadDevAsset cannot
-      # find internal/web/dev-assets/preview.js. Reproduced on main --
-      # `go test ./...` passes, `go test -trimpath ./...` fails.
-      #
-      # main's internal/web/static.DevAssetsDir resolves its path from
-      # runtime.Caller without verifying the result, and -trimpath rewrites that
-      # to a module-relative path, so TestReadDevAsset cannot find
-      # internal/web/dev-assets/preview.js. Reproduced on main: `go test
-      # ./...` passes and `go test -trimpath ./...` fails. The db-file branch
+      # These two steps were non-blocking while they were red. They caught a real
+      # bug: TestReadDevAsset could not find dev-assets/preview.js, because
+      # DevAssetsDir trusted runtime.Caller without verifying the result and
+      # -trimpath rewrites that to a module-relative path. DevAssetsDir now
       # verifies the candidate and falls back to walking up from the working
-      # directory, which fixes it.
-      #
-      # continue-on-error keeps a known failure from blocking every other PR
-      # while still surfacing it. Remove these flags in that PR.
+      # directory, so these are required again.
       - name: Test with -trimpath
-        continue-on-error: true
         run: go test -trimpath ./...
 
       - name: Test with -trimpath and the dev build tag
-        continue-on-error: true
         run: go test -trimpath -tags dev ./...
 
       # Builds the binary, which is what the release Dockerfile does. Catches a
