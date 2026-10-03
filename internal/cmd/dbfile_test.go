@@ -283,27 +283,55 @@ func stringValue(expr ast.Expr, decls map[string]string) (string, bool) {
 	}
 }
 
-// sameFileStringDecls maps the name of every package-level string constant and
-// variable in the file to its value. Cross-file and non-literal initialisers are
-// skipped: a single-file parse cannot follow them, and guessing would be worse
-// than not matching.
+// sameFileStringDecls maps the name of every string constant and variable
+// declared anywhere in the file to its value: package-level, in a grouped block,
+// or local to a function body.
+//
+// All three matter. Package-level alone missed `func f() { const n = "db-file" }`,
+// which is exactly the shape a person writes to dodge a grep for the literal.
+// Grouped blocks (`const ( ... )`) are handled by the ValueSpec loop, and
+// multi-name specs (`const a, b = "db-file", "x"`) are matched up positionally.
+//
+// Cross-file and non-literal initialisers are skipped: a single-file parse cannot
+// follow them, and guessing would be worse than not matching.
 func sameFileStringDecls(file *ast.File) map[string]string {
 	decls := make(map[string]string)
-	for _, decl := range file.Decls {
-		gen, ok := decl.(*ast.GenDecl)
-		if !ok || (gen.Tok != token.CONST && gen.Tok != token.VAR) {
-			continue
+	collect := func(gen *ast.GenDecl) {
+		if gen.Tok != token.CONST && gen.Tok != token.VAR {
+			return
 		}
 		for _, spec := range gen.Specs {
 			valueSpec, ok := spec.(*ast.ValueSpec)
-			if !ok || len(valueSpec.Names) != 1 || len(valueSpec.Values) != 1 {
+			if !ok {
 				continue
 			}
-			if resolved, ok := stringValue(valueSpec.Values[0], nil); ok {
-				decls[valueSpec.Names[0].Name] = resolved
+			// A spec may declare several names against several values; pair them
+			// positionally. iota-style implicit repeats have fewer values than
+			// names and are skipped, since guessing an iota value would be worse
+			// than not resolving the name at all.
+			for i, name := range valueSpec.Names {
+				if i >= len(valueSpec.Values) {
+					continue
+				}
+				if resolved, ok := stringValue(valueSpec.Values[i], nil); ok {
+					decls[name.Name] = resolved
+				}
 			}
 		}
 	}
+
+	for _, decl := range file.Decls {
+		if gen, ok := decl.(*ast.GenDecl); ok {
+			collect(gen)
+		}
+	}
+	// Function bodies hold their own const and var declarations.
+	ast.Inspect(file, func(n ast.Node) bool {
+		if gen, ok := n.(*ast.GenDecl); ok {
+			collect(gen)
+		}
+		return true
+	})
 	return decls
 }
 
