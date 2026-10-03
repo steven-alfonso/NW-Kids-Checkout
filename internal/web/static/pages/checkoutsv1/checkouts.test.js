@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { JSDOM } from 'jsdom';
+import { stubJsdomGaps } from '../../../../../test-support/jsdom-shims.js';
 
 const scriptPath = path.resolve(process.cwd(), 'internal/web/static/pages/checkoutsv1/checkouts.js');
 const script = fs.readFileSync(scriptPath, 'utf8');
@@ -42,6 +43,10 @@ function loadWindow({ html, url = 'http://localhost/', fetchImpl } = {}) {
     }));
     dom.window.setInterval = () => 0;
     dom.window.requestAnimationFrame = () => 0;
+    // Before eval, so the script below captures the stub rather than jsdom's
+    // unimplemented window.scrollTo, which prints "Not implemented" to stderr
+    // every time the overdue sheet opens or closes.
+    stubJsdomGaps(dom);
     dom.window.eval(morphdomScript);
     dom.window.eval(`${script}\n${exposeInternals}`);
     return dom.window;
