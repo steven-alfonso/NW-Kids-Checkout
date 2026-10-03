@@ -22,7 +22,21 @@ This file guides coding agents working in this repo. Keep changes small, follow 
 ### Tests
 - Run all tests: `make test` (runs `godotenv go test ./...`, then the same with
   `-tags dev`, then `npm test`)
-- Run all tests under `-trimpath`: `make test-trimpath`
+- Run all tests under `-trimpath`: `make test-trimpath` (both build-tag sets)
+- **Run the complete matrix before pushing: `make test-all`** (equivalent to
+  `make test && make test-trimpath`). See "Why -trimpath needs its own pass"
+  below — `make test` alone cannot catch the failure it describes.
+- Why `-trimpath` needs its own pass
+  - `db/structure.sql` is read from disk, not `//go:embed`'d, and its path is
+    resolved from `runtime.Caller`. `-trimpath` rewrites that to a module-relative
+    path, so resolution that only works when the build records absolute source
+    paths passes `go test ./...` and fails under `-trimpath`.
+  - This was verified by reverting `resolveDBDir` to the unverified
+    `runtime.Caller` form: `go test ./...` passed and only `make test-trimpath`
+    failed.
+  - There is no CI in this repository, so `make test-all` is the entire gate.
+    Run it before pushing changes to `internal/db`, `internal/web/static`, or
+    the db-file wiring.
 - Run a single package: `godotenv go test ./internal/repo/checkin`
 - Run a single test: `godotenv go test ./internal/repo/checkin -run Test_sqliteRepo_ListCheckins`
 - Run a subtest: `godotenv go test ./internal/repo/checkin -run Test_sqliteRepo_ListCheckins/filter_by_location_ID`
@@ -159,8 +173,15 @@ This file guides coding agents working in this repo. Keep changes small, follow 
     database without declaring a flag at all.
   - `TestDbFileFlagIsNeverRedefined` and `TestDBInitCallSiteDoesNotHardcodePath`
     are the structural backstops: an AST rule forbidding any `StringFlag{Name:
-    "db-file"}` literal, and any `db.InitDB("literal")`. They need no list of
+    "db-file"}`, and any `<db>.InitDB("literal")`. They need no list of
     commands, which is what makes them complete where the tree walk is not.
+  - Both resolve indirection rather than matching one spelling. The flag guard
+    follows a `Name:` value through a same-file `const`/`var`, so
+    `Name: dbFileFlagName` is caught along with `Name: "db-file"`. The InitDB
+    guard matches the receiver by **import path**, not by the identifier `db`,
+    so an aliased `import store "kids-checkin/internal/db"` is still checked.
+    They skip different sets: only `internal/db/flag.go` may declare the flag,
+    while the rest of `internal/db` passes literal DSNs to `InitDB` on purpose.
   - When adding a guard on AST or source text, check that it actually fires.
     `assert.NotRegexp` takes the string to match as its third argument, and
     `ast.BasicLit.Value` for a string keeps its quotes — both mistakes produce a

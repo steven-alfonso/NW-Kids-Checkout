@@ -21,19 +21,24 @@ help:
 # "no such file or directory".
 db-reset:
 	mkdir -p $(dir $(KIDS_CHECKIN_DB_FILE)) && \
-    rm -f $(KIDS_CHECKIN_DB_FILE) && \
-    touch $(KIDS_CHECKIN_DB_FILE) && \
-    set -e; sqlite3 $(KIDS_CHECKIN_DB_FILE) < db/structure.sql && \
-    latest=$$(ls db/migrations/*.up.sqlite | sort | tail -1 | xargs basename | cut -d_ -f1) && \
-    sqlite3 $(KIDS_CHECKIN_DB_FILE) "CREATE TABLE IF NOT EXISTS schema_migrations (version uint64, dirty bool); \
-        CREATE UNIQUE INDEX IF NOT EXISTS version_unique ON schema_migrations (version); \
-        INSERT INTO schema_migrations (version, dirty) VALUES ($$latest, 0);"
+	rm -f $(KIDS_CHECKIN_DB_FILE) && \
+	touch $(KIDS_CHECKIN_DB_FILE) && \
+	set -e; sqlite3 $(KIDS_CHECKIN_DB_FILE) < db/structure.sql && \
+	latest=$$(ls db/migrations/*.up.sqlite | sort | tail -1 | xargs basename | cut -d_ -f1) && \
+	sqlite3 $(KIDS_CHECKIN_DB_FILE) "CREATE TABLE IF NOT EXISTS schema_migrations (version uint64, dirty bool); \
+		CREATE UNIQUE INDEX IF NOT EXISTS version_unique ON schema_migrations (version); \
+		INSERT INTO schema_migrations (version, dirty) VALUES ($$latest, 0);"
 
 .PHONY: db-migrate
 # The snapshot dumps raw sqlite_master text (not .schema) so db/structure.sql
 # is byte-identical regardless of the sqlite3 CLI version.
+#
+# The mkdir matters for the same reason it does in db-reset: database/ is
+# gitignored, so on a fresh clone the migrate step at the end of this recipe
+# would otherwise fail with a bare "unable to open database file".
 db-migrate:
-	@tmpdb=$$(mktemp) && \
+	@mkdir -p $(dir $(KIDS_CHECKIN_DB_FILE)) && \
+	tmpdb=$$(mktemp) && \
 	sqlite3 $$tmpdb < db/pragmas.sqlite && \
 	migrate -source file://db/migrations -database "sqlite3://$$tmpdb" up && \
 	sqlite3 -batch -noheader -init /dev/null $$tmpdb "SELECT sql || ';' FROM sqlite_master WHERE type IN ('table','index') AND name NOT IN ('schema_migrations','sqlite_sequence','version_unique') AND sql IS NOT NULL;" > db/structure.sql && \
@@ -54,7 +59,7 @@ db-new-migration:
 build:
 	mkdir -pv bin && \
 	if [ "$(ASSET_BUILD)" = "1" ]; then go tool godotenv $(ASSET_SCRIPT); fi && \
-    go tool godotenv go build -o $(BIN_PATH) main.go
+	go tool godotenv go build -o $(BIN_PATH) main.go
 
 .PHONY: assets
 assets:
@@ -83,12 +88,30 @@ test:
 	npm test
 
 .PHONY: test-trimpath
-# Same suite with -trimpath. The schema snapshot is read from disk, and its
-# path is resolved from runtime.Caller, which -trimpath rewrites to a
-# module-relative path -- so this catches resolution that only works when the
-# build happens to record absolute source paths.
+# Same suite with -trimpath, for BOTH build-tag sets.
+#
+# -tags dev is not optional here. The dev-tagged packages include the dbinit
+# tests, which are consumers of the very path resolution this target exists to
+# check; without the tag they are skipped entirely ("build constraints exclude
+# all Go files"), so the target would silently cover less than it claims.
 test-trimpath:
 	go tool godotenv go test -trimpath ./...
+	go tool godotenv go test -trimpath -tags dev ./...
+
+.PHONY: test-all
+# The complete matrix: both build-tag sets, with and without -trimpath.
+#
+# The trimpath half is not optional and `make test` cannot stand in for it.
+# db/structure.sql is read from disk rather than //go:embed'd, and its path is
+# resolved from runtime.Caller, which -trimpath rewrites to a module-relative
+# path. Reverting that resolution to the plain runtime.Caller form passes
+# `go test ./...` and fails only here -- verified by breaking it and confirming
+# the failure appears in this target and nowhere else.
+#
+# This repository has no CI, so this target is the entire gate. Run it before
+# pushing anything that touches internal/db, internal/web/static, or the
+# db-file wiring.
+test-all: test test-trimpath
 
 .PHONY: db-init
 # Builds a development database: schema, migration stamp, and the Planning
@@ -110,9 +133,13 @@ test-trimpath:
 # without hand-typing the go run invocation.
 db-init:
 	mkdir -p $(dir $(KIDS_CHECKIN_DB_FILE)) && \
-    ENVIRONMENT=dev go tool godotenv go run -tags dev . db-init \
-      --db-file $(KIDS_CHECKIN_DB_FILE) $(if $(FORCE),--force,)
+	ENVIRONMENT=dev go tool godotenv go run -tags dev . db-init \
+		--db-file $(KIDS_CHECKIN_DB_FILE) $(if $(FORCE),--force,)
 
 .PHONY: random-data
+# The mkdir matters for the same reason it does in db-reset and db-init:
+# database/ is gitignored, so it is absent on a fresh clone and sqlite creates
+# a missing file but never a missing directory.
 random-data:
+	mkdir -p $(dir $(KIDS_CHECKIN_DB_FILE)) && \
 	go tool godotenv go run ./cmd/random-data --db-file $(KIDS_CHECKIN_DB_FILE)

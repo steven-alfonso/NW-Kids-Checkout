@@ -139,6 +139,20 @@ make test
 
 The project uses SQLite for its database. Database migrations are managed with the `migrate` tool.
 
+### Running the tests
+
+```sh
+make test       # go test, then -tags dev, then npm test
+make test-all   # the above, plus both -trimpath passes -- run this before pushing
+```
+
+`make test-trimpath` exists because `db/structure.sql` is read from disk rather
+than embedded, and its path is resolved from `runtime.Caller`, which `-trimpath`
+rewrites to a module-relative path. Resolution that works in a normal build can
+fail in a trimmed one, and that failure is invisible to `make test` -- so
+`make test-all` is the gate. There is no CI in this repository; if you are
+setting one up, run `make test-all`.
+
 - **Resetting the database (empty schema):** `make db-reset`
 - **Building a development database (schema + reference topology):** `make db-init`
 - **Running migrations:** `make db-migrate`

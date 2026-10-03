@@ -129,9 +129,18 @@ func TestEveryDBCommandUsesTheSharedFlag(t *testing.T) {
 // The argument is checked with the AST rather than by matching source text, so
 // a path in a comment or a string literal elsewhere in the file cannot satisfy
 // or trip the rule.
+//
+// The receiver is matched by import, not by the name "db". Keying on the
+// identifier meant that a single aliased import -- import store "kids-checkin/internal/db"
+// -- moved a call site outside this guard entirely, silently reintroducing
+// exactly the hardcoded path the guard exists to prevent.
 func TestDBInitCallSiteDoesNotHardcodePath(t *testing.T) {
 	found := 0
-	eachGoFile(t, func(fset *token.FileSet, path string, file *ast.File) {
+	eachGoFile(t, skipDBPackage, func(fset *token.FileSet, path string, file *ast.File) {
+		receiver := dbImportName(file)
+		if receiver == "" {
+			return
+		}
 		ast.Inspect(file, func(n ast.Node) bool {
 			call, ok := n.(*ast.CallExpr)
 			if !ok {
@@ -142,22 +151,41 @@ func TestDBInitCallSiteDoesNotHardcodePath(t *testing.T) {
 				return true
 			}
 			ident, ok := sel.X.(*ast.Ident)
-			if !ok || ident.Name != "db" {
+			if !ok || ident.Name != receiver {
 				return true
 			}
 			found++
 			if len(call.Args) == 0 {
-				t.Errorf("%s calls db.InitDB() with no argument; pass the --db-file value", fset.Position(call.Pos()))
+				t.Errorf("%s calls %s.InitDB() with no argument; pass the --db-file value",
+					fset.Position(call.Pos()), receiver)
 				return true
 			}
 			if lit, isLit := call.Args[0].(*ast.BasicLit); isLit && lit.Kind == token.STRING {
-				t.Errorf("%s calls db.InitDB(%q); the path must come from db.DBFileFlag() via cmd.String(%q), not a hardcoded literal",
-					fset.Position(call.Pos()), lit.Value, "db-file")
+				t.Errorf("%s calls %s.InitDB(%q); the path must come from db.DBFileFlag() via cmd.String(%q), not a hardcoded literal",
+					fset.Position(call.Pos()), receiver, lit.Value, "db-file")
 			}
 			return true
 		})
 	})
-	assert.Positive(t, found, "no db.InitDB call sites found; this guard would silently pass if the call sites moved or were renamed")
+	assert.Positive(t, found, "no db.InitDB call sites found; this guard would silently pass if the call sites moved, were aliased away, or were renamed")
+}
+
+// dbImportName returns the identifier the file uses to refer to
+// kids-checkin/internal/db, honouring an alias, or "" if the file does not
+// import it.
+func dbImportName(file *ast.File) string {
+	const dbImportPath = "kids-checkin/internal/db"
+	for _, imp := range file.Imports {
+		value, err := strconv.Unquote(imp.Path.Value)
+		if err != nil || value != dbImportPath {
+			continue
+		}
+		if imp.Name != nil {
+			return imp.Name.Name
+		}
+		return "db"
+	}
+	return ""
 }
 
 // TestDbFileFlagIsNeverRedefined closes the gap the other two guards cannot
@@ -180,8 +208,14 @@ func TestDBInitCallSiteDoesNotHardcodePath(t *testing.T) {
 // place a db-file flag is allowed to be defined, so forbidding the literal
 // everywhere else is complete by construction. It covers test files too, since
 // that is where the duplicate above lived.
+//
+// The flag name is resolved through same-file constant and variable references
+// too, not just string literals. `Name: dbFileFlagName` looks nothing like the
+// literal this guard forbids, so matching on BasicLit alone left the most
+// plausible way to reintroduce a second definition uncaught.
 func TestDbFileFlagIsNeverRedefined(t *testing.T) {
-	eachGoFile(t, func(fset *token.FileSet, path string, file *ast.File) {
+	eachGoFile(t, skipFlagOwner, func(fset *token.FileSet, path string, file *ast.File) {
+		stringDecls := sameFileStringDecls(file)
 		ast.Inspect(file, func(n ast.Node) bool {
 			lit, ok := n.(*ast.CompositeLit)
 			if !ok {
@@ -208,16 +242,8 @@ func TestDbFileFlagIsNeverRedefined(t *testing.T) {
 				if !ok || key.Name != "Name" {
 					continue
 				}
-				value, ok := kv.Value.(*ast.BasicLit)
-				if !ok || value.Kind != token.STRING {
-					continue
-				}
-				// BasicLit.Value for a STRING is the raw source text, quotes
-				// included. Comparing it to a bare db-file would never match --
-				// which is precisely how this guard would end up passing
-				// forever without ever firing.
-				unquoted, err := strconv.Unquote(value.Value)
-				if err != nil || unquoted != "db-file" {
+				unquoted, ok := stringValue(kv.Value, stringDecls)
+				if !ok || unquoted != "db-file" {
 					continue
 				}
 				t.Errorf("%s declares its own %s{Name: %q}; mount db.DBFileFlag() instead so there is exactly one definition",
@@ -228,11 +254,69 @@ func TestDbFileFlagIsNeverRedefined(t *testing.T) {
 	})
 }
 
-// eachGoFile parses every .go file in the repository except internal/db -- which
-// owns the flag and deliberately takes literal DSNs -- and hands each to visit.
-// Test files are included: a duplicated flag declaration is a bug wherever it
+// stringValue resolves an expression to the string it denotes: either a string
+// literal, or an identifier bound to one by a constant or variable declaration
+// in the same file. ok is false for anything else, including an identifier
+// declared in another file, which a single-file parse cannot follow.
+//
+// BasicLit.Value for a STRING is the raw source text, quotes included.
+// Comparing it to a bare db-file would never match -- which is precisely how
+// this guard would end up passing forever without ever firing.
+func stringValue(expr ast.Expr, decls map[string]string) (string, bool) {
+	switch value := expr.(type) {
+	case *ast.BasicLit:
+		if value.Kind != token.STRING {
+			return "", false
+		}
+		unquoted, err := strconv.Unquote(value.Value)
+		if err != nil {
+			return "", false
+		}
+		return unquoted, true
+	case *ast.Ident:
+		resolved, ok := decls[value.Name]
+		return resolved, ok
+	case *ast.ParenExpr:
+		return stringValue(value.X, decls)
+	default:
+		return "", false
+	}
+}
+
+// sameFileStringDecls maps the name of every package-level string constant and
+// variable in the file to its value. Cross-file and non-literal initialisers are
+// skipped: a single-file parse cannot follow them, and guessing would be worse
+// than not matching.
+func sameFileStringDecls(file *ast.File) map[string]string {
+	decls := make(map[string]string)
+	for _, decl := range file.Decls {
+		gen, ok := decl.(*ast.GenDecl)
+		if !ok || (gen.Tok != token.CONST && gen.Tok != token.VAR) {
+			continue
+		}
+		for _, spec := range gen.Specs {
+			valueSpec, ok := spec.(*ast.ValueSpec)
+			if !ok || len(valueSpec.Names) != 1 || len(valueSpec.Values) != 1 {
+				continue
+			}
+			if resolved, ok := stringValue(valueSpec.Values[0], nil); ok {
+				decls[valueSpec.Names[0].Name] = resolved
+			}
+		}
+	}
+	return decls
+}
+
+// eachGoFile parses every .go file in the repository, skipping the paths skip
+// reports true for, and hands the rest to visit. Test files are included: a
+// duplicated flag declaration or a hardcoded InitDB path is a bug wherever it
 // lives.
-func eachGoFile(t *testing.T, visit func(fset *token.FileSet, path string, file *ast.File)) {
+//
+// The two guards pass different skip sets, and the difference is deliberate:
+// internal/db/flag.go is the one file allowed to declare the flag, whereas the
+// rest of internal/db passes literal DSNs to InitDB on purpose -- that is the
+// package's own subject matter.
+func eachGoFile(t *testing.T, skip func(rel string) bool, visit func(fset *token.FileSet, path string, file *ast.File)) {
 	t.Helper()
 
 	root := filepath.Join("..", "..")
@@ -242,7 +326,6 @@ func eachGoFile(t *testing.T, visit func(fset *token.FileSet, path string, file 
 		".worktrees":   true,
 		"tmp":          true,
 	}
-	dbPackage := filepath.Join("internal", "db") + string(filepath.Separator)
 
 	fset := token.NewFileSet()
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
@@ -258,7 +341,8 @@ func eachGoFile(t *testing.T, visit func(fset *token.FileSet, path string, file 
 		if !strings.HasSuffix(path, ".go") {
 			return nil
 		}
-		if rel, relErr := filepath.Rel(root, path); relErr == nil && strings.HasPrefix(rel, dbPackage) {
+		rel, relErr := filepath.Rel(root, path)
+		if relErr == nil && skip(rel) {
 			return nil
 		}
 		file, parseErr := parser.ParseFile(fset, path, nil, 0)
@@ -269,4 +353,19 @@ func eachGoFile(t *testing.T, visit func(fset *token.FileSet, path string, file 
 		return nil
 	})
 	require.NoError(t, err)
+}
+
+// skipDBPackage reports whether rel is inside internal/db, which owns the flag
+// and passes literal DSNs by design.
+func skipDBPackage(rel string) bool {
+	return strings.HasPrefix(rel, filepath.Join("internal", "db")+string(filepath.Separator))
+}
+
+// skipFlagOwner reports whether rel is internal/db/flag.go, the single file
+// permitted to declare a db-file flag.
+//
+// This exempts one file rather than the whole package. Skipping the directory
+// meant a second db-file flag added anywhere else in internal/db was invisible.
+func skipFlagOwner(rel string) bool {
+	return rel == filepath.Join("internal", "db", "flag.go")
 }

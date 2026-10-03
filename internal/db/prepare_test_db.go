@@ -17,10 +17,20 @@ type Cleanup func()
 // snapshot to it.
 //
 // This file is deliberately not a _test.go file: PrepareTestDB is called from
-// test helpers in other packages. The cost of that is that it, and the dbDir
-// resolution behind StructureSQL, are linked into production binaries as dead
-// code. Nothing at runtime calls either; keeping them here is a deliberate
-// trade for not duplicating the helper into every package that needs it.
+// test helpers in other packages, so it has to be importable from them. The cost
+// is that it, and the dbDir resolution behind StructureSQL, are linked into
+// production binaries.
+//
+// The dbDir half is not entirely dead weight at runtime. dbDir is a
+// package-level variable in schema.go, and Go initializes package variables
+// before main, so resolveDBDir runs in every binary that links this package --
+// including apiserver. It is a runtime.Caller plus a few os.Stat calls: a
+// handful of stats at startup, negligible but not zero. The Dockerfile ships
+// only db/migrations, so the production container has no db/structure.sql to
+// find and the search walks up to the filesystem root before giving up.
+//
+// Keeping this here is a deliberate trade for not duplicating the helper into
+// every package that needs it.
 func PrepareTestDB() (*sql.DB, Cleanup, error) {
 	tempDB, err := InitDB(inMemoryDSN)
 	if err != nil {

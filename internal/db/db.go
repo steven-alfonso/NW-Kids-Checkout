@@ -32,7 +32,7 @@ func InitDB(dataSourceName string) (*sql.DB, error) {
 		return nil, fmt.Errorf("missing database DSN: pass --db-file, or set $%s, or unset it to use the default %s", EnvDBFile, DefaultDBFile)
 	}
 
-	dsn := resolveDSN(dataSourceName)
+	dsn := ResolveDSN(dataSourceName)
 
 	slog.Info("initializing database connection", slog.String("dsn", dsn))
 
@@ -69,7 +69,7 @@ func InitDB(dataSourceName string) (*sql.DB, error) {
 	return db, nil
 }
 
-// resolveDSN makes a plain file path absolute before it is opened, so the log
+// ResolveDSN makes a plain file path absolute before it is opened, so the log
 // line names the file that was actually opened.
 //
 // It does not make the database independent of the working directory: a
@@ -78,13 +78,16 @@ func InitDB(dataSourceName string) (*sql.DB, error) {
 // being relative, not of this function -- what this buys is that the failure is
 // visible in the logs instead of silent.
 //
-// A DSN that is not a plain path is passed through untouched. Absolutizing one
-// would change its meaning: ":memory:" and cache=shared are not files, and a
-// leading "file:" is a SQLite URI that mattn/go-sqlite3 recognises. Prepending
+// A DSN that is not a plain file path is passed through untouched. Absolutizing
+// one would change its meaning: ":memory:" and cache=shared are not files, and
+// a leading "file:" is a SQLite URI that mattn/go-sqlite3 recognises. Prepending
 // the working directory to "file:foo.db" buries the prefix mid-path, the driver
 // stops recognising it, and SQLite creates a file literally named "file:foo.db".
-// ResolvePath reports the file path InitDB would actually open for a DSN,
-// without opening it.
+//
+// A DSN that already carries query params is still a file path, so the path is
+// absolutized and the query re-attached. InitDB appends _foreign_keys and
+// friends to such a DSN rather than replacing them, so "data.db?_txlock=deferred"
+// is a supported input and must not be the one shape that stays relative.
 //
 // Callers that need to open the same database a second time -- the Fiber
 // session store points at the app database and builds its own DSN -- should
@@ -93,17 +96,22 @@ func InitDB(dataSourceName string) (*sql.DB, error) {
 // db-file/Makefile drift came from.
 //
 // It is idempotent: passing the result back through is a no-op.
-func ResolvePath(dsn string) string {
-	return resolveDSN(dsn)
-}
-
-func resolveDSN(dsn string) string {
-	if strings.ContainsAny(dsn, "?") || strings.Contains(dsn, ":memory:") || strings.HasPrefix(dsn, "file:") {
+func ResolveDSN(dsn string) string {
+	if strings.Contains(dsn, ":memory:") || strings.HasPrefix(dsn, "file:") {
 		return dsn
 	}
-	abs, err := filepath.Abs(dsn)
+	path, query, hasQuery := strings.Cut(dsn, "?")
+	if path == "" {
+		// No path to absolutize. Turning "" into the working directory would
+		// produce a DSN naming a directory rather than a database.
+		return dsn
+	}
+	abs, err := filepath.Abs(path)
 	if err != nil {
 		return dsn
+	}
+	if hasQuery {
+		return abs + "?" + query
 	}
 	return abs
 }

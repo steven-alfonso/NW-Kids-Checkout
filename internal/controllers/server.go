@@ -41,7 +41,7 @@ func StartServer(port int, dbFilepath string) error {
 	// absolutizes internally, but the session store below builds its own DSN
 	// from this string, so passing the raw relative value would have the app
 	// database opened twice under two different paths.
-	dbPath := db.ResolvePath(dbFilepath)
+	dbPath := db.ResolveDSN(dbFilepath)
 
 	database, err := db.InitDB(dbPath)
 	if err != nil {
