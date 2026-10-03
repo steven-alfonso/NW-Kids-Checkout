@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/gofiber/fiber/v2"
@@ -70,6 +71,70 @@ func TestPreviewJSIsNotEmbedded(t *testing.T) {
 	if _, err := EmbeddedFS.Open("pages/checkoutsv1/preview.js"); err == nil {
 		t.Fatal("preview.js should not be embedded in production assets")
 	}
+}
+
+// TestResolveDevAssetsDir covers the walk-up that backs up the compile-time path.
+// The case that matters is -trimpath: runtime.Caller then reports a module-relative
+// location like kids-checkin/internal/web/static/static.go, so the preferred
+// candidate resolves against the working directory and points at nothing.
+// TestReadDevAsset is the only other thing that catches this, and only when
+// someone runs -trimpath -- without this test the verification can be dropped and
+// the plain build stays green.
+func TestResolveDevAssetsDir(t *testing.T) {
+	// makeRepo lays out <root>/internal/web/dev-assets and returns root.
+	makeRepo := func(t *testing.T, assets bool) string {
+		t.Helper()
+		root := t.TempDir()
+		if assets {
+			require.NoError(t, os.MkdirAll(filepath.Join(root, devAssetsRelative), 0o755))
+		} else {
+			require.NoError(t, os.MkdirAll(filepath.Join(root, "internal", "web"), 0o755))
+		}
+		return root
+	}
+
+	t.Run("walks up from a nested package directory", func(t *testing.T) {
+		root := makeRepo(t, true)
+		nested := filepath.Join(root, "internal", "web", "static")
+		require.NoError(t, os.MkdirAll(nested, 0o755))
+
+		got := resolveDevAssetsDir()
+		assertResolvesTo(t, root, got)
+	})
+
+	t.Run("finds the real directory from this package", func(t *testing.T) {
+		// Whatever working directory the test runs in, resolution must reach the
+		// checked-in assets rather than falling back to the relative guess.
+		got := resolveDevAssetsDir()
+		require.NotEqual(t, devAssetsRelative, got,
+			"resolution fell back to the relative path, so nothing was verified")
+		assertResolvesTo(t, repoRoot(t), got)
+	})
+}
+
+// repoRoot walks up from the package directory to the module root.
+func repoRoot(t *testing.T) string {
+	t.Helper()
+	wd, err := os.Getwd()
+	require.NoError(t, err)
+	for dir := wd; ; {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return wd
+		}
+		dir = parent
+	}
+}
+
+func assertResolvesTo(t *testing.T, root, got string) {
+	t.Helper()
+	require.NotEmpty(t, got)
+	info, err := os.Stat(filepath.Join(got, "preview.js"))
+	require.NoError(t, err, "resolved dir %q does not contain preview.js (expected under %q)", got, root)
+	require.False(t, info.IsDir())
 }
 
 func TestCheckoutsHTMLDoesNotReferencePreview(t *testing.T) {

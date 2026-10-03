@@ -35,10 +35,11 @@ This file guides coding agents working in this repo. Keep changes small, follow 
     paths passes `go test ./...` and fails under `-trimpath`.
   - This was verified by reverting `resolveDBDir` to the unverified
     `runtime.Caller` form: `go test ./...` passed and only `make test-trimpath`
-    failed.
-  - There is no CI in this repository, so `make test-all` is the entire gate.
-    Run it before pushing changes to `internal/db`, `internal/web/static`, or
-    the db-file wiring.
+    failed. The same trap applies to `static.DevAssetsDir`, and it had shipped as
+    a real bug: `TestReadDevAsset` failed under `-trimpath` while the plain build
+    stayed green.
+  - CI runs all four combinations (plain, `-tags dev`, `-trimpath`, both) and
+    treats them as required. `make test-all` is the local equivalent.
 - Run a single package: `godotenv go test ./internal/repo/checkin`
 - Run a single test: `godotenv go test ./internal/repo/checkin -run Test_sqliteRepo_ListCheckins`
 - Run a subtest: `godotenv go test ./internal/repo/checkin -run Test_sqliteRepo_ListCheckins/filter_by_location_ID`
@@ -221,6 +222,16 @@ This file guides coding agents working in this repo. Keep changes small, follow 
 
 ### Dev-only assets (debug tooling)
 - Dev/debug tools live in `internal/web/dev-assets/` and are served at `/static/dev/*` **only when `ENVIRONMENT=dev`** (via `static.IsDev()`); in production they 404 and are not embedded into the binary. See `internal/web/dev-assets/README.md`.
+- `static.DevAssetsDir` resolves from `runtime.Caller`, which `-trimpath` rewrites
+  to a module-relative path, so the candidate is verified before it is trusted and
+  a walk up from the working directory backs it up.
+  `internal/web/static/static_test.go` covers the walk. Without both,
+  `TestReadDevAsset` fails under `go test -trimpath ./...` — a failure a plain
+  `go test ./...` cannot see, which is why CI runs that pass.
+- **Never put a non-`*.test.js` file under `internal/web/static/`.** That
+  directory is embedded wholesale by `//go:embed *`, so a shared test helper
+  placed there ships in the production binary. Shared test support goes in
+  `test-support/` at the repository root, which is also in `.dockerignore`.
 - Add a new tool by dropping the file in `internal/web/dev-assets/` and referencing it from a page handler (inject the `<script>` tag in the page's HTML handler when `static.IsDev()`, mirroring the `checkoutsWeb` preview.js pattern).
 - Helpers: `static.DevAssetsDir`, `static.ReadDevAsset(filename)`, `static.IsDev()`.
 
