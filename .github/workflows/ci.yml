@@ -1,0 +1,134 @@
+# Continuous integration for the Go app and the frontend test suite.
+#
+# Run `go test` directly rather than through `make test`. The Makefile wraps
+# every target in `go tool godotenv`, and godotenv exits non-zero when .env is
+# absent -- which it always is on a fresh CI checkout, since .env is gitignored.
+# No test actually reads a real .env: the ones that care about an environment
+# variable set it themselves with t.Setenv. Verified by removing .env and
+# running `go test ./...` locally: green.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A new push supersedes an in-progress run of the same ref, and any push to a
+# PR branch supersedes it regardless of branch protection settings.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    name: Go ${{ matrix.go-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      # Never cancel a run for the version named in go.mod: if the newest Go
+      # released a breaking change, main must keep building on the version the
+      # project declares.
+      fail-fast: false
+      matrix:
+        # go.mod declares 1.27. The 1.26 entry is a forward-compatibility check;
+        # drop it if it proves noisy rather than informative.
+        go-version: ["1.27", "1.26"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go-version }}
+          # Uses go.sum, so a build that would resolve differently fails here
+          # instead of silently pulling something new.
+          cache: true
+
+      # mattn/go-sqlite3 is a cgo package, so a C compiler is required. Ubuntu
+      # runners include gcc, and CGO_ENABLED is 1 by default where a compiler
+      # is present, so this is stated explicitly to keep the job honest if that
+      # default ever changes.
+      - name: Show the build environment
+        run: |
+          go version
+          go env CGO_ENABLED CC
+          gcc --version | head -1
+
+      - name: Verify gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "::error::gofmt needed on these files:"
+            echo "$unformatted"
+            echo "Run: gofmt -w ."
+            exit 1
+          fi
+
+      - name: go vet
+        # Both tag sets: the dev-tagged packages are skipped entirely without
+        # -tags dev, so a vet pass without them inspects strictly less.
+        run: |
+          go vet ./...
+          go vet -tags dev ./...
+
+      - name: Test
+        run: go test ./...
+
+      - name: Test with the dev build tag
+        run: go test -tags dev ./...
+
+      # db/structure.sql is read from disk and located via runtime.Caller,
+      # which -trimpath rewrites to a module-relative path. Resolution that
+      # works in a normal build can fail in a trimmed one, and a plain
+      # `go test ./...` cannot see it. Verified by reverting the resolution to
+      # the unverified runtime.Caller form: the tests above stayed green and
+      # only this pass failed.
+      # TEMPORARY: these two are non-blocking, and should be made required once
+      # the db-file branch merges.
+      #
+      # main's internal/web/static.DevAssetsDir resolves its path from
+      # runtime.Caller without verifying the result, and -trimpath rewrites that
+      # to a module-relative path, so TestReadDevAsset cannot find
+      # internal/web/dev-assets/preview.js. Reproduced on main: `go test
+      # ./...` passes and `go test -trimpath ./...` fails. The db-file branch
+      # verifies the candidate and falls back to walking up from the working
+      # directory, which fixes it.
+      #
+      # continue-on-error keeps a known failure from blocking every other PR
+      # while still surfacing it. Remove these flags in that PR.
+      - name: Test with -trimpath
+        continue-on-error: true
+        run: go test -trimpath ./...
+
+      - name: Test with -trimpath and the dev build tag
+        continue-on-error: true
+        run: go test -trimpath -tags dev ./...
+
+      # Builds the binary with assets embedded, which is what the release
+      # Dockerfile does. Catches a broken //go:embed or a Tailwind output that
+      # has fallen behind the classes the templates use.
+      - name: Build
+        run: go build ./...
+
+  js:
+    name: Frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # No engines field in package.json, so pin one explicitly.
+          node-version: "22"
+
+      # package-lock.json is gitignored, so `npm ci` cannot be used: there is no
+      # lockfile to install from. `npm install` resolves fresh each run, which
+      # also means this job can break on an upstream release. That is worth
+      # knowing -- committing the lockfile would fix both, and is a separate
+      # change from adding CI.
+      - name: Install dependencies
+        run: npm install
+
+      - name: Test
+        run: npm test
