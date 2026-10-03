@@ -76,10 +76,9 @@ func TestPreviewJSIsNotEmbedded(t *testing.T) {
 // TestResolveDevAssetsDir covers the walk-up that backs up the compile-time path.
 // The case that matters is -trimpath: runtime.Caller then reports a module-relative
 // location like kids-checkin/internal/web/static/static.go, so the preferred
-// candidate resolves against the working directory and points at nothing.
-// TestReadDevAsset is the only other thing that catches this, and only when
-// someone runs -trimpath -- without this test the verification can be dropped and
-// the plain build stays green.
+// candidate resolves against the working directory and points at nothing. TestReadDevAsset
+// is the only thing that catches this, and only when someone runs -trimpath --
+// without this test the verification can be dropped and go green on a normal build.
 func TestResolveDevAssetsDir(t *testing.T) {
 	// makeRepo lays out <root>/internal/web/dev-assets and returns root.
 	makeRepo := func(t *testing.T, assets bool) string {
@@ -104,7 +103,7 @@ func TestResolveDevAssetsDir(t *testing.T) {
 
 	t.Run("finds the real directory from this package", func(t *testing.T) {
 		// Whatever working directory the test runs in, resolution must reach the
-		// checked-in assets rather than falling back to the relative guess.
+		// checked-in assets rather than falling back to a relative guess.
 		got := resolveDevAssetsDir()
 		require.NotEqual(t, devAssetsRelative, got,
 			"resolution fell back to the relative path, so nothing was verified")
