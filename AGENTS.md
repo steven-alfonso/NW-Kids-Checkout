@@ -20,8 +20,10 @@ This file guides coding agents working in this repo. Keep changes small, follow 
 - Add random per-visit check-in data: `make random-data`
 
 ### Tests
-- Run all tests: `make test` (runs `godotenv go test ./...`, then the same with
-  `-tags dev`, then `npm test`)
+- Run all tests: `make test` (runs `godotenv go test ./...`)
+- CI runs `go test` directly rather than through `make test`: godotenv exits
+  non-zero when `.env` is absent, and it is gitignored. No test reads a real
+  `.env`; the ones that care about a variable set it with `t.Setenv`.
 - Run all tests under `-trimpath`: `make test-trimpath` (both build-tag sets)
 - **Run the complete matrix before pushing: `make test-all`** (equivalent to
   `make test && make test-trimpath`). See "Why -trimpath needs its own pass"
@@ -50,6 +52,8 @@ This file guides coding agents working in this repo. Keep changes small, follow 
 ### Lint/format
 - Lint: no dedicated lint config found.
 - Format: use `gofmt` (Go standard). Use `go fmt ./...` before committing when editing Go code.
+- CI enforces `gofmt -l .` and `go vet ./...` (plus `-tags dev`), so an
+  unformatted file or a vet failure fails the build. `.github/workflows/ci.yml`.
 
 ## Repo structure and key tech
 
