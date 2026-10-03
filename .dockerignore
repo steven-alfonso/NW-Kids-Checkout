@@ -18,6 +18,7 @@ node_modules
 **/*.spec.js
 **/*.test.mjs
 **/*.spec.mjs
+test-support/
 
 # Build artifacts
 bin/kids-checkin
