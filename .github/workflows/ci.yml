@@ -24,26 +24,34 @@ permissions:
 
 jobs:
   go:
-    name: Go ${{ matrix.go-version }}
+    name: Go
     runs-on: ubuntu-latest
-    strategy:
-      # Never cancel a run for the version named in go.mod: if the newest Go
-      # released a breaking change, main must keep building on the version the
-      # project declares.
-      fail-fast: false
-      matrix:
-        # go.mod declares 1.27. The 1.26 entry is a forward-compatibility check;
-        # drop it if it proves noisy rather than informative.
-        go-version: ["1.27", "1.26"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v5
+      # go-version-file reads the `go` directive from go.mod, so this tracks the
+      # module instead of a version repeated in two places that can drift.
+      #
+      # It must stay equal to the golang: line in Dockerfile and
+      # Dockerfile.debian, both of which pin 1.27. Those image tags carry no
+      # patch component, so production builds always use the newest 1.27.x while
+      # this resolves the newest 1.27.x too -- but nothing enforces the two
+      # agreeing. There is no matrix here on purpose: CI should test the version
+      # that actually ships, not a range around it.
+      - uses: actions/setup-go@v7
         with:
-          go-version: ${{ matrix.go-version }}
-          # Uses go.sum, so a build that would resolve differently fails here
-          # instead of silently pulling something new.
+          go-version-file: go.mod
+          # Caches both the module downloads and the build cache. This is the
+          # single biggest win in the job: without it every run re-downloads the
+          # whole module graph and rebuilds mattn/go-sqlite3 from source, which
+          # is a cgo package and is slow to compile.
           cache: true
+          # setup-go keys the cache on go.mod alone by default. go.sum is the file
+          # that actually records which versions were resolved, so key on it.
+          # No commit in this repo's history has changed go.sum without also
+          # changing go.mod, so this is not fixing an observed problem -- it is
+          # just the more accurate key, and it costs nothing.
+          cache-dependency-path: go.sum
 
       # mattn/go-sqlite3 is a cgo package, so a C compiler is required. Ubuntu
       # runners include gcc, and CGO_ENABLED is 1 by default where a compiler
@@ -78,14 +86,21 @@ jobs:
       - name: Test with the dev build tag
         run: go test -tags dev ./...
 
-      # db/structure.sql is read from disk and located via runtime.Caller,
-      # which -trimpath rewrites to a module-relative path. Resolution that
-      # works in a normal build can fail in a trimmed one, and a plain
-      # `go test ./...` cannot see it. Verified by reverting the resolution to
-      # the unverified runtime.Caller form: the tests above stayed green and
-      # only this pass failed.
       # TEMPORARY: these two are non-blocking, and should be made required once
       # the db-file branch merges.
+      #
+      # -trimpath is here for the same reason the Go version is not pinned in
+      # this file: it tests how the shipped binary is actually built. Once the
+      # db-file branch merges, db/structure.sql is read from disk and located
+      # via runtime.Caller, which -trimpath rewrites to a module-relative path.
+      # Resolution that works in a normal build can then fail in a trimmed one,
+      # and a plain `go test ./...` cannot see it.
+      #
+      # Until that merge they fail for an unrelated, pre-existing reason:
+      # main's internal/web/static.DevAssetsDir resolves its path from
+      # runtime.Caller without verifying the result, so TestReadDevAsset cannot
+      # find internal/web/dev-assets/preview.js. Reproduced on main --
+      # `go test ./...` passes, `go test -trimpath ./...` fails.
       #
       # main's internal/web/static.DevAssetsDir resolves its path from
       # runtime.Caller without verifying the result, and -trimpath rewrites that
@@ -105,21 +120,28 @@ jobs:
         continue-on-error: true
         run: go test -trimpath -tags dev ./...
 
-      # Builds the binary with assets embedded, which is what the release
-      # Dockerfile does. Catches a broken //go:embed or a Tailwind output that
-      # has fallen behind the classes the templates use.
+      # Builds the binary, which is what the release Dockerfile does. Catches a
+      # broken //go:embed or an asset pipeline that has fallen behind the
+      # classes the templates use.
+      #
+      # The Dockerfile's builder stage builds main.go directly rather than
+      # ./..., because ./... would also compile the dev-only cmd/random-data
+      # helper. This does the same, so a failure here is a failure in the
+      # artifact that ships.
       - name: Build
-        run: go build ./...
+        run: go build -o /dev/null main.go
 
   js:
     name: Frontend
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      # Neither Dockerfile installs Node, so the frontend suite is the only
+      # thing pinning a Node version and package.json declares no engines field.
+      # 22 is the current LTS line.
+      - uses: actions/setup-node@v7
         with:
-          # No engines field in package.json, so pin one explicitly.
           node-version: "22"
 
       # package-lock.json is gitignored, so `npm ci` cannot be used: there is no
@@ -127,6 +149,13 @@ jobs:
       # also means this job can break on an upstream release. That is worth
       # knowing -- committing the lockfile would fix both, and is a separate
       # change from adding CI.
+      #
+      # That same missing lockfile is why there is no `cache: npm` here. npm
+      # caching needs a lockfile to key on, and setup-node fails outright when it
+      # cannot find one. Caching ~/.npm directly by hand would key on something
+      # weaker than a lockfile while still restoring a resolved tree, which is a
+      # worse trade than a 68MB install. Commit the lockfile first, then add
+      # cache: npm.
       - name: Install dependencies
         run: npm install
 
