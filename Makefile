@@ -130,11 +130,15 @@ test-all: test test-trimpath
 #
 # Use `make random-data` afterwards for per-visit check-in data.
 #
-# ENVIRONMENT=dev is set here rather than left to .env: the command refuses to
-# run without it, and a fresh clone has no .env at all, so relying on it made
-# the documented first-run path fail. --force is opt-in via
-# `make db-init FORCE=1` so that rebuilding an existing database is possible
-# without hand-typing the go run invocation.
+# ENVIRONMENT=dev is set here so this target does not depend on .env having
+# been filled in with the right value: the command refuses to run without it,
+# and db-init should not be the thing that breaks when ENVIRONMENT was edited,
+# emptied, or dropped. This does NOT make the target work without a .env file --
+# the godotenv below exits non-zero when .env is absent, so the README's
+# `cp .env.example .env` is still step one.
+#
+# --force is opt-in via `make db-init FORCE=1` so that rebuilding an existing
+# database is possible without hand-typing the go run invocation.
 db-init:
 	mkdir -p $(dir $(KIDS_CHECKIN_DB_FILE)) && \
 	ENVIRONMENT=dev go tool godotenv go run -tags dev . db-init \

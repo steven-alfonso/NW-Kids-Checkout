@@ -23,6 +23,39 @@ cp .env.example .env
 ```
 An empty `.env` is not enough: `.env.example` is where `ENVIRONMENT=dev` lives,
 and step 2 below needs it.
+
+`LOGIN_PASSWORD_ADMIN` and `LOGIN_PASSWORD_USER` take bcrypt hashes, not
+plaintext. Generate one with the same `golang.org/x/crypto/bcrypt` the login
+check uses:
+
+```shell
+mkdir -p /tmp/pwgen && cat > /tmp/pwgen/main.go <<'EOF'
+package main
+
+import (
+	"fmt"
+	"os"
+
+	"golang.org/x/crypto/bcrypt"
+)
+
+func main() {
+	h, err := bcrypt.GenerateFromPassword([]byte(os.Args[1]), bcrypt.DefaultCost)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(string(h))
+}
+EOF
+go run /tmp/pwgen/main.go 'your-password'
+```
+
+Run that from the repo root so the module resolves `golang.org/x/crypto`, then
+paste the output into `.env` **in single quotes**. godotenv expands `$VAR`
+inside an unquoted value and a bcrypt hash is mostly `$` signs, so unquoted the
+prefix is eaten and login fails with `?error=invalid` and nothing in the log to
+say why.
+
 2. Build a development database with the Planning Center reference topology:
 ```shell
 make db-init

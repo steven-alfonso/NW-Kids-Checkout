@@ -224,8 +224,10 @@ This file guides coding agents working in this repo. Keep changes small, follow 
 - The `db-init` command is behind the `//go:build dev` tag, so it is absent from
   production binaries, and it refuses to run unless `static.IsDev()`. A new
   dev-only command should do both. `make db-init` applies `-tags dev` itself,
-  and sets `ENVIRONMENT=dev` so the target does not depend on `.env` having
-  been filled in. `make db-init FORCE=1` passes `--force` to rebuild.
+  and sets `ENVIRONMENT=dev` so the target does not depend on `.env` carrying
+  the right value. It still requires a `.env` file to exist -- `godotenv` exits
+  non-zero without one -- so `cp .env.example .env` remains step one.
+  `make db-init FORCE=1` passes `--force` to rebuild.
 - Its tests are behind the same tag, so `make test` runs `-tags dev ./...` as
   well; without that, `internal/cmd/dbinit` is skipped entirely.
 - `make db-init` and `make db-reset` both `mkdir -p` the database directory.

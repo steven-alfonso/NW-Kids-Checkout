@@ -195,11 +195,18 @@ func TestResolveDSN_matchesInitDBAndServer(t *testing.T) {
 		}
 	})
 
-	t.Run("the default resolves to one stable path", func(t *testing.T) {
-		// Two resolutions of the same default must name the same file, which is
-		// the property server.go depends on to open one database rather than two.
-		assert.Equal(t, ResolveDSN(DefaultDBFile), ResolveDSN(DefaultDBFile))
-		assert.True(t, filepath.IsAbs(ResolveDSN(DefaultDBFile)))
+	t.Run("the default names exactly the file the constant does", func(t *testing.T) {
+		// server.go resolves the path once and hands the result to both the app
+		// database and the session store, so the resolution has to land on the
+		// file the constant names -- no query string bolted on, nothing
+		// re-pointed. filepath.Abs is the oracle here rather than a second call
+		// to ResolveDSN, which would compare a value against itself.
+		want, err := filepath.Abs(DefaultDBFile)
+		require.NoError(t, err)
+
+		got := ResolveDSN(DefaultDBFile)
+		assert.Equal(t, want, got)
+		assert.NotContains(t, got, "?", "the default must resolve to a bare file path, not a DSN: %s", got)
 	})
 }
 
