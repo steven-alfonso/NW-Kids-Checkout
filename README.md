@@ -17,13 +17,25 @@ The project is structured as a command-line application with commands:
 - [godotenv](https://github.com/joho/godotenv). Install via `go install github.com/joho/godotenv/cmd/godotenv@latest` once Golang is installed.
 
 ## Quick Start
-1. Create a `.env` file if it does not exist:
+1. Create a `.env` file if it does not exist. Copy the example and fill it in:
 ```shell
-touch .env
+cp .env.example .env
 ```
-2. Initialize and seed the database:
+An empty `.env` is not enough: `.env.example` is where `ENVIRONMENT=dev` lives,
+and step 2 below needs it.
+2. Build a development database with the Planning Center reference topology:
 ```shell
-make db-reset db-seed
+make db-init
+```
+`db-init` applies the schema and seeds 2 events, 3 location groups, 33 rooms,
+and 2 check windows, using their real Planning Center ids. It only exists in
+builds made with the `dev` build tag and refuses to run unless
+`ENVIRONMENT=dev`, so it cannot touch a production database. Add per-visit
+check-in data afterwards with `make random-data`.
+
+To rebuild a database that already has schema, pass `FORCE=1`:
+```shell
+make db-init FORCE=1
 ```
 3. In one terminal, start the checkout fetcher:
 ```shell
@@ -79,8 +91,10 @@ This will build the application and start the fetcher process.
 
 Delete old checkins (default 7 days):
 ```sh
-./bin/kids-checkin checkins delete-old --age -168h --db-file kids-checkin.db
-# Or via env: DB_FILE=kids-checkin.db godotenv ./bin/kids-checkin checkins delete-old
+./bin/kids-checkin checkins delete-old --age -168h
+# The database path comes from --db-file, then $DB_FILE, then the default
+# database/kids-checkin.db. It matches the Makefile, so `make db-reset` and a
+# bare `./bin/kids-checkin` always mean the same file.
 ```
 
 Seed preview data (DB equivalent of `internal/web/dev-assets/preview.js`):
@@ -90,7 +104,6 @@ This mirrors `loadPreviewData()` in the browser but writes directly to SQLite vi
 ```sh
 # Requires --force (destructive operation). Respects --db-file / $DB_FILE.
 godotenv ./bin/kids-checkin checkins seed-preview --force
-godotenv ./bin/kids-checkin checkins seed-preview --force --db-file database/kids-checkin.db
 ```
 
 Without `--force` the command exits with `must pass --force to seed preview data`.
@@ -126,9 +139,48 @@ make test
 
 The project uses SQLite for its database. Database migrations are managed with the `migrate` tool.
 
-- **Resetting the database:** `make db-reset`
+### Running the tests
+
+```sh
+make test       # go test, then -tags dev, then npm test
+make test-all   # the above, plus both -trimpath passes -- run this before pushing
+```
+
+`make test-trimpath` exists because `db/structure.sql` is read from disk rather
+than embedded, and its path is resolved from `runtime.Caller`, which `-trimpath`
+rewrites to a module-relative path. Resolution that works in a normal build can
+fail in a trimmed one, and that failure is invisible to `make test`.
+
+CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs all four
+combinations as required steps, along with `gofmt`, `go vet`, and a build of the
+release entrypoint, so it is the gate on a push. `make test-all` is the local
+equivalent -- run it first so a failure is yours rather than a red pipeline's.
+CI calls `go test` directly instead of through `make test` because `godotenv`
+exits non-zero when `.env` is absent, and `.env` is gitignored.
+
+- **Resetting the database (empty schema):** `make db-reset`
+- **Building a development database (schema + reference topology):** `make db-init`
 - **Running migrations:** `make db-migrate`
 - **Creating a new migration:** `make db-new-migration NAME=<migration_name>`
+
+Migrations are applied by the `migrate` CLI, not by the application binary.
+`db/structure.sql` is the snapshot `make db-migrate` generates from them, and
+it is what the test database and `db-init` load. `db/structure_test.go` fails if
+the snapshot drifts from the migrations.
+
+The database path is defined once, in `db.DefaultDBFile`, and every command
+takes it from `db.DBFileFlag()`:
+
+| Source | Precedence |
+| --- | --- |
+| `--db-file` | highest |
+| `$DB_FILE` | |
+| `db.DefaultDBFile` (`database/kids-checkin.db`) | lowest |
+
+Do not set `DB_FILE` in `.env` unless you need to point at a different file --
+the default already matches the Makefile, and an extra copy is what let the two
+drift apart before. Production sets `DB_FILE=/data/kids-checkin.db` in the
+Dockerfile, which is a deliberate override for the container's volume.
 
 ### Production Migrations
 Connect to a shell and run:

@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"database/sql"
-	"flag"
 	"fmt"
 	"log/slog"
 	"math/rand"
@@ -18,52 +17,59 @@ import (
 	"kids-checkin/internal/repo/manualcheckin"
 
 	"github.com/google/uuid"
+	"github.com/urfave/cli/v3"
 )
 
 func main() {
-	var dbFile string
-	var count int
-	flag.StringVar(&dbFile, "db-file", "", "path to sqlite db file (defaults to DB_FILE env or database/kids-checkin.db)")
-	flag.IntVar(&count, "count", 20, "number of records to create per type")
-	flag.Parse()
-
-	if dbFile == "" {
-		dbFile = os.Getenv("DB_FILE")
-		if dbFile == "" {
-			dbFile = "database/kids-checkin.db"
-		}
+	cmd := &cli.Command{
+		Name:  "random-data",
+		Usage: "Populates the database with random check-in data for development",
+		Flags: []cli.Flag{
+			// The shared definition, so --db-file and $DB_FILE resolve the
+			// same way here as in every other command.
+			db.DBFileFlag(),
+			&cli.IntFlag{
+				Name:  "count",
+				Usage: "number of records to create per type",
+				Value: 20,
+			},
+		},
+		Action: run,
 	}
+
+	if err := cmd.Run(context.Background(), os.Args); err != nil {
+		slog.Error("random-data failed", slog.String("error", err.Error()))
+		os.Exit(1)
+	}
+}
+
+func run(ctx context.Context, cmd *cli.Command) error {
+	dbFile := cmd.String("db-file")
+	count := cmd.Int("count")
 
 	slog.Info("random-data: starting", slog.String("db_file", dbFile), slog.Int("count", count))
 
 	database, err := db.InitDB(dbFile)
 	if err != nil {
-		slog.Error("failed to init DB", slog.String("error", err.Error()))
-		os.Exit(1)
+		return fmt.Errorf("init db: %w", err)
 	}
 	defer database.Close()
 
-	ctx := context.Background()
-
 	if err := ensurePrerequisites(ctx, database); err != nil {
-		slog.Error("failed to ensure prerequisites", slog.String("error", err.Error()))
-		os.Exit(1)
+		return fmt.Errorf("ensure prerequisites: %w", err)
 	}
-
 	if err := seedCheckins(ctx, database, count); err != nil {
-		slog.Error("failed to seed checkins", slog.String("error", err.Error()))
-		os.Exit(1)
+		return fmt.Errorf("seed checkins: %w", err)
 	}
 	if err := seedManualCheckins(ctx, database, count); err != nil {
-		slog.Error("failed to seed manual checkins", slog.String("error", err.Error()))
-		os.Exit(1)
+		return fmt.Errorf("seed manual checkins: %w", err)
 	}
 	if err := seedGuestSubmissions(ctx, database, count); err != nil {
-		slog.Error("failed to seed guest submissions", slog.String("error", err.Error()))
-		os.Exit(1)
+		return fmt.Errorf("seed guest submissions: %w", err)
 	}
 
 	slog.Info("random-data: complete", slog.Int("checkins", count), slog.Int("manual_checkins", count), slog.Int("guest_submissions", count))
+	return nil
 }
 
 func ensurePrerequisites(ctx context.Context, database *sql.DB) error {

@@ -107,7 +107,13 @@ func (r *sqliteRepo) CreateLocationGroup(ctx context.Context, lg LocationGroup) 
 	if err != nil {
 		return LocationGroup{}, fmt.Errorf("inserting location group: %w", err)
 	}
-	lg.ID, _ = res.LastInsertId()
+	// Not swallowed: callers use the returned ID as the location_group_id of
+	// every room in the group, so a zero here surfaces much later as an opaque
+	// foreign-key failure rather than at the point of the error.
+	lg.ID, err = res.LastInsertId()
+	if err != nil {
+		return LocationGroup{}, fmt.Errorf("reading new location group id: %w", err)
+	}
 	return lg, nil
 }
 

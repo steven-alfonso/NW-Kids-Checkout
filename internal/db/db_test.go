@@ -1,6 +1,12 @@
 package db
 
 import (
+	"bytes"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -87,4 +93,125 @@ func TestInitDB_respectsExistingParams(t *testing.T) {
 	var timeout int
 	require.NoError(t, db.QueryRow(`PRAGMA busy_timeout`).Scan(&timeout))
 	assert.Equal(t, 5000, timeout, "missing params should still be injected")
+}
+
+// TestResolveDSN_leavesFileURIsAlone pins that absolutizing a path never
+// rewrites a SQLite URI. mattn/go-sqlite3 treats a leading "file:" as a URI, so
+// "file:foo.db" must survive intact; prepending the working directory buries the
+// prefix mid-path, the driver stops recognising it, and SQLite creates a file
+// literally named "file:foo.db".
+func TestResolveDSN_leavesFileURIsAlone(t *testing.T) {
+	for _, dsn := range []string{
+		"file:foo.db",
+		"file:/abs/foo.db",
+		"file:./foo.db?cache=shared",
+		"file::memory:",
+		"file::memory:?cache=shared",
+	} {
+		t.Run(dsn, func(t *testing.T) {
+			assert.Equal(t, dsn, ResolveDSN(dsn))
+		})
+	}
+}
+
+func TestResolveDSN_absolutizesPlainPaths(t *testing.T) {
+	got := ResolveDSN("database/kids-checkin.db")
+	assert.True(t, filepath.IsAbs(got), "a plain path should be made absolute so the log names the file actually opened: %s", got)
+	assert.True(t, strings.HasSuffix(got, filepath.Join("database", "kids-checkin.db")))
+}
+
+// A DSN that already carries query params is still a file path, and the log
+// line still has to name the file actually opened.
+//
+// This is not hypothetical: InitDB appends _foreign_keys/_busy_timeout/_txlock
+// to such a DSN rather than replacing them, so "--db-file 'data.db?_txlock=deferred'"
+// is a supported input. Bailing out on the "?" left those DSNs relative, so the
+// one log line meant to make a wrong working directory visible stayed relative
+// for exactly the inputs a caller had thought about hardest.
+func TestResolveDSN_absolutizesPathsThatCarryQueryParams(t *testing.T) {
+	for _, dsn := range []string{
+		"data.db?_txlock=deferred",
+		"database/kids-checkin.db?_busy_timeout=1000",
+		"data.db?",
+	} {
+		t.Run(dsn, func(t *testing.T) {
+			got := ResolveDSN(dsn)
+			path, query, _ := strings.Cut(got, "?")
+			assert.True(t, filepath.IsAbs(path),
+				"the path part must be absolute even when the DSN carries params: %s", got)
+			assert.True(t, strings.HasSuffix(path, "data.db") || strings.HasSuffix(path, "kids-checkin.db"),
+				"the filename must survive absolutizing: %s", path)
+
+			// The query must round-trip verbatim, including the empty one behind a
+			// bare trailing "?": ensureDSNParam treats an empty query specially, so
+			// rewriting "data.db?" to "data.db" would change how params get appended.
+			_, wantQuery, _ := strings.Cut(dsn, "?")
+			assert.Equal(t, wantQuery, query)
+		})
+	}
+}
+
+// Absolutizing a DSN with no path at all would produce the working directory
+// followed by a query string, which is not a database. Leave it alone.
+func TestResolveDSN_leavesQueryWithoutAPathAlone(t *testing.T) {
+	for _, dsn := range []string{"?_busy_timeout=1000"} {
+		assert.Equal(t, dsn, ResolveDSN(dsn))
+	}
+}
+
+// TestResolveDSN_matchesInitDBAndServer pins the two properties callers depend
+// on: InitDB logs the same path ResolveDSN reports, and it is idempotent,
+// because server.go resolves once and hands the result to both the app database
+// and the session store.
+func TestResolveDSN_matchesInitDBAndServer(t *testing.T) {
+	t.Run("InitDB logs the path ResolveDSN reports", func(t *testing.T) {
+		t.Chdir(t.TempDir())
+
+		var logs bytes.Buffer
+		prev := slog.Default()
+		slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+		t.Cleanup(func() { slog.SetDefault(prev) })
+
+		database, err := InitDB("relative.db")
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = database.Close() })
+
+		// The file InitDB created must be the file ResolveDSN named. If these
+		// two ever disagree, the log line is describing something other than
+		// what was opened, which is the whole reason the resolution exists.
+		_, err = os.Stat(ResolveDSN("relative.db"))
+		require.NoError(t, err, "the path InitDB opened must be the one ResolveDSN reports")
+		assert.Contains(t, logs.String(), ResolveDSN("relative.db"))
+	})
+
+	t.Run("is idempotent", func(t *testing.T) {
+		once := ResolveDSN("database/kids-checkin.db")
+		assert.Equal(t, once, ResolveDSN(once), "re-resolving an absolute path must not change it")
+	})
+
+	t.Run("leaves non-file DSNs alone", func(t *testing.T) {
+		for _, dsn := range []string{"file::memory:", "file:foo.db", "file::memory:?cache=shared"} {
+			assert.Equal(t, dsn, ResolveDSN(dsn))
+		}
+	})
+
+	t.Run("the default resolves to one stable path", func(t *testing.T) {
+		// Two resolutions of the same default must name the same file, which is
+		// the property server.go depends on to open one database rather than two.
+		assert.Equal(t, ResolveDSN(DefaultDBFile), ResolveDSN(DefaultDBFile))
+		assert.True(t, filepath.IsAbs(ResolveDSN(DefaultDBFile)))
+	})
+}
+
+// TestInitDB_rejectsBlankDSN covers whitespace as well as empty. "   " is not a
+// usable DSN, and without this it became a file whose name is three spaces,
+// created silently under an authoritative-looking absolute path in the log.
+func TestInitDB_rejectsBlankDSN(t *testing.T) {
+	for _, dsn := range []string{"", " ", "   ", "\t", "\n"} {
+		t.Run(strconv.Quote(dsn), func(t *testing.T) {
+			_, err := InitDB(dsn)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "missing database DSN")
+		})
+	}
 }

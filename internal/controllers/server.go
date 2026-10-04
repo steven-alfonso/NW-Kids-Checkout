@@ -37,13 +37,19 @@ import (
 )
 
 func StartServer(port int, dbFilepath string) error {
-	database, err := db.InitDB(dbFilepath)
+	// Resolve the path once and use one spelling for both connections. InitDB
+	// absolutizes internally, but the session store below builds its own DSN
+	// from this string, so passing the raw relative value would have the app
+	// database opened twice under two different paths.
+	dbPath := db.ResolveDSN(dbFilepath)
+
+	database, err := db.InitDB(dbPath)
 	if err != nil {
 		panic(err)
 	}
 
 	storage := sqlite3.New(sqlite3.Config{
-		Database: dbFilepath,
+		Database: dbPath,
 		Reset:    false, // Don't clear sessions on start
 	})
 

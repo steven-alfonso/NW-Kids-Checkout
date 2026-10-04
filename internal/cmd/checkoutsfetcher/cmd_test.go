@@ -1942,7 +1942,7 @@ func Test_eventCheckoutLoop_windowsDisabled_ignoresWindows(t *testing.T) {
 func fetchCheckoutsCommand() *cli.Command {
 	return &cli.Command{
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "db-file", Value: "kids-checkin.db"},
+			db.DBFileFlag(),
 			&cli.DurationFlag{Name: "interval", Value: 3 * time.Second},
 			&cli.DurationFlag{Name: "event-update-interval", Value: 3 * time.Second},
 			&cli.DurationFlag{Name: "runtime", Value: 5 * time.Second},
