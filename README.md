@@ -33,10 +33,20 @@ builds made with the `dev` build tag and refuses to run unless
 `ENVIRONMENT=dev`, so it cannot touch a production database. Add per-visit
 check-in data afterwards with `make random-data`.
 
-To rebuild a database that already has schema, pass `FORCE=1`:
+Re-running it will not silently overwrite what is already there. If the database
+already has schema, `db-init` refuses and exits non-zero:
+
+```shell
+database/kids-checkin.db already has schema; re-run with --force to rebuild it
+```
+
+To rebuild one that already has schema, pass `FORCE=1`:
 ```shell
 make db-init FORCE=1
 ```
+`FORCE=1` drops every table and starts over, including any check-ins you have
+added since. Only pass it when you intend to discard them -- otherwise use
+`make db-migrate` to apply new migrations to an existing database.
 3. In one terminal, start the checkout fetcher:
 ```shell
 make checkout-fetcher
@@ -159,7 +169,7 @@ CI calls `go test` directly instead of through `make test` because `godotenv`
 exits non-zero when `.env` is absent, and `.env` is gitignored.
 
 - **Resetting the database (empty schema):** `make db-reset`
-- **Building a development database (schema + reference topology):** `make db-init`
+- **Building a development database (schema + reference topology):** `make db-init`. Fails if the database already has schema; `make db-init FORCE=1` drops and rebuilds it.
 - **Running migrations:** `make db-migrate`
 - **Creating a new migration:** `make db-new-migration NAME=<migration_name>`
 
