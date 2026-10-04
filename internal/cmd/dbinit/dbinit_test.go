@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 
 	"kids-checkin/internal/cmd/dbinit"
@@ -108,6 +109,15 @@ func TestRun_createsSchemaAndTopsology(t *testing.T) {
 // The snapshot in db/structure.sql deliberately omits schema_migrations, and
 // `make db-migrate` drives the real migrate CLI. Without a stamp the CLI would
 // try to replay every migration on top of an already-current schema.
+//
+// The expected version is read off disk here rather than taken from
+// db.LatestMigrationVersion(). That function is what the command calls, so asking
+// it what it ought to return checks nothing: flipping its glob to return the
+// OLDEST migration left this test green while `migrate up` on the resulting
+// database failed with "index idx_location_groups_name already exists" and left
+// schema_migrations dirty, which blocks every later migration. Deriving the
+// expectation from the migration files themselves is what makes this a real
+// check.
 func TestRun_stampsSchemaMigrations(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "dev.db")
 	initDBAt(t, path)
@@ -119,11 +129,54 @@ func TestRun_stampsSchemaMigrations(t *testing.T) {
 	var version uint64
 	require.NoError(t, database.QueryRow(`SELECT version FROM schema_migrations`).Scan(&version))
 
-	latest, err := db.LatestMigrationVersion()
-	require.NoError(t, err)
-	want, err := strconv.ParseUint(latest, 10, 64)
-	require.NoError(t, err)
+	var dirty bool
+	require.NoError(t, database.QueryRow(`SELECT dirty FROM schema_migrations`).Scan(&dirty),
+		"a dirty stamp blocks every subsequent `migrate up`")
+	assert.False(t, dirty, "db-init must leave schema_migrations clean")
+
+	want := newestMigrationVersionOnDisk(t)
 	assert.Equal(t, want, version, "the stamp must match the newest migration in db/migrations")
+}
+
+// newestMigrationVersionOnDisk reads the version prefix of the newest up-migration
+// directly from db/migrations, independently of db.LatestMigrationVersion.
+//
+// The prefix is everything before the first underscore, which is the
+// golang-migrate convention: 20260823160408_add_checkins.up.sqlite.
+func newestMigrationVersionOnDisk(t *testing.T) uint64 {
+	t.Helper()
+
+	matches, err := filepath.Glob(filepath.Join(repoRoot(t), "db", "migrations", "*.up.sqlite"))
+	require.NoError(t, err)
+	require.NotEmpty(t, matches, "no up-migrations found in db/migrations")
+
+	// Glob sorts, and the version prefix sorts the same way the filenames do,
+	// so the last entry is the newest.
+	base := filepath.Base(matches[len(matches)-1])
+	prefix, _, ok := strings.Cut(base, "_")
+	require.True(t, ok, "migration %q has no version prefix", base)
+	require.Regexp(t, `^\d{14}$`, prefix, "golang-migrate versions are 14-digit timestamps: %q", prefix)
+
+	version, err := strconv.ParseUint(prefix, 10, 64)
+	require.NoError(t, err)
+	return version
+}
+
+// repoRoot walks up from the package directory to the module root.
+func repoRoot(t *testing.T) string {
+	t.Helper()
+	wd, err := os.Getwd()
+	require.NoError(t, err)
+	for dir := wd; ; {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return wd
+		}
+		dir = parent
+	}
 }
 
 // --force must drop whatever it finds, not a hardcoded list of the tables that

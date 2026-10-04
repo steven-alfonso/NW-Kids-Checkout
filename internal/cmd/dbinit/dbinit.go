@@ -322,20 +322,17 @@ func stampMigrations(ctx context.Context, database *sql.DB) error {
 	return nil
 }
 
-// applyFixture seeds the reference topology through the repo layer rather than
-// with hand-written SQL, so the seeding cannot drift from the queries the
-// application actually runs.
+// validateFixture refuses a fixture missing any required section.
 //
-// Everything happens in one transaction. The repos take a repo.DBTX, which a
-// *sql.Tx satisfies, so a failed fixture leaves nothing behind.
-func applyFixture(ctx context.Context, database *sql.DB) error {
-	var f fixture
-	if err := json.Unmarshal(fixtureJSON, &f); err != nil {
-		return fmt.Errorf("parse fixture.json: %w", err)
-	}
-	// An empty collection parses cleanly and seeds nothing, so a truncated or
-	// mistyped fixture would otherwise report "db-init: complete" with zero
-	// rooms. Every section is required.
+// An empty collection parses cleanly and seeds nothing, so a truncated or
+// mistyped fixture would otherwise report "db-init: complete" with zero rooms.
+//
+// This is split out of applyFixture and takes the parsed fixture rather than
+// reading fixtureJSON, so a test can pass a deliberately broken one. Inline it
+// was reachable only with a mutated fixture file, and nothing verified it:
+// neutering the check with `&& false` compiled cleanly and left every test in
+// this package green.
+func validateFixture(f fixture) error {
 	for _, section := range []struct {
 		name string
 		n    int
@@ -348,6 +345,23 @@ func applyFixture(ctx context.Context, database *sql.DB) error {
 		if section.n == 0 {
 			return fmt.Errorf("fixture.json has no %s; refusing to build an empty reference topology", section.name)
 		}
+	}
+	return nil
+}
+
+// applyFixture seeds the reference topology through the repo layer rather than
+// with hand-written SQL, so the seeding cannot drift from the queries the
+// application actually runs.
+//
+// Everything happens in one transaction. The repos take a repo.DBTX, which a
+// *sql.Tx satisfies, so a failed fixture leaves nothing behind.
+func applyFixture(ctx context.Context, database *sql.DB) error {
+	var f fixture
+	if err := json.Unmarshal(fixtureJSON, &f); err != nil {
+		return fmt.Errorf("parse fixture.json: %w", err)
+	}
+	if err := validateFixture(f); err != nil {
+		return err
 	}
 
 	tx, err := database.BeginTx(ctx, nil)
