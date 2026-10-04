@@ -21,16 +21,9 @@ type Cleanup func()
 // is that it, and the dbDir resolution behind StructureSQL, are linked into
 // production binaries.
 //
-// The dbDir half is not entirely dead weight at runtime. dbDir is a
-// package-level variable in schema.go, and Go initializes package variables
-// before main, so resolveDBDir runs in every binary that links this package --
-// including apiserver. It is a runtime.Caller plus a few os.Stat calls: a
-// handful of stats at startup, negligible but not zero. The Dockerfile ships
-// only db/migrations, so the production container has no db/structure.sql to
-// find and the search walks up to the filesystem root before giving up.
-//
-// Keeping this here is a deliberate trade for not duplicating the helper into
-// every package that needs it.
+// Linking them is not the same as running them. dbDir is a sync.OnceValue, so
+// resolveDBDir does no work until something actually calls StructureSQL, and
+// nothing in production does. The snapshot itself stays on disk.
 func PrepareTestDB() (*sql.DB, Cleanup, error) {
 	tempDB, err := InitDB(inMemoryDSN)
 	if err != nil {

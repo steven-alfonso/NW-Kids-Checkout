@@ -178,13 +178,25 @@ This file guides coding agents working in this repo. Keep changes small, follow 
     database without declaring a flag at all.
   - `TestDbFileFlagIsNeverRedefined` and `TestDBInitCallSiteDoesNotHardcodePath`
     are the structural backstops: an AST rule forbidding any `StringFlag{Name:
-    "db-file"}`, and any `<db>.InitDB("literal")`. They need no list of
-    commands, which is what makes them complete where the tree walk is not.
+    "db-file"}`, and any `<db>.InitDB` whose path is a literal **or a read of
+    `db.DefaultDBFile`**. They need no list of commands, which is what lets them
+    reach what the tree walk cannot.
+    - They are not complete, and should not be described as though they were. An
+      argument that reaches the path by some third shape — `os.Getenv`, a
+      helper's return value, string concatenation — is not detected; that needs
+      dataflow analysis, which a single-file parse is not. They cover the two
+      spellings that actually caused this drift and raise the cost of
+      reintroducing it. They do not prove its absence.
+    - Rejecting string literals alone left a hole that needed no cleverness: a
+      command that mounted no `--db-file` flag and passed `db.DefaultDBFile`
+      passed all five guards, and would have silently ignored both `--db-file`
+      and `$DB_FILE`. Both shapes are now rejected.
   - Both resolve indirection rather than matching one spelling. The flag guard
-    follows a `Name:` value through a same-file `const`/`var`, so
-    `Name: dbFileFlagName` is caught along with `Name: "db-file"`. The InitDB
-    guard matches the receiver by **import path**, not by the identifier `db`,
-    so an aliased `import store "kids-checkin/internal/db"` is still checked.
+    follows a `Name:` value through a same-file `const`/`var`/`:=`, so
+    `Name: dbFileFlagName` and `n := "db-file"` are caught along with
+    `Name: "db-file"`. The InitDB guard matches the receiver by **import path**,
+    not by the identifier `db`, so an aliased
+    `import store "kids-checkin/internal/db"` is still checked.
     They skip different sets: only `internal/db/flag.go` may declare the flag,
     while the rest of `internal/db` passes literal DSNs to `InitDB` on purpose.
   - When adding a guard on AST or source text, check that it actually fires.

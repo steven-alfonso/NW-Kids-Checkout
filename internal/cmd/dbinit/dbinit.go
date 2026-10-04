@@ -353,8 +353,9 @@ func validateFixture(f fixture) error {
 // with hand-written SQL, so the seeding cannot drift from the queries the
 // application actually runs.
 //
-// Everything happens in one transaction. The repos take a repo.DBTX, which a
-// *sql.Tx satisfies, so a failed fixture leaves nothing behind.
+// Everything happens in one transaction, the read-back count included. The repos
+// take a repo.DBTX, which a *sql.Tx satisfies, so a failed fixture leaves
+// nothing behind.
 func applyFixture(ctx context.Context, database *sql.DB) error {
 	var f fixture
 	if err := json.Unmarshal(fixtureJSON, &f); err != nil {
@@ -440,18 +441,19 @@ func applyFixture(ctx context.Context, database *sql.DB) error {
 		}
 	}
 
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit fixture: %w", err)
-	}
-
 	// Counted from the database rather than from the fixture slices. Several of
 	// these repos upsert, so a duplicate planning_center_id -- the single most
 	// likely fixture edit -- inserts fewer rows than the fixture lists, and
 	// logging len(f.Locations) would report rooms that are not there.
-	counts, err := fixtureCounts(ctx, database)
+	counts, err := fixtureCounts(ctx, tx)
 	if err != nil {
 		return err
 	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit fixture: %w", err)
+	}
+
 	slog.InfoContext(ctx, "db-init: seeded reference topology",
 		slog.Int("location_groups", counts["location_groups"]),
 		slog.Int("events", counts["events"]),
@@ -461,12 +463,18 @@ func applyFixture(ctx context.Context, database *sql.DB) error {
 }
 
 // fixtureCounts reads back the number of rows each seeded table ended up with.
-func fixtureCounts(ctx context.Context, database *sql.DB) (map[string]int, error) {
+//
+// It runs inside the fixture transaction rather than after it. A transaction
+// reads its own uncommitted writes, so the numbers are the same -- but a
+// failure here now rolls the fixture back instead of reporting an error for a
+// database that was in fact seeded successfully, which left it built and made
+// the retry demand --force.
+func fixtureCounts(ctx context.Context, tx *sql.Tx) (map[string]int, error) {
 	tables := []string{"location_groups", "events", "locations", "event_check_windows"}
 	counts := make(map[string]int, len(tables))
 	for _, table := range tables {
 		var n int
-		if err := database.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+quoteIdentifier(table)).Scan(&n); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+quoteIdentifier(table)).Scan(&n); err != nil {
 			return nil, fmt.Errorf("count %s: %w", table, err)
 		}
 		counts[table] = n

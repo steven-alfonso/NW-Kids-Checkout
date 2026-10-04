@@ -49,6 +49,12 @@ func InitDB(dataSourceName string) (*sql.DB, error) {
 		return nil, err
 	}
 
+	// Both failures below return an open *sql.DB. Closing it here matters because
+	// sql.Open has already opened a connection by the time the Exec and the Ping
+	// have run, and *sql.DB has no finalizer: a caller that only sees an error
+	// has no handle to close and the connection would outlive the process's
+	// interest in it.
+	//
 	// DSN params _foreign_keys, _busy_timeout, _txlock are the load-bearing
 	// per-connection settings (they apply to every pooled connection). The
 	// Exec below only affects one connection and must not be relied on for
@@ -57,11 +63,13 @@ func InitDB(dataSourceName string) (*sql.DB, error) {
   		PRAGMA synchronous = NORMAL;
   		PRAGMA temp_store = MEMORY;`)
 	if err != nil {
+		_ = db.Close()
 		return nil, err
 	}
 
 	err = db.Ping()
 	if err != nil {
+		_ = db.Close()
 		return nil, err
 	}
 

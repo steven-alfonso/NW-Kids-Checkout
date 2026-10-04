@@ -149,9 +149,14 @@ make test-all   # the above, plus both -trimpath passes -- run this before pushi
 `make test-trimpath` exists because `db/structure.sql` is read from disk rather
 than embedded, and its path is resolved from `runtime.Caller`, which `-trimpath`
 rewrites to a module-relative path. Resolution that works in a normal build can
-fail in a trimmed one, and that failure is invisible to `make test` -- so
-`make test-all` is the gate. There is no CI in this repository; if you are
-setting one up, run `make test-all`.
+fail in a trimmed one, and that failure is invisible to `make test`.
+
+CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs all four
+combinations as required steps, along with `gofmt`, `go vet`, and a build of the
+release entrypoint, so it is the gate on a push. `make test-all` is the local
+equivalent -- run it first so a failure is yours rather than a red pipeline's.
+CI calls `go test` directly instead of through `make test` because `godotenv`
+exits non-zero when `.env` is absent, and `.env` is gitignored.
 
 - **Resetting the database (empty schema):** `make db-reset`
 - **Building a development database (schema + reference topology):** `make db-init`

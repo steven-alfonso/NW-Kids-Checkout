@@ -22,12 +22,12 @@ var migrationVersion = regexp.MustCompile(`^(\d+)_`)
 // replaying every migration against a database already built from the current
 // schema snapshot.
 func LatestMigrationVersion() (string, error) {
-	names, err := filepath.Glob(filepath.Join(dbDir, migrationsGlob))
+	names, err := filepath.Glob(filepath.Join(dbDir(), migrationsGlob))
 	if err != nil {
 		return "", fmt.Errorf("list migrations: %w", err)
 	}
 	if len(names) == 0 {
-		return "", fmt.Errorf("no migrations found in %s", filepath.Join(dbDir, "migrations"))
+		return "", fmt.Errorf("no migrations found in %s", filepath.Join(dbDir(), "migrations"))
 	}
 
 	// Glob sorts its results, and the version prefix sorts the same way the

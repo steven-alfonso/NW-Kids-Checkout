@@ -108,9 +108,13 @@ test-trimpath:
 # `go test ./...` and fails only here -- verified by breaking it and confirming
 # the failure appears in this target and nowhere else.
 #
-# This repository has no CI, so this target is the entire gate. Run it before
-# pushing anything that touches internal/db, internal/web/static, or the
-# db-file wiring.
+# CI (.github/workflows/ci.yml) runs the same four combinations as required
+# steps, plus gofmt and go vet, so it is the gate on a push. This target is the
+# local equivalent -- run it before pushing anything that touches internal/db,
+# internal/web/static, or the db-file wiring, so the failure is yours rather than
+# a red pipeline's. CI invokes `go test` directly rather than through this
+# target, because godotenv exits non-zero when .env is absent and .env is
+# gitignored; see that workflow's header comment.
 test-all: test test-trimpath
 
 .PHONY: db-init
