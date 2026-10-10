@@ -78,8 +78,9 @@ The same demo data can be seeded directly in SQLite (useful for API/manual-check
 
 ```sh
 godotenv ./bin/kids-checkin checkins seed-preview --force
-godotenv ./bin/kids-checkin checkins seed-preview --force --db-file database/kids-checkin.db
 ```
+
+The explicit `--db-file database/kids-checkin.db` form is unnecessary now that the default matches the Makefile; it is kept working via `--db-file`/`$DB_FILE` precedence.
 
 This uses the `checkin`/`manualcheckin` Repos (`DeleteAllCheckins`/`DeleteAllManualCheckins` + `CreateCheckin`/`CreateManualCheckin`) to delete all rows in `checkins` and `manual_checkins` and insert 10 preview rows (5 `demo-*` + 5 `demo-m*`) at the same time offsets as `preview.js`. Requires `--force`. See `README.md` for details.
 

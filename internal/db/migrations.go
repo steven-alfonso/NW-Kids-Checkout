@@ -2,6 +2,7 @@ package db
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"regexp"
 )
@@ -22,20 +23,34 @@ var migrationVersion = regexp.MustCompile(`^(\d+)_`)
 // replaying every migration against a database already built from the current
 // schema snapshot.
 func LatestMigrationVersion() (string, error) {
+	dir := filepath.Join(dbDir(), "migrations")
+	if st, err := os.Stat(dir); err != nil || !st.IsDir() {
+		return "", fmt.Errorf("migrations directory not found at %s: %w", dir, err)
+	}
 	names, err := filepath.Glob(filepath.Join(dbDir(), migrationsGlob))
 	if err != nil {
 		return "", fmt.Errorf("list migrations: %w", err)
 	}
 	if len(names) == 0 {
-		return "", fmt.Errorf("no migrations found in %s", filepath.Join(dbDir(), "migrations"))
+		return "", fmt.Errorf("no migrations found in %s", dir)
 	}
 
-	// Glob sorts its results, and the version prefix sorts the same way the
-	// filenames do, so the last entry is the newest migration.
-	newest := names[len(names)-1]
-	match := migrationVersion.FindStringSubmatch(filepath.Base(newest))
-	if match == nil {
-		return "", fmt.Errorf("migration %q has no version prefix", filepath.Base(newest))
+	// Take the numeric max over all files, not the lexical last. Glob sorts
+	// lexically, so a stray "9_hotfix.up.sqlite" would otherwise beat
+	// "2026..." and a malformed newest file would fail the whole lookup even
+	// when older valid migrations exist.
+	var newest string
+	for _, name := range names {
+		match := migrationVersion.FindStringSubmatch(filepath.Base(name))
+		if match == nil {
+			continue
+		}
+		if match[1] > newest {
+			newest = match[1]
+		}
 	}
-	return match[1], nil
+	if newest == "" {
+		return "", fmt.Errorf("no versioned migrations in %s", dir)
+	}
+	return newest, nil
 }

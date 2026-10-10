@@ -86,5 +86,6 @@ func TestStructureSQL_readsRealSnapshot(t *testing.T) {
 	schema, err := StructureSQL()
 	require.NoError(t, err)
 	assert.Contains(t, schema, "CREATE TABLE", "snapshot should contain table definitions")
-	assert.NotContains(t, schema, "kids-checkin/db/structure.sql", "must not have read a module-relative path")
+	assert.True(t, filepath.IsAbs(dbDir()), "dbDir must be absolute so errors name a concrete path, got %q", dbDir())
+	assert.Contains(t, schema, "CREATE TABLE checkins", "snapshot should contain the checkins table")
 }

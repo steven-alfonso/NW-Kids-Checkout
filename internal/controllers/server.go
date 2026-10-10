@@ -45,9 +45,14 @@ func StartServer(port int, dbFilepath string) error {
 
 	database, err := db.InitDB(dbPath)
 	if err != nil {
-		panic(err)
+		return fmt.Errorf("init db: %w", err)
 	}
 
+	// The session store builds its own DSN from the same path string, so it
+	// shares the spelling but not the connection settings: InitDB appends
+	// _foreign_keys/_busy_timeout/_txlock while the storage driver uses the
+	// bare path. Same file, asymmetric lock/timeout config. Pre-existing;
+	// only the spelling ambiguity is fixed here.
 	storage := sqlite3.New(sqlite3.Config{
 		Database: dbPath,
 		Reset:    false, // Don't clear sessions on start

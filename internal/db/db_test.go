@@ -222,3 +222,52 @@ func TestInitDB_rejectsBlankDSN(t *testing.T) {
 		})
 	}
 }
+
+func TestResolveDSN_memorySubstringIsAFile(t *testing.T) {
+	// "backup-:memory:.db" contains the substring but is a real filename and
+	// must be absolutized, not passed through as memory.
+	for _, dsn := range []string{"backup-:memory:.db", "my-:memory:-backup.db?_txlock=deferred"} {
+		got := ResolveDSN(dsn)
+		path, _, _ := strings.Cut(got, "?")
+		assert.True(t, filepath.IsAbs(path), "substring match must not bypass absolutizing: %s -> %s", dsn, got)
+	}
+	for _, dsn := range []string{":memory:", ":memory:?cache=shared", "file::memory:", "file::memory:?cache=shared"} {
+		assert.Equal(t, dsn, ResolveDSN(dsn), "true memory DSNs must pass through")
+	}
+}
+
+func TestInitDB_trimsPaddedPath(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	require.NoError(t, os.MkdirAll("database", 0o755))
+
+	database, err := InitDB("  database/kids-checkin.db  ")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = database.Close() })
+
+	_, err = os.Stat(filepath.Join(dir, "database", "kids-checkin.db"))
+	require.NoError(t, err, "padded path must open the trimmed file, not a junk spaced filename")
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	for _, e := range entries {
+		assert.NotContains(t, e.Name(), " ", "must not create a spaced junk file or dir in %s", dir)
+	}
+}
+
+func TestInitDB_createsParentDir(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	database, err := InitDB(filepath.Join("nested", "deep", "test.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = database.Close() })
+
+	_, err = os.Stat(filepath.Join(dir, "nested", "deep", "test.db"))
+	require.NoError(t, err, "InitDB must mkdir the parent; sqlite creates files, never directories")
+}
+
+func TestInitDB_rejectsTildefulPath(t *testing.T) {
+	_, err := InitDB("~/data.db")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not expanded")
+}

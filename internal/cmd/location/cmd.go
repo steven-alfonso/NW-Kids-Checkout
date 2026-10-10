@@ -32,7 +32,7 @@ func upsertLocation(ctx context.Context, cmd *cli.Command) error {
 	dbFile := cmd.String("db-file")
 	database, err := db.InitDB(dbFile)
 	if err != nil {
-		panic(err)
+		return cli.Exit(err.Error(), 1)
 	}
 
 	defer database.Close()

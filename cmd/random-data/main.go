@@ -46,6 +46,9 @@ func main() {
 func run(ctx context.Context, cmd *cli.Command) error {
 	dbFile := cmd.String("db-file")
 	count := cmd.Int("count")
+	if count < 0 {
+		return fmt.Errorf("count must be >= 0, got %d", count)
+	}
 
 	slog.Info("random-data: starting", slog.String("db_file", dbFile), slog.Int("count", count))
 

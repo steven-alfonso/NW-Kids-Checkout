@@ -5,26 +5,25 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"sync"
 )
 
 // structureSnapshotFile is the name of the schema snapshot inside db/.
 const structureSnapshotFile = "structure.sql"
 
-// dbDir is the absolute path to the repository's db/ directory. Call it:
-// dbDir(), not dbDir.
+// dbDir is the absolute path to the repository's db/ directory.
 //
 // The snapshot is read from disk rather than //go:embed'd on purpose: nothing in
 // production uses it, and embedding it shipped a schema snapshot inside every
 // release binary. Only tests and the dev-only `db-init` command read it.
 //
-// Because that is true, this must not resolve at package-init time. As a plain
-// var, Go initialises it before main in every binary that links this package --
-// apiserver included -- so resolveDBDir's runtime.Caller plus its os.Stat calls
-// ran at startup of a binary that never reads the snapshot. sync.OnceValue defers
-// the whole lookup to the first StructureSQL call, so a production binary never
-// performs it at all.
-var dbDir = sync.OnceValue(resolveDBDir)
+// This is deliberately not cached. resolveDBDir falls back to a walk up from
+// the working directory under -trimpath, so a sync.OnceValue would pin the
+// first caller's CWD for the lifetime of the process: a StructureSQL call after
+// t.Chdir(tmp) would poison every later call back in the repo. The walk is a
+// few Stats and only runs for tests and db-init, so resolving fresh is cheap.
+func dbDir() string {
+	return resolveDBDir()
+}
 
 // resolveDBDir locates db/ in two steps, because neither one alone is reliable.
 //
@@ -51,9 +50,13 @@ func resolveDBDir() string {
 		if dir, ok := findDBDir(wd); ok {
 			return dir
 		}
+		// Nothing found. Return an absolute guess under the working directory
+		// so the resulting error names a concrete path instead of a bare
+		// relative "db/structure.sql" that compounds CWD confusion.
+		return filepath.Join(wd, "db")
 	}
-	// Nothing found. Return the compile-time-shaped guess so the resulting
-	// error names a plausible path instead of an empty string.
+	// No working directory available; fall back to the relative guess so the
+	// error at least names the expected layout.
 	return "db"
 }
 

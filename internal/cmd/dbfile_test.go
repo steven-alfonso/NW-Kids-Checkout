@@ -134,11 +134,14 @@ func TestEveryDBCommandUsesTheSharedFlag(t *testing.T) {
 // a command with no db-file flag, or a command in a separate main package,
 // simply has no flag for that test to inspect.
 //
-// What it does not cover, stated plainly rather than implied: an argument that
-// reaches the path by some third shape -- os.Getenv, a helper's return value,
-// string concatenation. Detecting those needs dataflow analysis, which a
-// single-file parse is not. The guard covers the two spellings that actually
-// caused this bug; it does not prove no others exist.
+// What it does not cover, stated plainly rather than implied: an identifier
+// declared in another file, or a path built by a helper that takes no literal
+// at the call site. A CallExpr argument that is not cmd.String("db-file") or
+// db.ResolveDSN(...) is now rejected, which catches os.Getenv and direct
+// helper calls, but `db.InitDB(pathVar)` where pathVar came from a helper in
+// another statement still needs dataflow analysis, which a single-file parse is
+// not. The guard covers the spellings that actually caused this bug plus the
+// direct-call shapes; it does not prove no others exist.
 //
 // The argument is checked with the AST rather than by matching source text, so
 // a path in a comment or a string literal elsewhere in the file cannot satisfy
@@ -150,9 +153,10 @@ func TestEveryDBCommandUsesTheSharedFlag(t *testing.T) {
 // exactly the hardcoded path the guard exists to prevent.
 func TestDBInitCallSiteDoesNotHardcodePath(t *testing.T) {
 	found := 0
-	eachGoFile(t, skipDBPackage, func(fset *token.FileSet, path string, file *ast.File) {
-		receiver := dbImportName(file)
-		if receiver == "" {
+	foundFiles := map[string]bool{}
+	eachGoFile(t, skipDBInitGuard, func(fset *token.FileSet, path string, file *ast.File) {
+		receiver, isDot := dbImportName(file)
+		if receiver == "" && !isDot {
 			return
 		}
 		// Resolved per file so a local alias of db.DefaultDBFile is caught too.
@@ -162,6 +166,17 @@ func TestDBInitCallSiteDoesNotHardcodePath(t *testing.T) {
 			call, ok := n.(*ast.CallExpr)
 			if !ok {
 				return true
+			}
+			// Dot-imported InitDB("..."): Fun is *ast.Ident, not SelectorExpr.
+			if isDot {
+				if ident, ok := call.Fun.(*ast.Ident); ok && ident.Name == "InitDB" {
+					if !isTest {
+						found++
+						foundFiles[path] = true
+					}
+					checkInitDBArg(t, fset, call, ".", decls)
+					return true
+				}
 			}
 			sel, ok := call.Fun.(*ast.SelectorExpr)
 			if !ok || sel.Sel.Name != "InitDB" {
@@ -173,29 +188,14 @@ func TestDBInitCallSiteDoesNotHardcodePath(t *testing.T) {
 			}
 			if !isTest {
 				found++
+				foundFiles[path] = true
 			}
 			if len(call.Args) == 0 {
 				t.Errorf("%s calls %s.InitDB() with no argument; pass the --db-file value",
 					fset.Position(call.Pos()), receiver)
 				return true
 			}
-			// Both ways of naming the path without reading the flag are rejected:
-			// a string literal, and db.DefaultDBFile however it is spelled. The
-			// second is what made the literal-only rule incomplete -- mounting no
-			// flag at all and passing the constant passed every guard here.
-			//
-			// An argument the parse cannot resolve at all is left alone; see the
-			// limitations documented on resolveValue.
-			value, resolved := resolveValue(call.Args[0], decls)
-			switch {
-			case !resolved:
-			case value == defaultDBFileRef:
-				t.Errorf("%s calls %s.InitDB(%s); the path must come from db.DBFileFlag() via cmd.String(%q), not the default constant -- a command that passes this ignores both --db-file and $%s",
-					fset.Position(call.Pos()), receiver, defaultDBFileRef, "db-file", db.EnvDBFile)
-			default:
-				t.Errorf("%s calls %s.InitDB(%q); the path must come from db.DBFileFlag() via cmd.String(%q), not a hardcoded literal",
-					fset.Position(call.Pos()), receiver, value, "db-file")
-			}
+			checkInitDBArg(t, fset, call, receiver, decls)
 			return true
 		})
 	})
@@ -204,12 +204,72 @@ func TestDBInitCallSiteDoesNotHardcodePath(t *testing.T) {
 	// green after every production call site had moved or been renamed -- which
 	// is the exact failure the assertion exists to catch.
 	assert.Positive(t, found, "no non-test db.InitDB call sites found; this guard would silently pass if the call sites moved, were aliased away, or were renamed")
+	// Liveness is a lower bound, not just >0: with 7 call sites today, losing 6
+	// of them must fail. An exact count would churn on every new command, so
+	// require a majority to still be present.
+	assert.GreaterOrEqual(t, found, 5, "expected at least 5 non-test InitDB call sites (apiserver/server, checkins, location, fetcher, dbinit, random-data); found in %v", foundFiles)
+}
+
+// checkInitDBArg rejects the two spellings that caused the drift (a string
+// literal and db.DefaultDBFile however spelled) plus a direct CallExpr that is
+// neither cmd.String("db-file") nor db.ResolveDSN(...). The latter catches
+// os.Getenv("DB_FILE") and helper() at the call site; an identifier that came
+// from a helper in another statement still needs dataflow and stays documented
+// as a gap.
+func checkInitDBArg(t *testing.T, fset *token.FileSet, call *ast.CallExpr, receiver string, decls map[string]string) {
+	t.Helper()
+	if len(call.Args) == 0 {
+		return
+	}
+	arg := call.Args[0]
+	if inner, ok := arg.(*ast.CallExpr); ok && !isAllowedPathCall(inner) {
+		t.Errorf("%s calls %s.InitDB with a computed path; pass cmd.String(\"db-file\") (or db.ResolveDSN of it) so --db-file and $DB_FILE are honored",
+			fset.Position(call.Pos()), receiver)
+		return
+	}
+	// Both ways of naming the path without reading the flag are rejected:
+	// a string literal, and db.DefaultDBFile however it is spelled. The
+	// second is what made the literal-only rule incomplete -- mounting no
+	// flag at all and passing the constant passed every guard here.
+	value, resolved := resolveValue(arg, decls)
+	switch {
+	case !resolved:
+	case value == defaultDBFileRef:
+		t.Errorf("%s calls %s.InitDB(%s); the path must come from db.DBFileFlag() via cmd.String(%q), not the default constant -- a command that passes this ignores both --db-file and $%s",
+			fset.Position(call.Pos()), receiver, defaultDBFileRef, "db-file", db.EnvDBFile)
+	default:
+		t.Errorf("%s calls %s.InitDB(%q); the path must come from db.DBFileFlag() via cmd.String(%q), not a hardcoded literal",
+			fset.Position(call.Pos()), receiver, value, "db-file")
+	}
+}
+
+// isAllowedPathCall reports whether a CallExpr argument is a legitimate
+// flag-derived path: cmd.String("db-file") in any spelling, or
+// <db>.ResolveDSN(...) wrapping one. Anything else computing a path
+// (os.Getenv, legacyPath(), ...) is rejected at the call site.
+func isAllowedPathCall(call *ast.CallExpr) bool {
+	switch fun := call.Fun.(type) {
+	case *ast.SelectorExpr:
+		if fun.Sel.Name == "String" && len(call.Args) == 1 {
+			if lit, ok := call.Args[0].(*ast.BasicLit); ok && lit.Kind == token.STRING {
+				if s, err := strconv.Unquote(lit.Value); err == nil && s == "db-file" {
+					return true
+				}
+			}
+		}
+		if fun.Sel.Name == "ResolveDSN" {
+			return true
+		}
+	}
+	return false
 }
 
 // dbImportName returns the identifier the file uses to refer to
-// kids-checkin/internal/db, honouring an alias, or "" if the file does not
-// import it.
-func dbImportName(file *ast.File) string {
+// kids-checkin/internal/db, honouring an alias, plus whether the import is a
+// dot-import. A dot-import (`import . "kids-checkin/internal/db"`) makes
+// InitDB callable bare, so the guard must match *ast.Ident as well as
+// *ast.SelectorExpr for those files.
+func dbImportName(file *ast.File) (string, bool) {
 	const dbImportPath = "kids-checkin/internal/db"
 	for _, imp := range file.Imports {
 		value, err := strconv.Unquote(imp.Path.Value)
@@ -217,11 +277,17 @@ func dbImportName(file *ast.File) string {
 			continue
 		}
 		if imp.Name != nil {
-			return imp.Name.Name
+			if imp.Name.Name == "." {
+				return "", true
+			}
+			if imp.Name.Name == "_" {
+				continue
+			}
+			return imp.Name.Name, false
 		}
-		return "db"
+		return "db", false
 	}
-	return ""
+	return "", false
 }
 
 // TestDbFileFlagIsNeverRedefined closes the gap the other two guards cannot
@@ -253,6 +319,23 @@ func TestDbFileFlagIsNeverRedefined(t *testing.T) {
 	eachGoFile(t, skipFlagOwner, func(fset *token.FileSet, path string, file *ast.File) {
 		decls := sameFileDecls(file)
 		ast.Inspect(file, func(n ast.Node) bool {
+			// Direct assignment: f.Name = "db-file" outside a composite literal.
+			if assign, ok := n.(*ast.AssignStmt); ok {
+				for i, lhs := range assign.Lhs {
+					sel, ok := lhs.(*ast.SelectorExpr)
+					if !ok || sel.Sel.Name != "Name" {
+						continue
+					}
+					if i >= len(assign.Rhs) {
+						continue
+					}
+					if v, ok := resolveValue(assign.Rhs[i], decls); ok && v == "db-file" {
+						t.Errorf("%s assigns .Name = %q outside a flag literal; mount db.DBFileFlag() instead so there is exactly one definition",
+							fset.Position(assign.Pos()), v)
+					}
+				}
+				return true
+			}
 			lit, ok := n.(*ast.CompositeLit)
 			if !ok {
 				return true
@@ -275,7 +358,22 @@ func TestDbFileFlagIsNeverRedefined(t *testing.T) {
 					continue
 				}
 				key, ok := kv.Key.(*ast.Ident)
-				if !ok || key.Name != "Name" {
+				if !ok {
+					continue
+				}
+				// Aliases: []string{"db-file"} still accepts --db-file.
+				if key.Name == "Aliases" {
+					if comp, ok := kv.Value.(*ast.CompositeLit); ok {
+						for _, e := range comp.Elts {
+							if v, ok := resolveValue(e, decls); ok && v == "db-file" {
+								t.Errorf("%s declares %s with Aliases containing %q; mount db.DBFileFlag() instead so there is exactly one definition",
+									fset.Position(lit.Pos()), name, v)
+							}
+						}
+					}
+					continue
+				}
+				if key.Name != "Name" {
 					continue
 				}
 				unquoted, ok := resolveValue(kv.Value, decls)
@@ -307,10 +405,10 @@ const defaultDBFileRef = "db.DefaultDBFile"
 // passed db.DefaultDBFile -- directly or via a local alias -- ignored both
 // --db-file and $DB_FILE, and a literal-only rule reported nothing.
 //
-// What this cannot see, and no single-file parse can: an expression that computes
-// the path some other way, such as os.Getenv("DB_FILE") or a value returned by a
-// helper. Those remain unchecked. The guard raises the cost of reintroducing the
-// drift; it does not prove the absence of it.
+// String concatenation ("kids-" + "checkin.db") is evaluated so the oldest
+// grep-dodge does not pass. Anything else that computes the path -- os.Getenv,
+// a helper's return value -- stays unresolved; see the limitations documented on
+// TestDBInitCallSiteDoesNotHardcodePath.
 //
 // BasicLit.Value for a STRING is the raw source text, quotes included.
 // Comparing it to a bare db-file would never match -- which is precisely how
@@ -336,6 +434,27 @@ func resolveValue(expr ast.Expr, decls map[string]string) (string, bool) {
 			return defaultDBFileRef, true
 		}
 		return "", false
+	case *ast.BinaryExpr:
+		// Only constant string concatenation. "a"+"b" resolves; anything with a
+		// non-string side does not, so numeric or call expressions stay
+		// unresolved rather than guessing.
+		if value.Op != token.ADD {
+			return "", false
+		}
+		left, ok := resolveValue(value.X, decls)
+		if !ok {
+			return "", false
+		}
+		right, ok := resolveValue(value.Y, decls)
+		if !ok {
+			return "", false
+		}
+		// A DefaultDBFile half poisons the whole expression: "x"+DefaultDBFile
+		// still names the default without reading the flag.
+		if left == defaultDBFileRef || right == defaultDBFileRef {
+			return defaultDBFileRef, true
+		}
+		return left + right, true
 	default:
 		return "", false
 	}
@@ -349,73 +468,139 @@ func resolveValue(expr ast.Expr, decls map[string]string) (string, bool) {
 // which is exactly the shape a person writes to dodge a grep for the literal.
 // Grouped blocks (`const ( ... )`) are handled by the ValueSpec loop, and
 // multi-name specs (`const a, b = "db-file", "x"`) are matched up positionally.
+// A single value for several names (`const a, b = "db-file"`) broadcasts to all
+// of them, which valid Go assigns the same value.
 //
 // Short variable declarations (`alias := db.DefaultDBFile`) are collected too.
 // They are not ValueSpecs, so the const/var loop cannot see them, and `:=` is how
 // such an alias actually gets written -- handling only const and var left the
 // obvious spelling of the alias undetected.
 //
+// Resolution runs to a fixed point so chained aliases (`const n1 = "db-file";
+// const n2 = n1; Name: n2`) resolve. A single pass left depth-2 and deeper
+// silently unresolved, which is the natural way to hide a constant.
+//
 // Cross-file and non-literal initialisers are skipped: a single-file parse cannot
 // follow them, and guessing would be worse than not matching.
 func sameFileDecls(file *ast.File) map[string]string {
 	decls := make(map[string]string)
-	collect := func(gen *ast.GenDecl) {
+	collect := func(gen *ast.GenDecl, decls map[string]string) bool {
 		if gen.Tok != token.CONST && gen.Tok != token.VAR {
-			return
+			return false
 		}
+		changed := false
 		for _, spec := range gen.Specs {
 			valueSpec, ok := spec.(*ast.ValueSpec)
 			if !ok {
 				continue
 			}
 			// A spec may declare several names against several values; pair them
-			// positionally. iota-style implicit repeats have fewer values than
-			// names and are skipped, since guessing an iota value would be worse
-			// than not resolving the name at all.
+			// positionally. `const a, b = "x"` assigns the single value to both
+			// names, so broadcast Values[0]. iota-style implicit repeats have
+			// fewer values than names for a different reason and are still
+			// skipped, since guessing an iota value would be worse than not
+			// resolving the name at all.
+			vals := valueSpec.Values
+			if len(vals) == 1 && len(valueSpec.Names) > 1 {
+				for _, name := range valueSpec.Names {
+					if resolved, ok := resolveValue(vals[0], decls); ok {
+						if decls[name.Name] != resolved {
+							decls[name.Name] = resolved
+							changed = true
+						}
+					}
+				}
+				continue
+			}
 			for i, name := range valueSpec.Names {
 				if i >= len(valueSpec.Values) {
 					continue
 				}
-				if resolved, ok := resolveValue(valueSpec.Values[i], nil); ok {
-					decls[name.Name] = resolved
+				if resolved, ok := resolveValue(valueSpec.Values[i], decls); ok {
+					if decls[name.Name] != resolved {
+						decls[name.Name] = resolved
+						changed = true
+					}
 				}
 			}
 		}
+		return changed
 	}
 
+	// Gather GenDecls (package-level and function-local) and := assignments.
+	// Assignments are collected separately so the fixed-point loop can resolve
+	// `b := a` after `a := "db-file"` in the same pass set.
+	var gens []*ast.GenDecl
+	type assign struct {
+		lhs []ast.Expr
+		rhs []ast.Expr
+	}
+	var assigns []assign
 	for _, decl := range file.Decls {
 		if gen, ok := decl.(*ast.GenDecl); ok {
-			collect(gen)
+			gens = append(gens, gen)
 		}
 	}
-	// Function bodies hold their own const and var declarations, and their own
-	// `:=` declarations, which are assignments rather than declarations the
-	// ValueSpec loop can see.
 	ast.Inspect(file, func(n ast.Node) bool {
 		switch decl := n.(type) {
 		case *ast.GenDecl:
-			collect(decl)
+			// Avoid double-adding package-level decls already in gens; harmless
+			// if duplicated since collect is idempotent.
+			found := false
+			for _, g := range gens {
+				if g == decl {
+					found = true
+					break
+				}
+			}
+			if !found {
+				gens = append(gens, decl)
+			}
 		case *ast.AssignStmt:
 			// Only `:=` introduces a name. A later `x = y` rebinds nothing and
 			// must not overwrite what the declaration established.
 			if decl.Tok != token.DEFINE {
 				break
 			}
-			for i, lhs := range decl.Lhs {
-				if i >= len(decl.Rhs) {
+			assigns = append(assigns, assign{lhs: decl.Lhs, rhs: decl.Rhs})
+		}
+		return true
+	})
+
+	// Iterate to a fixed point: each pass may resolve names the next pass's
+	// aliases depend on. Files are small; bounded iteration is cheap.
+	for range 10 {
+		changed := false
+		for _, gen := range gens {
+			if collect(gen, decls) {
+				changed = true
+			}
+		}
+		for _, a := range assigns {
+			for i, lhs := range a.lhs {
+				if i >= len(a.rhs) {
 					break
 				}
 				name, ok := lhs.(*ast.Ident)
 				if !ok {
 					continue
 				}
-				if resolved, ok := resolveValue(decl.Rhs[i], nil); ok {
+				// Do not overwrite an established binding with a later
+				// reassignment in the same fixed-point walk; the declaration
+				// is what matters for guard purposes.
+				if _, exists := decls[name.Name]; exists {
+					continue
+				}
+				if resolved, ok := resolveValue(a.rhs[i], decls); ok {
 					decls[name.Name] = resolved
+					changed = true
 				}
 			}
 		}
-		return true
-	})
+		if !changed {
+			break
+		}
+	}
 	return decls
 }
 
@@ -467,10 +652,25 @@ func eachGoFile(t *testing.T, skip func(rel string) bool, visit func(fset *token
 	require.NoError(t, err)
 }
 
-// skipDBPackage reports whether rel is inside internal/db, which owns the flag
-// and passes literal DSNs by design.
+// skipDBInitGuard reports whether rel is exempt from the InitDB hardcode guard.
+// Only the package's own fixtures are exempt: prepare_test_db.go opens the
+// shared in-memory DSN by design, and internal/db/*_test.go files use literals
+// like "relative.db" to exercise edge cases. Every other file -- including
+// tests elsewhere (which pass variables like `path`, not literals) and every
+// other file in internal/db -- must still pass the guard.
+func skipDBInitGuard(rel string) bool {
+	if rel == filepath.Join("internal", "db", "prepare_test_db.go") {
+		return true
+	}
+	if strings.HasPrefix(rel, filepath.Join("internal", "db")+string(filepath.Separator)) && strings.HasSuffix(rel, "_test.go") {
+		return true
+	}
+	return false
+}
+
+// skipDBPackage kept for history; use skipDBInitGuard for the InitDB guard.
 func skipDBPackage(rel string) bool {
-	return strings.HasPrefix(rel, filepath.Join("internal", "db")+string(filepath.Separator))
+	return skipDBInitGuard(rel)
 }
 
 // skipFlagOwner reports whether rel is internal/db/flag.go, the single file

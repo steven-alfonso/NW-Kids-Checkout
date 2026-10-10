@@ -67,15 +67,18 @@ assets:
 
 .PHONY: web
 web: build
+	mkdir -p $(dir $(KIDS_CHECKIN_DB_FILE)) && \
 	go tool godotenv $(BIN_PATH) apiserver
 
 .PHONY: web-lr
 # All air configuration lives in .air.toml.
 web-lr:
+	mkdir -p $(dir $(KIDS_CHECKIN_DB_FILE)) && \
 	go tool air
 
 .PHONY: checkout-fetcher
 checkout-fetcher: build
+	mkdir -p $(dir $(KIDS_CHECKIN_DB_FILE)) && \
 	go tool godotenv $(BIN_PATH) checkout-fetcher --use-check-windows --service
 
 .PHONY: test
@@ -99,7 +102,7 @@ test-trimpath:
 	go tool godotenv go test -trimpath -tags dev ./...
 
 .PHONY: test-all
-# The complete matrix: both build-tag sets, with and without -trimpath.
+# The complete Go matrix: both build-tag sets, with and without -trimpath.
 #
 # The trimpath half is not optional and `make test` cannot stand in for it.
 # db/structure.sql is read from disk rather than //go:embed'd, and its path is
@@ -108,11 +111,12 @@ test-trimpath:
 # `go test ./...` and fails only here -- verified by breaking it and confirming
 # the failure appears in this target and nowhere else.
 #
-# CI (.github/workflows/ci.yml) runs the same four combinations as required
-# steps, plus gofmt and go vet, so it is the gate on a push. This target is the
-# local equivalent -- run it before pushing anything that touches internal/db,
-# internal/web/static, or the db-file wiring, so the failure is yours rather than
-# a red pipeline's. CI invokes `go test` directly rather than through this
+# CI (.github/workflows/ci.yml) runs the same four Go combinations as required
+# steps, plus gofmt, go vet (both tag sets), a release build, and npm test.
+# This target is the local Go equivalent, not the full CI gate -- run
+# `gofmt -l .`, `go vet ./...`, `go vet -tags dev ./...`, and `npm test` too
+# (all covered by `make test`), and see that workflow for the canonical gate.
+# CI invokes `go test` directly rather than through this
 # target, because godotenv exits non-zero when .env is absent and .env is
 # gitignored; see that workflow's header comment.
 test-all: test test-trimpath
@@ -138,11 +142,18 @@ test-all: test test-trimpath
 # `cp .env.example .env` is still step one.
 #
 # --force is opt-in via `make db-init FORCE=1` so that rebuilding an existing
-# database is possible without hand-typing the go run invocation.
+# database is possible without hand-typing the go run invocation. Only 1/true/yes
+# count -- `FORCE=0` must not rebuild.
 db-init:
 	mkdir -p $(dir $(KIDS_CHECKIN_DB_FILE)) && \
 	ENVIRONMENT=dev go tool godotenv go run -tags dev . db-init \
-		--db-file $(KIDS_CHECKIN_DB_FILE) $(if $(FORCE),--force,)
+		--db-file $(KIDS_CHECKIN_DB_FILE) $(if $(filter 1 true yes,$(FORCE)),--force,)
+
+# Old entry point removed in favor of db-init. Fail loudly rather than
+# "No rule to make target" so runbooks referencing the old name learn the new one.
+.PHONY: db-seed
+db-seed:
+	$(error `make db-seed` was replaced by `make db-init` (schema + reference topology from fixture.json); run `make db-init` instead)
 
 .PHONY: random-data
 # The mkdir matters for the same reason it does in db-reset and db-init:

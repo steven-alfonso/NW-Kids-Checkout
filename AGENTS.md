@@ -20,14 +20,13 @@ This file guides coding agents working in this repo. Keep changes small, follow 
 - Add random per-visit check-in data: `make random-data`
 
 ### Tests
-- Run all tests: `make test` (runs `godotenv go test ./...`)
+- Run all tests: `make test` (runs `go test ./...` + `-tags dev ./...` + `npm test` via godotenv)
 - CI runs `go test` directly rather than through `make test`: godotenv exits
   non-zero when `.env` is absent, and it is gitignored. No test reads a real
   `.env`; the ones that care about a variable set it with `t.Setenv`.
 - Run all tests under `-trimpath`: `make test-trimpath` (both build-tag sets)
-- **Run the complete matrix before pushing: `make test-all`** (equivalent to
-  `make test && make test-trimpath`). See "Why -trimpath needs its own pass"
-  below — `make test` alone cannot catch the failure it describes.
+- **Run the complete Go matrix before pushing: `make test-all`** (`make test` +
+  `make test-trimpath`). See "Why -trimpath needs its own pass" below.
 - Why `-trimpath` needs its own pass
   - `db/structure.sql` is read from disk, not `//go:embed`'d, and its path is
     resolved from `runtime.Caller`. `-trimpath` rewrites that to a module-relative
@@ -38,8 +37,10 @@ This file guides coding agents working in this repo. Keep changes small, follow 
     failed. The same trap applies to `static.DevAssetsDir`, and it had shipped as
     a real bug: `TestReadDevAsset` failed under `-trimpath` while the plain build
     stayed green.
-  - CI runs all four combinations (plain, `-tags dev`, `-trimpath`, both) and
-    treats them as required. `make test-all` is the local equivalent.
+  - CI runs all four Go combinations (plain, `-tags dev`, `-trimpath`, both) and
+    treats them as required, plus `gofmt`, `go vet` (both tag sets), a release
+    build, and `npm test`. `make test-all` is the local Go equivalent, not the
+    full CI gate.
 - Run a single package: `godotenv go test ./internal/repo/checkin`
 - Run a single test: `godotenv go test ./internal/repo/checkin -run Test_sqliteRepo_ListCheckins`
 - Run a subtest: `godotenv go test ./internal/repo/checkin -run Test_sqliteRepo_ListCheckins/filter_by_location_ID`

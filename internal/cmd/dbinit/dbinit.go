@@ -108,6 +108,10 @@ func Run(ctx context.Context, cmd *cli.Command) error {
 	dbFile := cmd.String("db-file")
 	force := cmd.Bool("force")
 
+	if blocked, reason := blockedProdPath(dbFile); blocked {
+		return fmt.Errorf("refusing to run db-init against %q: %s (override by copying the file, not by pointing dev tooling at prod)", dbFile, reason)
+	}
+
 	log.Info("db-init: starting", slog.String("db_file", dbFile), slog.Bool("force", force))
 
 	// database/ is gitignored, so it does not exist on a fresh clone, and
@@ -154,6 +158,22 @@ func Run(ctx context.Context, cmd *cli.Command) error {
 	return nil
 }
 
+// blockedProdPath refuses the container production paths even when
+// ENVIRONMENT=dev. The build tag + env gate keeps a dev build deployed by
+// mistake from seeding prod, but `ENVIRONMENT=dev go run -tags dev .
+// db-init --db-file /data/kids-checkin.db --force` on a prod host would still
+// destroy prod. Tests use /tmp/... absolute paths, which stay allowed.
+func blockedProdPath(dbFile string) (bool, string) {
+	clean := filepath.Clean(dbFile)
+	if clean == "/data/kids-checkin.db" || strings.HasPrefix(clean, "/data/") {
+		return true, "path is under the container /data volume"
+	}
+	if clean == "/app/database/kids-checkin.db" || strings.HasPrefix(clean, "/app/db/") {
+		return true, "path is under the container /app image"
+	}
+	return false, ""
+}
+
 // hasSchema reports whether the app schema is already present. A missing or
 // empty file is fine to initialise; one that already has tables needs --force.
 //
@@ -165,8 +185,11 @@ func Run(ctx context.Context, cmd *cli.Command) error {
 // which points at neither --force nor the real cause.
 func hasSchema(ctx context.Context, database *sql.DB) (bool, error) {
 	var n int
+	// fiber_storage (session store) and schema_migrations (bookkeeping) are not
+	// app schema: starting apiserver once creates fiber_storage, which must not
+	// make an otherwise empty file demand --force.
 	err := database.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM sqlite_master WHERE name NOT LIKE 'sqlite\_%' ESCAPE '\'`).Scan(&n)
+		`SELECT COUNT(*) FROM sqlite_master WHERE name NOT LIKE 'sqlite\_%' ESCAPE '\' AND name NOT IN ('fiber_storage', 'schema_migrations')`).Scan(&n)
 	if err != nil {
 		return false, fmt.Errorf("inspect existing schema: %w", err)
 	}
@@ -249,6 +272,18 @@ func dropEverything(ctx context.Context, database *sql.DB) error {
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit drop: %w", err)
 	}
+	// Reset AUTOINCREMENT counters so --force is a clean rebuild. DROP TABLE
+	// removes its own sqlite_sequence row, but an explicit reset keeps the
+	// "clean rebuild" claim true even for counters left by prior partial runs.
+	// fiber_storage is kept, so its counter (if any) is left alone by scoping
+	// to dropped names only when the table exists.
+	if _, err := database.ExecContext(ctx, `DELETE FROM sqlite_sequence`); err != nil {
+		// sqlite_sequence only exists when some table uses AUTOINCREMENT; a
+		// database without one legitimately has no such table.
+		if !strings.Contains(strings.ToLower(err.Error()), "no such table") {
+			return fmt.Errorf("reset autoincrement counters: %w", err)
+		}
+	}
 	return nil
 }
 
@@ -308,12 +343,19 @@ func stampMigrations(ctx context.Context, database *sql.DB) error {
 	if err != nil {
 		return err
 	}
+	// IF NOT EXISTS + DELETE+INSERT keeps this idempotent if structure.sql ever
+	// starts including the bookkeeping table: without it a snapshot change
+	// would make CREATE fail after applySchema already committed, leaving a
+	// partial DB that only --force can retry.
 	const ddl = `
-		CREATE TABLE schema_migrations (version uint64, dirty bool);
-		CREATE UNIQUE INDEX version_unique ON schema_migrations (version);
+		CREATE TABLE IF NOT EXISTS schema_migrations (version uint64, dirty bool);
+		CREATE UNIQUE INDEX IF NOT EXISTS version_unique ON schema_migrations (version);
 	`
 	if _, err := database.ExecContext(ctx, ddl); err != nil {
 		return fmt.Errorf("create schema_migrations: %w", err)
+	}
+	if _, err := database.ExecContext(ctx, `DELETE FROM schema_migrations`); err != nil {
+		return fmt.Errorf("clear schema_migrations: %w", err)
 	}
 	if _, err := database.ExecContext(ctx,
 		`INSERT INTO schema_migrations (version, dirty) VALUES (?, 0)`, version); err != nil {
@@ -344,6 +386,67 @@ func validateFixture(f fixture) error {
 	} {
 		if section.n == 0 {
 			return fmt.Errorf("fixture.json has no %s; refusing to build an empty reference topology", section.name)
+		}
+	}
+	seenGroups := map[string]bool{}
+	for _, g := range f.LocationGroups {
+		if g.Name == "" {
+			return fmt.Errorf("location group with empty name")
+		}
+		if seenGroups[g.Name] {
+			return fmt.Errorf("duplicate location group %q", g.Name)
+		}
+		seenGroups[g.Name] = true
+	}
+	seenEventPCID := map[string]bool{}
+	for _, e := range f.Events {
+		if e.Name == "" || e.PlanningCenterID == "" {
+			return fmt.Errorf("event with empty name or planning_center_id")
+		}
+		if seenEventPCID[e.PlanningCenterID] {
+			return fmt.Errorf("duplicate event planning_center_id %q", e.PlanningCenterID)
+		}
+		seenEventPCID[e.PlanningCenterID] = true
+		if e.LocationGroup != nil && *e.LocationGroup != "" && !seenGroups[*e.LocationGroup] {
+			return fmt.Errorf("event %q references unknown location group %q", e.Name, *e.LocationGroup)
+		}
+	}
+	seenLocPCID := map[string]bool{}
+	for _, l := range f.Locations {
+		if l.Name == "" || l.PlanningCenterID == "" || l.Event == "" {
+			return fmt.Errorf("location with empty name, planning_center_id, or event")
+		}
+		if seenLocPCID[l.PlanningCenterID] {
+			return fmt.Errorf("duplicate location planning_center_id %q", l.PlanningCenterID)
+		}
+		seenLocPCID[l.PlanningCenterID] = true
+		if l.LocationGroup != nil && *l.LocationGroup != "" && !seenGroups[*l.LocationGroup] {
+			return fmt.Errorf("location %q references unknown location group %q", l.Name, *l.LocationGroup)
+		}
+	}
+	// Every planning_center_parent_id must name a location in the same fixture.
+	// The column has no FK, so a typo would otherwise seed silently and show up
+	// only as a NULL parent in a LEFT JOIN.
+	for _, l := range f.Locations {
+		if l.PlanningCenterParentID == nil || *l.PlanningCenterParentID == "" {
+			continue
+		}
+		if !seenLocPCID[*l.PlanningCenterParentID] {
+			return fmt.Errorf("location %q references unknown parent planning_center_id %q", l.Name, *l.PlanningCenterParentID)
+		}
+		if *l.PlanningCenterParentID == l.PlanningCenterID {
+			return fmt.Errorf("location %q cannot be its own parent", l.Name)
+		}
+	}
+	for _, w := range f.EventCheckWindows {
+		if w.Event == "" {
+			return fmt.Errorf("check window with empty event")
+		}
+		if w.Timezone == "" {
+			return fmt.Errorf("check window for event %q has empty timezone", w.Event)
+		}
+		if w.StartTime == "" || w.EndTime == "" {
+			return fmt.Errorf("check window for event %q has empty start/end time", w.Event)
 		}
 	}
 	return nil

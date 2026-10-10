@@ -50,7 +50,7 @@ func deleteOlderThanCmd(ctx context.Context, cmd *cli.Command) error {
 	dbFile := cmd.String("db-file")
 	database, err := db.InitDB(dbFile)
 	if err != nil {
-		panic(err)
+		return cli.Exit(err.Error(), 1)
 	}
 
 	defer database.Close()
@@ -71,6 +71,7 @@ func deleteOlderThanCmd(ctx context.Context, cmd *cli.Command) error {
 	manualCheckinRepo := manualcheckin.NewRepo(database)
 	deletedCount, err = manualCheckinRepo.RemoveOldManualCheckins(ctx, time.Now().Add(olderThan))
 	if err != nil {
+		return cli.Exit(err.Error(), 1)
 	}
 
 	log.InfoContext(ctx, "deleted old manual checkins", slog.Int64("deleted_count", deletedCount), slog.Duration("older_than", olderThan))

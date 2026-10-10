@@ -84,7 +84,7 @@ added since. Only pass it when you intend to discard them -- otherwise use
 ```shell
 make checkout-fetcher
 ```
-If you want mock data instead of real data, add the following to your `.env` file then run the `checkout-fetcher` target:
+If you want mock data instead of real data, set the following in your `.env` file (it defaults to `false` in `.env.example`) then run the `checkout-fetcher` target:
 ```shell
 CHECKOUT_FETCHER_USE_MOCK=true
 ```
@@ -164,7 +164,6 @@ Automatically regenerate the tailwind.css file:
 npm run watch:css
 ```
 
-
 Build the tailwind.css file:
 ```shell
 npm run build:css
@@ -173,16 +172,6 @@ npm run build:css
 ### Running tests
 
 To run the test suite, use the `test` target:
-
-```sh
-make test
-```
-
-## Database
-
-The project uses SQLite for its database. Database migrations are managed with the `migrate` tool.
-
-### Running the tests
 
 ```sh
 make test       # go test, then -tags dev, then npm test
@@ -194,12 +183,17 @@ than embedded, and its path is resolved from `runtime.Caller`, which `-trimpath`
 rewrites to a module-relative path. Resolution that works in a normal build can
 fail in a trimmed one, and that failure is invisible to `make test`.
 
-CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs all four
-combinations as required steps, along with `gofmt`, `go vet`, and a build of the
-release entrypoint, so it is the gate on a push. `make test-all` is the local
-equivalent -- run it first so a failure is yours rather than a red pipeline's.
-CI calls `go test` directly instead of through `make test` because `godotenv`
-exits non-zero when `.env` is absent, and `.env` is gitignored.
+CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs all four Go
+combinations as required steps, along with `gofmt`, `go vet` (both tag sets),
+and a build of the release entrypoint, so it is the gate on a push.
+`make test-all` is the local Go equivalent, not the full CI gate -- run `gofmt`,
+`vet`, and `npm test` too (all in `make test`). CI calls `go test` directly
+instead of through `make test` because `godotenv` exits non-zero when `.env`
+is absent, and `.env` is gitignored.
+
+## Database
+
+The project uses SQLite for its database. Database migrations are managed with the `migrate` tool.
 
 - **Resetting the database (empty schema):** `make db-reset`
 - **Building a development database (schema + reference topology):** `make db-init`. Fails if the database already has schema; `make db-init FORCE=1` drops and rebuilds it.
@@ -224,6 +218,17 @@ Do not set `DB_FILE` in `.env` unless you need to point at a different file --
 the default already matches the Makefile, and an extra copy is what let the two
 drift apart before. Production sets `DB_FILE=/data/kids-checkin.db` in the
 Dockerfile, which is a deliberate override for the container's volume.
+
+Upgrading from a pre-move checkout: the default was `kids-checkin.db` in the
+repo root and is now `database/kids-checkin.db`. A host cron/systemd/launchd
+invocation that passes neither `--db-file` nor `$DB_FILE` now opens a different
+file. Move real data with `mkdir -p database && mv kids-checkin.db
+database/kids-checkin.db`, and pass `--db-file` explicitly (absolute path) in
+any service unit -- a relative default still resolves against the process CWD,
+so a wrong `WorkingDirectory` opens the wrong file. The binary logs the absolute
+path it opened and warns if `./kids-checkin.db` exists while the default is in
+effect. `make db-seed` was replaced by `make db-init`; old runbooks calling it
+now get an explicit error pointing at the new target.
 
 ### Production Migrations
 Connect to a shell and run:

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -23,13 +24,35 @@ const DefaultDBFile = "database/kids-checkin.db"
 
 // InitDB initializes the database connection.
 func InitDB(dataSourceName string) (*sql.DB, error) {
-	if strings.TrimSpace(dataSourceName) == "" {
+	trimmed := strings.TrimSpace(dataSourceName)
+	if trimmed == "" {
 		// A blank DB_FILE in the environment resolves to an empty flag value
 		// rather than falling back to the default, so name the ways out.
 		// Whitespace is rejected too: "   " is not a usable DSN, and accepting
 		// it created a file whose name is three spaces, silently, under an
 		// authoritative-looking absolute path in the log line below.
 		return nil, fmt.Errorf("missing database DSN: pass --db-file, or set $%s, or unset it to use the default %s", EnvDBFile, DefaultDBFile)
+	}
+	if trimmed != dataSourceName {
+		// A padded path ("  database/kids-checkin.db  ") would otherwise be
+		// absolutized verbatim into "<cwd>/  database/kids-checkin.db  ", a
+		// junk file under an authoritative-looking log line. Trim and use the
+		// trimmed value so the log names the file actually opened.
+		dataSourceName = trimmed
+	}
+
+	// Warn on the pre-move repo-root path. The default moved from
+	// kids-checkin.db to database/kids-checkin.db; a host that wrote real data
+	// with the old default would otherwise boot cleanly against a fresh empty
+	// file while the old file sits orphaned (and gitignored) at the root.
+	if dataSourceName == DefaultDBFile {
+		if _, err := os.Stat("kids-checkin.db"); err == nil {
+			slog.Warn("legacy database file ./kids-checkin.db exists while using the default database/kids-checkin.db; move it with `mkdir -p database && mv kids-checkin.db database/kids-checkin.db` if it holds real data")
+		}
+	}
+
+	if err := ensureParentDir(dataSourceName); err != nil {
+		return nil, err
 	}
 
 	dsn := ResolveDSN(dataSourceName)
@@ -50,10 +73,9 @@ func InitDB(dataSourceName string) (*sql.DB, error) {
 	}
 
 	// Both failures below return an open *sql.DB. Closing it here matters because
-	// sql.Open has already opened a connection by the time the Exec and the Ping
-	// have run, and *sql.DB has no finalizer: a caller that only sees an error
-	// has no handle to close and the connection would outlive the process's
-	// interest in it.
+	// the pool may now hold open connections by the time Exec and Ping have run,
+	// and *sql.DB has no finalizer: a caller that only sees an error has no
+	// handle to close and the pool would outlive the process's interest in it.
 	//
 	// DSN params _foreign_keys, _busy_timeout, _txlock are the load-bearing
 	// per-connection settings (they apply to every pooled connection). The
@@ -105,7 +127,12 @@ func InitDB(dataSourceName string) (*sql.DB, error) {
 //
 // It is idempotent: passing the result back through is a no-op.
 func ResolveDSN(dsn string) string {
-	if strings.Contains(dsn, ":memory:") || strings.HasPrefix(dsn, "file:") {
+	// Split before classifying: ":memory:?cache=shared" is still memory, and
+	// "file:foo.db?cache=shared" is still a URI. Checking Contains(":memory:")
+	// on the whole DSN misclassified real filenames like
+	// "backup-:memory:.db" as memory and left them relative.
+	path, _, _ := strings.Cut(dsn, "?")
+	if path == ":memory:" || strings.HasPrefix(path, "file:") {
 		return dsn
 	}
 	path, query, hasQuery := strings.Cut(dsn, "?")
@@ -124,11 +151,44 @@ func ResolveDSN(dsn string) string {
 	return abs
 }
 
+// ensureParentDir creates the parent directory for a plain file-path DSN.
+// sqlite creates a missing file but never a missing parent directory, and the
+// default lives under gitignored database/, which is absent on a fresh clone.
+// Without this every direct binary run (web, fetcher, checkins, random-data)
+// failed with a bare "unable to open database file" while only db-init worked.
+//
+// Memory DSNs, file: URIs, and DSNs with no path are left alone: absolutizing
+// or mkdir-ing those would change their meaning.
+func ensureParentDir(dsn string) error {
+	path, _, _ := strings.Cut(dsn, "?")
+	if path == "" || path == ":memory:" || strings.HasPrefix(path, "file:") {
+		return nil
+	}
+	// Reject leading ~/$VAR rather than resolving to "<cwd>/~/...": neither the
+	// shell nor sqlite expands those, so mkdir-ing them creates junk.
+	if strings.HasPrefix(path, "~") || strings.HasPrefix(path, "$") {
+		return fmt.Errorf("database path %q starts with %q, which is not expanded; use an explicit relative or absolute path", path, string(path[0]))
+	}
+	dir := filepath.Dir(path)
+	if dir == "" || dir == "." {
+		return nil
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("create database directory %s: %w", dir, err)
+	}
+	return nil
+}
+
 // ensureDSNParam appends "?key=value" or "&key=value" only if key is absent
 // in the DSN query string. It uses url.ParseQuery for exact key matching to
 // avoid substring false positives (e.g., file path "/tmp/my_foreign_keys.db"
 // should not count as having _foreign_keys). It preserves the original DSN
 // verbatim and avoids re-encoding that would sort keys.
+//
+// A malformed query (e.g. "data.db?%zz") makes ParseQuery return an error,
+// which is intentionally ignored: the key is treated as absent and appended
+// with "&". That is harmless for the three known keys and avoids failing open
+// on inputs sqlite itself would still open.
 func ensureDSNParam(dsn, key, value string) string {
 	_, query, found := strings.Cut(dsn, "?")
 	if !found {
