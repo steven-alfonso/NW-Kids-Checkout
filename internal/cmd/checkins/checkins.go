@@ -23,11 +23,7 @@ var Commands = []*cli.Command{
 				Value:   -7 * 24 * time.Hour, // 7 days ago
 				Sources: cli.NewValueSourceChain(cli.EnvVar("CHECKINS_DELETE_OLDER_THAN_AGE")),
 			},
-			&cli.StringFlag{
-				Name:    "db-file",
-				Value:   "kids-checkin.db",
-				Sources: cli.NewValueSourceChain(cli.EnvVar("DB_FILE")),
-			},
+			db.DBFileFlag(),
 		},
 		Action: deleteOlderThanCmd,
 	},
@@ -39,11 +35,7 @@ var Commands = []*cli.Command{
 				Name:  "force",
 				Usage: "Required to confirm destructive delete",
 			},
-			&cli.StringFlag{
-				Name:    "db-file",
-				Value:   "kids-checkin.db",
-				Sources: cli.NewValueSourceChain(cli.EnvVar("DB_FILE")),
-			},
+			db.DBFileFlag(),
 		},
 		Action: seedPreviewCmd,
 	},
@@ -58,7 +50,7 @@ func deleteOlderThanCmd(ctx context.Context, cmd *cli.Command) error {
 	dbFile := cmd.String("db-file")
 	database, err := db.InitDB(dbFile)
 	if err != nil {
-		panic(err)
+		return cli.Exit(err.Error(), 1)
 	}
 
 	defer database.Close()
@@ -79,6 +71,7 @@ func deleteOlderThanCmd(ctx context.Context, cmd *cli.Command) error {
 	manualCheckinRepo := manualcheckin.NewRepo(database)
 	deletedCount, err = manualCheckinRepo.RemoveOldManualCheckins(ctx, time.Now().Add(olderThan))
 	if err != nil {
+		return cli.Exit(err.Error(), 1)
 	}
 
 	log.InfoContext(ctx, "deleted old manual checkins", slog.Int64("deleted_count", deletedCount), slog.Duration("older_than", olderThan))

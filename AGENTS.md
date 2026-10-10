@@ -13,13 +13,14 @@ This file guides coding agents working in this repo. Keep changes small, follow 
 - Run checkout fetcher worker: `make checkout-fetcher`
 
 ### Database tasks
-- Reset DB: `make db-reset`
+- Reset DB (empty schema): `make db-reset`
+- Build dev DB (schema + Planning Center reference topology): `make db-init`
 - Run migrations: `make db-migrate`
 - Create migration: `make db-new-migration NAME=<migration_name>`
-- Seed DB: `make db-seed`
+- Add random per-visit check-in data: `make random-data`
 
 ### Tests
-- Run all tests: `make test` (runs `godotenv go test ./...`)
+- Run all tests: `make test` (runs `go test ./...` + `-tags dev ./...` + `npm test` via godotenv)
 - CI runs `go test` directly rather than through `make test`: godotenv exits
   non-zero when `.env` is absent, and it is gitignored. No test reads a real
   `.env`; the ones that care about a variable set it with `t.Setenv`.
@@ -54,7 +55,10 @@ This file guides coding agents working in this repo. Keep changes small, follow 
 - CLI commands: `internal/cmd/*` (e.g., `apiserver`, `checkout-fetcher`).
 - HTTP controllers: `internal/controllers/*` (versioned packages like `checkinv1`).
 - Repos and DB access: `internal/repo/*` using `squirrel` and `context.Context`.
-- DB helpers: `internal/db/*` (test DB prep, DB init).
+- Two packages are named `db`: the Go package `internal/db/*` (DB init, the
+  shared `--db-file` flag, test DB prep) and the `kids-checkin/db` package,
+  which embeds `structure.sql` and holds the snapshot drift test. The `db/`
+  directory is otherwise data: migrations and `structure.sql`.
 - Static web assets: `internal/web/static` (embedded FS via `cmd/assets`).
 - Migrations: `db/migrations` and schema snapshots in `db/structure.sql`.
 - Domain helpers/constants: `internal/static`.
@@ -135,6 +139,46 @@ This file guides coding agents working in this repo. Keep changes small, follow 
 - Static pages are loaded from `internal/web/static` and embedded FS.
 - When adding assets, check the embedding pipeline in `cmd/assets`.
 - Tailwind output lives at `internal/web/static/css/tailwind.css`.
+
+### Database paths
+- The database file path is defined **once**, as `db.DefaultDBFile`, and must
+  match `KIDS_CHECKIN_DB_FILE` in the Makefile. Commands get it from
+  `db.DBFileFlag()`; never spell out a path or define your own `db-file` flag.
+- Precedence is `--db-file` > `$DB_FILE` > `db.DefaultDBFile`. Do not set
+  `DB_FILE` in `.env` — the default already matches the Makefile, and an extra
+  copy is what let the two drift apart before. The Dockerfile's
+  `DB_FILE=/data/kids-checkin.db` is a deliberate override for the container
+  volume.
+- Two tests in `internal/cmd/dbfile_test.go` guard this:
+  `TestDefaultDBFileMatchesMakefile` ties the constant to the Makefile, and
+  `TestEnvExampleDoesNotPinDBFile` keeps `.env.example` free of `DB_FILE`.
+  (An AST guard suite once policed every `InitDB` call site and flag
+  definition; it was removed as overbuilt — a cross-file const or a func-param
+  handoff walked through it, while legitimate refactors tripped it. The two
+  tests above plus review are the guard now.)
+
+### Schema
+- Migrations are applied by the `migrate` CLI, **not** by the application
+  binary. `db/structure.sql` is the snapshot `make db-migrate` generates from
+  them; the test database and `make db-init` load that snapshot via the embedded
+  `db.Schema` (`db/db.go`).
+- `db/structure_test.go` fails if the snapshot drifts from the migrations.
+
+### Dev-only commands
+- `make db-init` builds a development database (schema + the real Planning
+  Center reference topology in `internal/cmd/dbinit/fixture.json`).
+- The `db-init` command is behind the `//go:build dev` tag, so it is absent from
+  production binaries, and it refuses to run unless `static.IsDev()`. A new
+  dev-only command should do both. `make db-init` applies `-tags dev` itself,
+  and sets `ENVIRONMENT=dev` so the target does not depend on `.env` carrying
+  the right value. It still requires a `.env` file to exist -- `godotenv` exits
+  non-zero without one -- so `cp .env.example .env` remains step one.
+  `make db-init FORCE=1` passes `--force` to rebuild.
+- Its tests are behind the same tag, so `make test` runs `-tags dev ./...` as
+  well; without that, `internal/cmd/dbinit` is skipped entirely.
+- `make db-init` and `make db-reset` both `mkdir -p` the database directory.
+  `database/` is gitignored, so it is absent on a fresh clone and sqlite3
+  creates a missing file but never a missing directory.
 
 ### Dev-only assets (debug tooling)
 - Dev/debug tools live in `internal/web/dev-assets/` and are served at `/static/dev/*` **only when `ENVIRONMENT=dev`** (via `static.IsDev()`); in production they 404 and are not embedded into the binary. See `internal/web/dev-assets/README.md`.

@@ -17,19 +17,74 @@ The project is structured as a command-line application with commands:
 - [godotenv](https://github.com/joho/godotenv). Install via `go install github.com/joho/godotenv/cmd/godotenv@latest` once Golang is installed.
 
 ## Quick Start
-1. Create a `.env` file if it does not exist:
+1. Create a `.env` file if it does not exist. Copy the example and fill it in:
 ```shell
-touch .env
+cp .env.example .env
 ```
-2. Initialize and seed the database:
+An empty `.env` is not enough: `.env.example` is where `ENVIRONMENT=dev` lives,
+and step 2 below needs it.
+
+`LOGIN_PASSWORD_ADMIN` and `LOGIN_PASSWORD_USER` take bcrypt hashes, not
+plaintext. Generate one with the same `golang.org/x/crypto/bcrypt` the login
+check uses:
+
 ```shell
-make db-reset db-seed
+mkdir -p /tmp/pwgen && cat > /tmp/pwgen/main.go <<'EOF'
+package main
+
+import (
+	"fmt"
+	"os"
+
+	"golang.org/x/crypto/bcrypt"
+)
+
+func main() {
+	h, err := bcrypt.GenerateFromPassword([]byte(os.Args[1]), bcrypt.DefaultCost)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(string(h))
+}
+EOF
+go run /tmp/pwgen/main.go 'your-password'
 ```
+
+Run that from the repo root so the module resolves `golang.org/x/crypto`, then
+paste the output into `.env` **in single quotes**. godotenv expands `$VAR`
+inside an unquoted value and a bcrypt hash is mostly `$` signs, so unquoted the
+prefix is eaten and login fails with `?error=invalid` and nothing in the log to
+say why.
+
+2. Build a development database with the Planning Center reference topology:
+```shell
+make db-init
+```
+`db-init` applies the schema and seeds 2 events, 3 location groups, 33 rooms,
+and 2 check windows, using their real Planning Center ids. It only exists in
+builds made with the `dev` build tag and refuses to run unless
+`ENVIRONMENT=dev`, so it cannot touch a production database. Add per-visit
+check-in data afterwards with `make random-data`.
+
+Re-running it will not silently overwrite what is already there. If the database
+already has schema, `db-init` refuses and exits non-zero:
+
+```shell
+database/kids-checkin.db already has schema; re-run with --force to rebuild it
+```
+
+To rebuild one that already has schema, pass `FORCE=1`:
+```shell
+make db-init FORCE=1
+```
+`FORCE=1` drops every app table and starts over (keeps `fiber_storage` sessions), including any check-ins you have
+added since. Only pass it when you intend to discard them -- otherwise use
+`make db-migrate` to apply new migrations to an existing database.
 3. In one terminal, start the checkout fetcher:
 ```shell
 make checkout-fetcher
 ```
-If you want mock data instead of real data, add the following to your `.env` file then run the `checkout-fetcher` target:
+If you want mock data instead of real data, set the following in your `.env` file (it defaults to `false` in `.env.example`) then run the `checkout-fetcher` target:
 ```shell
 CHECKOUT_FETCHER_USE_MOCK=true
 ```
@@ -79,8 +134,10 @@ This will build the application and start the fetcher process.
 
 Delete old checkins (default 7 days):
 ```sh
-./bin/kids-checkin checkins delete-old --age -168h --db-file kids-checkin.db
-# Or via env: DB_FILE=kids-checkin.db godotenv ./bin/kids-checkin checkins delete-old
+./bin/kids-checkin checkins delete-old --age -168h
+# The database path comes from --db-file, then $DB_FILE, then the default
+# database/kids-checkin.db. It matches the Makefile, so `make db-reset` and a
+# bare `./bin/kids-checkin` always mean the same file.
 ```
 
 Seed preview data (DB equivalent of `internal/web/dev-assets/preview.js`):
@@ -90,7 +147,6 @@ This mirrors `loadPreviewData()` in the browser but writes directly to SQLite vi
 ```sh
 # Requires --force (destructive operation). Respects --db-file / $DB_FILE.
 godotenv ./bin/kids-checkin checkins seed-preview --force
-godotenv ./bin/kids-checkin checkins seed-preview --force --db-file database/kids-checkin.db
 ```
 
 Without `--force` the command exits with `must pass --force to seed preview data`.
@@ -108,7 +164,6 @@ Automatically regenerate the tailwind.css file:
 npm run watch:css
 ```
 
-
 Build the tailwind.css file:
 ```shell
 npm run build:css
@@ -119,16 +174,53 @@ npm run build:css
 To run the test suite, use the `test` target:
 
 ```sh
-make test
+make test       # go test, then -tags dev, then npm test
 ```
+
+CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs the Go suite
+(both tag sets) as required steps, along with `gofmt`, `go vet`, a build of the
+release entrypoint, and `npm test`, so it is the gate on a push. CI calls
+`go test` directly instead of through `make test` because `godotenv` exits
+non-zero when `.env` is absent, and `.env` is gitignored.
 
 ## Database
 
 The project uses SQLite for its database. Database migrations are managed with the `migrate` tool.
 
-- **Resetting the database:** `make db-reset`
+- **Resetting the database (empty schema):** `make db-reset`
+- **Building a development database (schema + reference topology):** `make db-init`. Fails if the database already has schema; `make db-init FORCE=1` drops and rebuilds it.
 - **Running migrations:** `make db-migrate`
 - **Creating a new migration:** `make db-new-migration NAME=<migration_name>`
+
+Migrations are applied by the `migrate` CLI, not by the application binary.
+`db/structure.sql` is the snapshot `make db-migrate` generates from them, and
+it is what the test database and `db-init` load. `db/structure_test.go` fails if
+the snapshot drifts from the migrations.
+
+The database path is defined once, in `db.DefaultDBFile`, and every command
+takes it from `db.DBFileFlag()`:
+
+| Source | Precedence |
+| --- | --- |
+| `--db-file` | highest |
+| `$DB_FILE` | |
+| `db.DefaultDBFile` (`database/kids-checkin.db`) | lowest |
+
+Do not set `DB_FILE` in `.env` unless you need to point at a different file --
+the default already matches the Makefile, and an extra copy is what let the two
+drift apart before. Production sets `DB_FILE=/data/kids-checkin.db` in the
+Dockerfile, which is a deliberate override for the container's volume.
+
+Upgrading from a pre-move checkout: the default was `kids-checkin.db` in the
+repo root and is now `database/kids-checkin.db`. A host cron/systemd/launchd
+invocation that passes neither `--db-file` nor `$DB_FILE` now opens a different
+file. Move real data with `mkdir -p database && mv kids-checkin.db
+database/kids-checkin.db`, and pass `--db-file` explicitly (absolute path) in
+any service unit -- a relative default still resolves against the process CWD,
+so a wrong `WorkingDirectory` opens the wrong file. The binary logs the absolute
+path it opened and warns if `./kids-checkin.db` exists while the default is in
+effect. `make db-seed` was replaced by `make db-init`; old runbooks calling it
+now get an explicit error pointing at the new target.
 
 ### Production Migrations
 Connect to a shell and run:

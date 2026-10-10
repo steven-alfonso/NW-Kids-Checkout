@@ -1,6 +1,11 @@
 package db
 
 import (
+	"bytes"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"strconv"
 	"testing"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -87,4 +92,70 @@ func TestInitDB_respectsExistingParams(t *testing.T) {
 	var timeout int
 	require.NoError(t, db.QueryRow(`PRAGMA busy_timeout`).Scan(&timeout))
 	assert.Equal(t, 5000, timeout, "missing params should still be injected")
+}
+
+// TestInitDB_logsAbsolutePath pins that the log names the file actually opened.
+// The default is relative, so a wrong working directory is otherwise invisible
+// until query time.
+func TestInitDB_logsAbsolutePath(t *testing.T) {
+	t.Chdir(t.TempDir())
+
+	var logs bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	database, err := InitDB("relative.db")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = database.Close() })
+
+	want, err := filepath.Abs("relative.db")
+	require.NoError(t, err)
+	_, err = os.Stat(want)
+	require.NoError(t, err, "InitDB must open the absolute path it logs")
+	assert.Contains(t, logs.String(), want)
+	assert.NotContains(t, logs.String(), "dsn=relative.db",
+		"logging only the relative path hides which file was actually opened")
+}
+
+// TestInitDB_rejectsBlankDSN covers whitespace as well as empty. "   " is not a
+// usable DSN.
+func TestInitDB_rejectsBlankDSN(t *testing.T) {
+	for _, dsn := range []string{"", " ", "   ", "\t", "\n"} {
+		t.Run(strconv.Quote(dsn), func(t *testing.T) {
+			_, err := InitDB(dsn)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "missing database DSN")
+		})
+	}
+}
+
+func TestInitDB_trimsPaddedPath(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	require.NoError(t, os.MkdirAll("database", 0o755))
+
+	database, err := InitDB("  database/kids-checkin.db  ")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = database.Close() })
+
+	_, err = os.Stat(filepath.Join(dir, "database", "kids-checkin.db"))
+	require.NoError(t, err, "padded path must open the trimmed file, not a junk spaced filename")
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	for _, e := range entries {
+		assert.NotContains(t, e.Name(), " ", "must not create a spaced junk file or dir in %s", dir)
+	}
+}
+
+func TestInitDB_createsParentDir(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	database, err := InitDB(filepath.Join("nested", "deep", "test.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = database.Close() })
+
+	_, err = os.Stat(filepath.Join(dir, "nested", "deep", "test.db"))
+	require.NoError(t, err, "InitDB must mkdir the parent; sqlite creates files, never directories")
 }

@@ -22,11 +22,7 @@ var Commands = []*cli.Command{
 				Usage:    "Planning Center ID of the location to fetch",
 				Required: true,
 			},
-			&cli.StringFlag{
-				Name:    "db-file",
-				Value:   "kids-checkin.db",
-				Sources: cli.NewValueSourceChain(cli.EnvVar("DB_FILE")),
-			},
+			db.DBFileFlag(),
 		},
 		Action: upsertLocation,
 	},
@@ -36,7 +32,7 @@ func upsertLocation(ctx context.Context, cmd *cli.Command) error {
 	dbFile := cmd.String("db-file")
 	database, err := db.InitDB(dbFile)
 	if err != nil {
-		panic(err)
+		return cli.Exit(err.Error(), 1)
 	}
 
 	defer database.Close()
