@@ -45,9 +45,15 @@ func InitDB(dataSourceName string) (*sql.DB, error) {
 	// kids-checkin.db to database/kids-checkin.db; a host that wrote real data
 	// with the old default would otherwise boot cleanly against a fresh empty
 	// file while the old file sits orphaned (and gitignored) at the root.
-	if dataSourceName == DefaultDBFile {
-		if _, err := os.Stat("kids-checkin.db"); err == nil {
-			slog.Warn("legacy database file ./kids-checkin.db exists while using the default database/kids-checkin.db; move it with `mkdir -p database && mv kids-checkin.db database/kids-checkin.db` if it holds real data")
+	// Warn whenever the legacy file exists and we are not opening it: the
+	// selected DSN may spell the default relatively, absolutely, or with query
+	// params, so normalize both sides before comparing.
+	if _, err := os.Stat("kids-checkin.db"); err == nil {
+		legacyAbs, legacyErr := filepath.Abs("kids-checkin.db")
+		selPath, _, _ := strings.Cut(dataSourceName, "?")
+		selAbs, selErr := filepath.Abs(selPath)
+		if legacyErr != nil || selErr != nil || legacyAbs != selAbs {
+			slog.Warn("legacy database file ./kids-checkin.db exists while opening a different database file; move it with `mkdir -p database && mv kids-checkin.db database/kids-checkin.db` if it holds real data", slog.String("opening", dataSourceName))
 		}
 	}
 
@@ -127,6 +133,11 @@ func InitDB(dataSourceName string) (*sql.DB, error) {
 //
 // It is idempotent: passing the result back through is a no-op.
 func ResolveDSN(dsn string) string {
+	// Trim first: server.go resolves before InitDB trims, so a padded
+	// DB_FILE="  database/k.db  " would otherwise absolutize verbatim into
+	// "<cwd>/  database/k.db  " (junk dir) while direct InitDB calls trim.
+	// Trimming here keeps both paths consistent.
+	dsn = strings.TrimSpace(dsn)
 	// Split before classifying: ":memory:?cache=shared" is still memory, and
 	// "file:foo.db?cache=shared" is still a URI. Checking Contains(":memory:")
 	// on the whole DSN misclassified real filenames like
@@ -160,8 +171,18 @@ func ResolveDSN(dsn string) string {
 // Memory DSNs, file: URIs, and DSNs with no path are left alone: absolutizing
 // or mkdir-ing those would change their meaning.
 func ensureParentDir(dsn string) error {
-	path, _, _ := strings.Cut(dsn, "?")
-	if path == "" || path == ":memory:" || strings.HasPrefix(path, "file:") {
+	path, _, _ := strings.Cut(strings.TrimSpace(dsn), "?")
+	if path == "" || path == ":memory:" {
+		return nil
+	}
+	if strings.HasPrefix(path, "file:") {
+		// A file: URI is passed through verbatim, but ~/ $VAR are equally
+		// unexpanded there: file:~/data.db opens a file literally named so.
+		rest := strings.TrimPrefix(path, "file:")
+		rest, _, _ = strings.Cut(rest, "?")
+		if strings.HasPrefix(rest, "~") || strings.HasPrefix(rest, "$") {
+			return fmt.Errorf("database path %q starts with %q, which is not expanded; use an explicit relative or absolute path", path, string(rest[0]))
+		}
 		return nil
 	}
 	// Reject leading ~/$VAR rather than resolving to "<cwd>/~/...": neither the

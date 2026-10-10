@@ -35,17 +35,17 @@ func LatestMigrationVersion() (string, error) {
 		return "", fmt.Errorf("no migrations found in %s", dir)
 	}
 
-	// Take the numeric max over all files, not the lexical last. Glob sorts
-	// lexically, so a stray "9_hotfix.up.sqlite" would otherwise beat
-	// "2026..." and a malformed newest file would fail the whole lookup even
-	// when older valid migrations exist.
+	// Take the max over all files, comparing by (length, lexicographic) so a
+	// short non-timestamp name like "9_hotfix" cannot beat a 14-digit
+	// timestamp: lexicographic "9" > "2" would otherwise win. All real
+	// migrations are 14 digits, where this coincides with numeric order.
 	var newest string
 	for _, name := range names {
 		match := migrationVersion.FindStringSubmatch(filepath.Base(name))
 		if match == nil {
 			continue
 		}
-		if match[1] > newest {
+		if longerOrGreater(match[1], newest) {
 			newest = match[1]
 		}
 	}
@@ -53,4 +53,14 @@ func LatestMigrationVersion() (string, error) {
 		return "", fmt.Errorf("no versioned migrations in %s", dir)
 	}
 	return newest, nil
+}
+
+// longerOrGreater reports whether a sorts after b by (length, lexicographic).
+// Migration versions are zero-padded timestamps, so longer means newer across
+// widths and lexicographic decides within a width.
+func longerOrGreater(a, b string) bool {
+	if len(a) != len(b) {
+		return len(a) > len(b)
+	}
+	return a > b
 }

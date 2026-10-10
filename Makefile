@@ -113,9 +113,9 @@ test-trimpath:
 #
 # CI (.github/workflows/ci.yml) runs the same four Go combinations as required
 # steps, plus gofmt, go vet (both tag sets), a release build, and npm test.
-# This target is the local Go equivalent, not the full CI gate -- run
-# `gofmt -l .`, `go vet ./...`, `go vet -tags dev ./...`, and `npm test` too
-# (all covered by `make test`), and see that workflow for the canonical gate.
+# This target is the local Go equivalent, not the full CI gate -- run `npm test`
+# too (in `make test`) and `gofmt -l .`, `go vet ./...`, `go vet -tags dev ./...`
+# manually; see that workflow for the canonical gate.
 # CI invokes `go test` directly rather than through this
 # target, because godotenv exits non-zero when .env is absent and .env is
 # gitignored; see that workflow's header comment.
@@ -143,7 +143,8 @@ test-all: test test-trimpath
 #
 # --force is opt-in via `make db-init FORCE=1` so that rebuilding an existing
 # database is possible without hand-typing the go run invocation. Only 1/true/yes
-# count -- `FORCE=0` must not rebuild.
+# count (case-sensitive; TRUE/True/YES take the safe non-force path) --
+# `FORCE=0` must not rebuild.
 db-init:
 	mkdir -p $(dir $(KIDS_CHECKIN_DB_FILE)) && \
 	ENVIRONMENT=dev go tool godotenv go run -tags dev . db-init \

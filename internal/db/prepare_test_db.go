@@ -21,8 +21,8 @@ type Cleanup func()
 // is that it, and the dbDir resolution behind StructureSQL, are linked into
 // production binaries.
 //
-// Linking them is not the same as running them. dbDir is a sync.OnceValue, so
-// resolveDBDir does no work until something actually calls StructureSQL, and
+// Linking them is not the same as running them. dbDir() resolves fresh on each
+// call and does no work until something actually calls StructureSQL, and
 // nothing in production does. The snapshot itself stays on disk.
 func PrepareTestDB() (*sql.DB, Cleanup, error) {
 	tempDB, err := InitDB(inMemoryDSN)

@@ -77,7 +77,7 @@ To rebuild one that already has schema, pass `FORCE=1`:
 ```shell
 make db-init FORCE=1
 ```
-`FORCE=1` drops every table and starts over, including any check-ins you have
+`FORCE=1` drops every app table and starts over (keeps `fiber_storage` sessions), including any check-ins you have
 added since. Only pass it when you intend to discard them -- otherwise use
 `make db-migrate` to apply new migrations to an existing database.
 3. In one terminal, start the checkout fetcher:
@@ -186,8 +186,8 @@ fail in a trimmed one, and that failure is invisible to `make test`.
 CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs all four Go
 combinations as required steps, along with `gofmt`, `go vet` (both tag sets),
 and a build of the release entrypoint, so it is the gate on a push.
-`make test-all` is the local Go equivalent, not the full CI gate -- run `gofmt`,
-`vet`, and `npm test` too (all in `make test`). CI calls `go test` directly
+`make test-all` is the local Go equivalent, not the full CI gate -- `npm test`
+is in `make test`; run `gofmt` and `vet` manually too. CI calls `go test` directly
 instead of through `make test` because `godotenv` exits non-zero when `.env`
 is absent, and `.env` is gitignored.
 

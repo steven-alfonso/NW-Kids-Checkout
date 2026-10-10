@@ -20,6 +20,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"kids-checkin/internal/db"
 	"kids-checkin/internal/repo/event"
@@ -112,6 +113,12 @@ func Run(ctx context.Context, cmd *cli.Command) error {
 		return fmt.Errorf("refusing to run db-init against %q: %s (override by copying the file, not by pointing dev tooling at prod)", dbFile, reason)
 	}
 
+	// Validate the fixture before touching the database: a broken fixture must
+	// not destroy a good dev DB via --force drop and then fail post-commit.
+	if err := validateFixtureBytes(fixtureJSON); err != nil {
+		return err
+	}
+
 	log.Info("db-init: starting", slog.String("db_file", dbFile), slog.Bool("force", force))
 
 	// database/ is gitignored, so it does not exist on a fresh clone, and
@@ -163,12 +170,25 @@ func Run(ctx context.Context, cmd *cli.Command) error {
 // mistake from seeding prod, but `ENVIRONMENT=dev go run -tags dev .
 // db-init --db-file /data/kids-checkin.db --force` on a prod host would still
 // destroy prod. Tests use /tmp/... absolute paths, which stay allowed.
+//
+// The check absolutizes first: `--db-file database/k.db` with CWD=/data opens
+// /data/database/k.db under the prod volume, so a relative path must not
+// bypass the gate. Symlinks are resolved too when they exist; a dangling link
+// falls back to the lexical clean path.
 func blockedProdPath(dbFile string) (bool, string) {
-	clean := filepath.Clean(dbFile)
-	if clean == "/data/kids-checkin.db" || strings.HasPrefix(clean, "/data/") {
+	abs := dbFile
+	if resolved, err := filepath.Abs(dbFile); err == nil {
+		abs = resolved
+	}
+	if eval, err := filepath.EvalSymlinks(abs); err == nil {
+		abs = eval
+	} else {
+		abs = filepath.Clean(abs)
+	}
+	if abs == "/data/kids-checkin.db" || strings.HasPrefix(abs, "/data/") {
 		return true, "path is under the container /data volume"
 	}
-	if clean == "/app/database/kids-checkin.db" || strings.HasPrefix(clean, "/app/db/") {
+	if strings.HasPrefix(abs, "/app/database/") || strings.HasPrefix(abs, "/app/db/") || abs == "/app/database/kids-checkin.db" {
 		return true, "path is under the container /app image"
 	}
 	return false, ""
@@ -185,11 +205,13 @@ func blockedProdPath(dbFile string) (bool, string) {
 // which points at neither --force nor the real cause.
 func hasSchema(ctx context.Context, database *sql.DB) (bool, error) {
 	var n int
-	// fiber_storage (session store) and schema_migrations (bookkeeping) are not
-	// app schema: starting apiserver once creates fiber_storage, which must not
-	// make an otherwise empty file demand --force.
+	// fiber_storage (session store), schema_migrations (bookkeeping), and its
+	// version_unique index are not app schema: starting apiserver once creates
+	// fiber_storage, which must not make an otherwise empty file demand --force.
+	// The type filter keeps a standalone bookkeeping index from counting when
+	// its table is absent.
 	err := database.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM sqlite_master WHERE name NOT LIKE 'sqlite\_%' ESCAPE '\' AND name NOT IN ('fiber_storage', 'schema_migrations')`).Scan(&n)
+		`SELECT COUNT(*) FROM sqlite_master WHERE type IN ('table', 'view', 'trigger') AND name NOT LIKE 'sqlite\_%' ESCAPE '\' AND name NOT IN ('fiber_storage', 'schema_migrations', 'version_unique')`).Scan(&n)
 	if err != nil {
 		return false, fmt.Errorf("inspect existing schema: %w", err)
 	}
@@ -269,20 +291,22 @@ func dropEverything(ctx context.Context, database *sql.DB) error {
 		}
 	}
 
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit drop: %w", err)
-	}
-	// Reset AUTOINCREMENT counters so --force is a clean rebuild. DROP TABLE
-	// removes its own sqlite_sequence row, but an explicit reset keeps the
-	// "clean rebuild" claim true even for counters left by prior partial runs.
-	// fiber_storage is kept, so its counter (if any) is left alone by scoping
-	// to dropped names only when the table exists.
-	if _, err := database.ExecContext(ctx, `DELETE FROM sqlite_sequence`); err != nil {
+	// Reset AUTOINCREMENT counters inside the same transaction so --force is an
+	// atomic clean rebuild. DROP TABLE removes its own sqlite_sequence row, but
+	// an explicit reset covers counters left by prior partial runs. This wipes
+	// all counters including a kept table's; today harmless (fiber_storage has
+	// no AUTOINCREMENT row), and a future AUTOINCREMENT kept table would restart
+	// at 1 after --force by design.
+	if _, err := tx.ExecContext(ctx, `DELETE FROM sqlite_sequence`); err != nil {
 		// sqlite_sequence only exists when some table uses AUTOINCREMENT; a
 		// database without one legitimately has no such table.
 		if !strings.Contains(strings.ToLower(err.Error()), "no such table") {
 			return fmt.Errorf("reset autoincrement counters: %w", err)
 		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit drop: %w", err)
 	}
 	return nil
 }
@@ -343,25 +367,43 @@ func stampMigrations(ctx context.Context, database *sql.DB) error {
 	if err != nil {
 		return err
 	}
-	// IF NOT EXISTS + DELETE+INSERT keeps this idempotent if structure.sql ever
-	// starts including the bookkeeping table: without it a snapshot change
-	// would make CREATE fail after applySchema already committed, leaving a
-	// partial DB that only --force can retry.
+	// IF NOT EXISTS + DELETE+INSERT in one transaction keeps this idempotent
+	// and atomic: without it a snapshot change would make CREATE fail after
+	// applySchema already committed, and a DELETE-then-INSERT split could leave
+	// zero rows on lock/I-O failure.
+	tx, err := database.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin stamp transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
 	const ddl = `
 		CREATE TABLE IF NOT EXISTS schema_migrations (version uint64, dirty bool);
 		CREATE UNIQUE INDEX IF NOT EXISTS version_unique ON schema_migrations (version);
 	`
-	if _, err := database.ExecContext(ctx, ddl); err != nil {
+	if _, err := tx.ExecContext(ctx, ddl); err != nil {
 		return fmt.Errorf("create schema_migrations: %w", err)
 	}
-	if _, err := database.ExecContext(ctx, `DELETE FROM schema_migrations`); err != nil {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM schema_migrations`); err != nil {
 		return fmt.Errorf("clear schema_migrations: %w", err)
 	}
-	if _, err := database.ExecContext(ctx,
+	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO schema_migrations (version, dirty) VALUES (?, 0)`, version); err != nil {
 		return fmt.Errorf("stamp schema_migrations at %s: %w", version, err)
 	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit stamp: %w", err)
+	}
 	return nil
+}
+
+// validateFixtureBytes parses and validates the embedded fixture. Run before
+// any destructive drop so a broken fixture cannot destroy a good database.
+func validateFixtureBytes(raw []byte) error {
+	var f fixture
+	if err := json.Unmarshal(raw, &f); err != nil {
+		return fmt.Errorf("parse fixture.json: %w", err)
+	}
+	return validateFixture(f)
 }
 
 // validateFixture refuses a fixture missing any required section.
@@ -399,6 +441,7 @@ func validateFixture(f fixture) error {
 		seenGroups[g.Name] = true
 	}
 	seenEventPCID := map[string]bool{}
+	seenEventName := map[string]bool{}
 	for _, e := range f.Events {
 		if e.Name == "" || e.PlanningCenterID == "" {
 			return fmt.Errorf("event with empty name or planning_center_id")
@@ -407,9 +450,18 @@ func validateFixture(f fixture) error {
 			return fmt.Errorf("duplicate event planning_center_id %q", e.PlanningCenterID)
 		}
 		seenEventPCID[e.PlanningCenterID] = true
+		if seenEventName[e.Name] {
+			return fmt.Errorf("duplicate event name %q (events.name is UNIQUE)", e.Name)
+		}
+		seenEventName[e.Name] = true
 		if e.LocationGroup != nil && *e.LocationGroup != "" && !seenGroups[*e.LocationGroup] {
 			return fmt.Errorf("event %q references unknown location group %q", e.Name, *e.LocationGroup)
 		}
+	}
+	// Natural-key index for cross-reference checks below.
+	seenEventKey := map[string]bool{}
+	for _, e := range f.Events {
+		seenEventKey[e.PlanningCenterID] = true
 	}
 	seenLocPCID := map[string]bool{}
 	for _, l := range f.Locations {
@@ -420,16 +472,28 @@ func validateFixture(f fixture) error {
 			return fmt.Errorf("duplicate location planning_center_id %q", l.PlanningCenterID)
 		}
 		seenLocPCID[l.PlanningCenterID] = true
-		if l.LocationGroup != nil && *l.LocationGroup != "" && !seenGroups[*l.LocationGroup] {
+		if !seenEventKey[l.Event] {
+			return fmt.Errorf("location %q references unknown event %q", l.Name, l.Event)
+		}
+		// An empty string is not NULL: resolveGroup treats "" as a name
+		// lookup and fails, so reject it here rather than late in the tx.
+		if l.LocationGroup != nil && *l.LocationGroup == "" {
+			return fmt.Errorf("location %q has empty location_group (use null, not \"\")", l.Name)
+		}
+		if l.LocationGroup != nil && !seenGroups[*l.LocationGroup] {
 			return fmt.Errorf("location %q references unknown location group %q", l.Name, *l.LocationGroup)
 		}
 	}
 	// Every planning_center_parent_id must name a location in the same fixture.
 	// The column has no FK, so a typo would otherwise seed silently and show up
-	// only as a NULL parent in a LEFT JOIN.
+	// only as a NULL parent in a LEFT JOIN. Empty string is rejected: it would
+	// insert verbatim as "" (not NULL) and match no parent.
 	for _, l := range f.Locations {
-		if l.PlanningCenterParentID == nil || *l.PlanningCenterParentID == "" {
+		if l.PlanningCenterParentID == nil {
 			continue
+		}
+		if *l.PlanningCenterParentID == "" {
+			return fmt.Errorf("location %q has empty planning_center_parent_id (use null, not \"\")", l.Name)
 		}
 		if !seenLocPCID[*l.PlanningCenterParentID] {
 			return fmt.Errorf("location %q references unknown parent planning_center_id %q", l.Name, *l.PlanningCenterParentID)
@@ -438,16 +502,76 @@ func validateFixture(f fixture) error {
 			return fmt.Errorf("location %q cannot be its own parent", l.Name)
 		}
 	}
+	// Parent pointers must stay within the same event and form no cycles.
+	// locationEvent maps pcid -> event key for the checks below.
+	locationEvent := map[string]string{}
+	for _, l := range f.Locations {
+		locationEvent[l.PlanningCenterID] = l.Event
+	}
+	for _, l := range f.Locations {
+		if l.PlanningCenterParentID == nil {
+			continue
+		}
+		if parentEvent, ok := locationEvent[*l.PlanningCenterParentID]; ok && parentEvent != l.Event {
+			return fmt.Errorf("location %q (event %q) has parent %q in event %q; parents must stay within the same event", l.Name, l.Event, *l.PlanningCenterParentID, parentEvent)
+		}
+	}
+	if err := checkParentCycles(f); err != nil {
+		return err
+	}
 	for _, w := range f.EventCheckWindows {
 		if w.Event == "" {
 			return fmt.Errorf("check window with empty event")
 		}
-		if w.Timezone == "" {
-			return fmt.Errorf("check window for event %q has empty timezone", w.Event)
+		if !seenEventKey[w.Event] {
+			return fmt.Errorf("check window references unknown event %q", w.Event)
 		}
-		if w.StartTime == "" || w.EndTime == "" {
-			return fmt.Errorf("check window for event %q has empty start/end time", w.Event)
+		if err := validateCheckWindowFields(w.Event, w.StartDayOfWeek, w.StartTime, w.EndDayOfWeek, w.EndTime, w.Timezone); err != nil {
+			return err
 		}
+	}
+	return nil
+}
+
+// checkParentCycles rejects A<->B (and longer) parent loops. The column has no
+// FK, so without this two typo'd rows seed silently and read back as a cycle.
+func checkParentCycles(f fixture) error {
+	parentOf := map[string]string{}
+	for _, l := range f.Locations {
+		if l.PlanningCenterParentID != nil && *l.PlanningCenterParentID != "" {
+			parentOf[l.PlanningCenterID] = *l.PlanningCenterParentID
+		}
+	}
+	for _, l := range f.Locations {
+		seen := map[string]bool{l.PlanningCenterID: true}
+		for cur, ok := parentOf[l.PlanningCenterID]; ok; {
+			if seen[cur] {
+				return fmt.Errorf("parent cycle detected at %q", cur)
+			}
+			seen[cur] = true
+			cur, ok = parentOf[cur]
+		}
+	}
+	return nil
+}
+
+// validateCheckWindowFields mirrors the repo's window validation so a bad
+// window fails before the drop, not inside the fixture transaction.
+func validateCheckWindowFields(event string, startDay int, startTime string, endDay int, endTime string, timezone string) error {
+	if startDay < 1 || startDay > 7 {
+		return fmt.Errorf("check window for event %q: start_day_of_week must be between 1 and 7", event)
+	}
+	if endDay < 1 || endDay > 7 {
+		return fmt.Errorf("check window for event %q: end_day_of_week must be between 1 and 7", event)
+	}
+	if _, err := time.Parse("15:04", startTime); err != nil {
+		return fmt.Errorf("check window for event %q: invalid start_time %q, expected HH:MM", event, startTime)
+	}
+	if _, err := time.Parse("15:04", endTime); err != nil {
+		return fmt.Errorf("check window for event %q: invalid end_time %q, expected HH:MM", event, endTime)
+	}
+	if _, err := time.LoadLocation(timezone); err != nil {
+		return fmt.Errorf("check window for event %q: invalid timezone %q", event, timezone)
 	}
 	return nil
 }
@@ -551,6 +675,22 @@ func applyFixture(ctx context.Context, database *sql.DB) error {
 	counts, err := fixtureCounts(ctx, tx)
 	if err != nil {
 		return err
+	}
+	// Defense in depth: validation above rejects duplicates, but a future
+	// upsert-shaped repo change must not silently seed fewer rows than listed.
+	for _, want := range []struct {
+		name string
+		got  int
+		want int
+	}{
+		{"location_groups", counts["location_groups"], len(f.LocationGroups)},
+		{"events", counts["events"], len(f.Events)},
+		{"locations", counts["locations"], len(f.Locations)},
+		{"event_check_windows", counts["event_check_windows"], len(f.EventCheckWindows)},
+	} {
+		if want.got != want.want {
+			return fmt.Errorf("seeded %s = %d, want %d; fixture rows did not all insert", want.name, want.got, want.want)
+		}
 	}
 
 	if err := tx.Commit(); err != nil {
