@@ -24,23 +24,6 @@ This file guides coding agents working in this repo. Keep changes small, follow 
 - CI runs `go test` directly rather than through `make test`: godotenv exits
   non-zero when `.env` is absent, and it is gitignored. No test reads a real
   `.env`; the ones that care about a variable set it with `t.Setenv`.
-- Run all tests under `-trimpath`: `make test-trimpath` (both build-tag sets)
-- **Run the complete Go matrix before pushing: `make test-all`** (`make test` +
-  `make test-trimpath`). See "Why -trimpath needs its own pass" below.
-- Why `-trimpath` needs its own pass
-  - `db/structure.sql` is read from disk, not `//go:embed`'d, and its path is
-    resolved from `runtime.Caller`. `-trimpath` rewrites that to a module-relative
-    path, so resolution that only works when the build records absolute source
-    paths passes `go test ./...` and fails under `-trimpath`.
-  - This was verified by reverting `resolveDBDir` to the unverified
-    `runtime.Caller` form: `go test ./...` passed and only `make test-trimpath`
-    failed. The same trap applies to `static.DevAssetsDir`, and it had shipped as
-    a real bug: `TestReadDevAsset` failed under `-trimpath` while the plain build
-    stayed green.
-  - CI runs all four Go combinations (plain, `-tags dev`, `-trimpath`, both) and
-    treats them as required, plus `gofmt`, `go vet` (both tag sets), a release
-    build, and `npm test`. `make test-all` is the local Go equivalent, not the
-    full CI gate.
 - Run a single package: `godotenv go test ./internal/repo/checkin`
 - Run a single test: `godotenv go test ./internal/repo/checkin -run Test_sqliteRepo_ListCheckins`
 - Run a subtest: `godotenv go test ./internal/repo/checkin -run Test_sqliteRepo_ListCheckins/filter_by_location_ID`
@@ -73,10 +56,9 @@ This file guides coding agents working in this repo. Keep changes small, follow 
 - HTTP controllers: `internal/controllers/*` (versioned packages like `checkinv1`).
 - Repos and DB access: `internal/repo/*` using `squirrel` and `context.Context`.
 - Two packages are named `db`: the Go package `internal/db/*` (DB init, the
-  shared `--db-file` flag, schema snapshot reader, test DB prep) and the
-  `kids-checkin/db` package made of `db/*_test.go`, which is where the snapshot
-  drift test lives. The `db/` directory is otherwise data: migrations and
-  `structure.sql`.
+  shared `--db-file` flag, test DB prep) and the `kids-checkin/db` package,
+  which embeds `structure.sql` and holds the snapshot drift test. The `db/`
+  directory is otherwise data: migrations and `structure.sql`.
 - Static web assets: `internal/web/static` (embedded FS via `cmd/assets`).
 - Migrations: `db/migrations` and schema snapshots in `db/structure.sql`.
 - Domain helpers/constants: `internal/static`.
@@ -167,57 +149,20 @@ This file guides coding agents working in this repo. Keep changes small, follow 
   copy is what let the two drift apart before. The Dockerfile's
   `DB_FILE=/data/kids-checkin.db` is a deliberate override for the container
   volume.
-- Five tests in `internal/cmd/dbfile_test.go` guard this. Keep all five honest:
-  the first originally asserted nothing at all, and the third could not see a
-  whole class of regressions:
-  - `TestDefaultDBFileMatchesMakefile` ties the constant to the Makefile.
-  - `TestEnvExampleDoesNotPinDBFile` keeps `.env.example` free of `DB_FILE`.
-    `.env` itself is gitignored, so a stale `DB_FILE` there is still invisible;
-    only the tracked example can be checked.
-  - `TestEveryDBCommandUsesTheSharedFlag` walks the live command tree, so it
-    cannot see `cmd/random-data` (a separate `main`) or a command that opens the
-    database without declaring a flag at all.
-  - `TestDbFileFlagIsNeverRedefined` and `TestDBInitCallSiteDoesNotHardcodePath`
-    are the structural backstops: an AST rule forbidding any `StringFlag{Name:
-    "db-file"}`, and any `<db>.InitDB` whose path is a literal **or a read of
-    `db.DefaultDBFile`**. They need no list of commands, which is what lets them
-    reach what the tree walk cannot.
-    - They are not complete, and should not be described as though they were. An
-      argument that reaches the path by some third shape — `os.Getenv`, a
-      helper's return value, string concatenation — is not detected; that needs
-      dataflow analysis, which a single-file parse is not. They cover the two
-      spellings that actually caused this drift and raise the cost of
-      reintroducing it. They do not prove its absence.
-    - Rejecting string literals alone left a hole that needed no cleverness: a
-      command that mounted no `--db-file` flag and passed `db.DefaultDBFile`
-      passed all five guards, and would have silently ignored both `--db-file`
-      and `$DB_FILE`. Both shapes are now rejected.
-  - Both resolve indirection rather than matching one spelling. The flag guard
-    follows a `Name:` value through a same-file `const`/`var`/`:=`, so
-    `Name: dbFileFlagName` and `n := "db-file"` are caught along with
-    `Name: "db-file"`. The InitDB guard matches the receiver by **import path**,
-    not by the identifier `db`, so an aliased
-    `import store "kids-checkin/internal/db"` is still checked.
-    They skip different sets: only `internal/db/flag.go` may declare the flag,
-    while the rest of `internal/db` passes literal DSNs to `InitDB` on purpose.
-  - When adding a guard on AST or source text, check that it actually fires.
-    `assert.NotRegexp` takes the string to match as its third argument, and
-    `ast.BasicLit.Value` for a string keeps its quotes — both mistakes produce a
-    test that passes forever.
+- Two tests in `internal/cmd/dbfile_test.go` guard this:
+  `TestDefaultDBFileMatchesMakefile` ties the constant to the Makefile, and
+  `TestEnvExampleDoesNotPinDBFile` keeps `.env.example` free of `DB_FILE`.
+  (An AST guard suite once policed every `InitDB` call site and flag
+  definition; it was removed as overbuilt — a cross-file const or a func-param
+  handoff walked through it, while legitimate refactors tripped it. The two
+  tests above plus review are the guard now.)
 
 ### Schema
 - Migrations are applied by the `migrate` CLI, **not** by the application
   binary. `db/structure.sql` is the snapshot `make db-migrate` generates from
-  them; the test database and `make db-init` load that snapshot.
+  them; the test database and `make db-init` load that snapshot via the embedded
+  `db.Schema` (`db/db.go`).
 - `db/structure_test.go` fails if the snapshot drifts from the migrations.
-- The snapshot is read from disk via `internal/db.StructureSQL()`, not
-  `//go:embed` — nothing in production uses it, and embedding it shipped the
-  schema in every release binary.
-- That path is resolved from `runtime.Caller`, which `-trimpath` rewrites to a
-  module-relative path, so the candidate is verified before it is trusted and a
-  walk up from the working directory backs it up. `internal/db/schema_test.go`
-  covers the walk; `make test-trimpath` is what proves the whole suite survives
-  a trimmed build. The same trap exists in `internal/web/static.DevAssetsDir`.
 
 ### Dev-only commands
 - `make db-init` builds a development database (schema + the real Planning

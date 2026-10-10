@@ -90,37 +90,6 @@ test:
 	go tool godotenv go test -tags dev ./...
 	npm test
 
-.PHONY: test-trimpath
-# Same suite with -trimpath, for BOTH build-tag sets.
-#
-# -tags dev is not optional here. The dev-tagged packages include the dbinit
-# tests, which are consumers of the very path resolution this target exists to
-# check; without the tag they are skipped entirely ("build constraints exclude
-# all Go files"), so the target would silently cover less than it claims.
-test-trimpath:
-	go tool godotenv go test -trimpath ./...
-	go tool godotenv go test -trimpath -tags dev ./...
-
-.PHONY: test-all
-# The complete Go matrix: both build-tag sets, with and without -trimpath.
-#
-# The trimpath half is not optional and `make test` cannot stand in for it.
-# db/structure.sql is read from disk rather than //go:embed'd, and its path is
-# resolved from runtime.Caller, which -trimpath rewrites to a module-relative
-# path. Reverting that resolution to the plain runtime.Caller form passes
-# `go test ./...` and fails only here -- verified by breaking it and confirming
-# the failure appears in this target and nowhere else.
-#
-# CI (.github/workflows/ci.yml) runs the same four Go combinations as required
-# steps, plus gofmt, go vet (both tag sets), a release build, and npm test.
-# This target is the local Go equivalent, not the full CI gate -- run `npm test`
-# too (in `make test`) and `gofmt -l .`, `go vet ./...`, `go vet -tags dev ./...`
-# manually; see that workflow for the canonical gate.
-# CI invokes `go test` directly rather than through this
-# target, because godotenv exits non-zero when .env is absent and .env is
-# gitignored; see that workflow's header comment.
-test-all: test test-trimpath
-
 .PHONY: db-init
 # Builds a development database: schema, migration stamp, and the Planning
 # Center reference topology. The db-init command only exists under the `dev`

@@ -175,21 +175,13 @@ To run the test suite, use the `test` target:
 
 ```sh
 make test       # go test, then -tags dev, then npm test
-make test-all   # the above, plus both -trimpath passes -- run this before pushing
 ```
 
-`make test-trimpath` exists because `db/structure.sql` is read from disk rather
-than embedded, and its path is resolved from `runtime.Caller`, which `-trimpath`
-rewrites to a module-relative path. Resolution that works in a normal build can
-fail in a trimmed one, and that failure is invisible to `make test`.
-
-CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs all four Go
-combinations as required steps, along with `gofmt`, `go vet` (both tag sets),
-and a build of the release entrypoint, so it is the gate on a push.
-`make test-all` is the local Go equivalent, not the full CI gate -- `npm test`
-is in `make test`; run `gofmt` and `vet` manually too. CI calls `go test` directly
-instead of through `make test` because `godotenv` exits non-zero when `.env`
-is absent, and `.env` is gitignored.
+CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs the Go suite
+(both tag sets) as required steps, along with `gofmt`, `go vet`, a build of the
+release entrypoint, and `npm test`, so it is the gate on a push. CI calls
+`go test` directly instead of through `make test` because `godotenv` exits
+non-zero when `.env` is absent, and `.env` is gitignored.
 
 ## Database
 

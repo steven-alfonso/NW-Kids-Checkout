@@ -18,10 +18,8 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
-	"strings"
-	"time"
 
+	dbschema "kids-checkin/db"
 	"kids-checkin/internal/db"
 	"kids-checkin/internal/repo/event"
 	"kids-checkin/internal/repo/eventcheckwindow"
@@ -109,27 +107,13 @@ func Run(ctx context.Context, cmd *cli.Command) error {
 	dbFile := cmd.String("db-file")
 	force := cmd.Bool("force")
 
-	if blocked, reason := blockedProdPath(dbFile); blocked {
-		return fmt.Errorf("refusing to run db-init against %q: %s (override by copying the file, not by pointing dev tooling at prod)", dbFile, reason)
-	}
-
 	// Validate the fixture before touching the database: a broken fixture must
-	// not destroy a good dev DB via --force drop and then fail post-commit.
+	// not destroy a good dev DB via --force and then fail.
 	if err := validateFixtureBytes(fixtureJSON); err != nil {
 		return err
 	}
 
 	log.Info("db-init: starting", slog.String("db_file", dbFile), slog.Bool("force", force))
-
-	// database/ is gitignored, so it does not exist on a fresh clone, and
-	// sqlite3 will not create a missing parent directory -- it only creates a
-	// missing file. Without this the documented first-run path fails with a
-	// bare "unable to open database file".
-	if dir := filepath.Dir(dbFile); dir != "" && dir != "." {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return fmt.Errorf("create database directory %s: %w", dir, err)
-		}
-	}
 
 	database, err := db.InitDB(dbFile)
 	if err != nil {
@@ -146,9 +130,21 @@ func Run(ctx context.Context, cmd *cli.Command) error {
 		return fmt.Errorf("%s already has schema; re-run with --force to rebuild it", dbFile)
 	case populated:
 		log.Warn("db-init: rebuilding an existing database", slog.String("db_file", dbFile))
-		if err := dropEverything(ctx, database); err != nil {
-			return err
+		// Rebuild by removing the file and reopening, rather than dropping
+		// tables one by one: a hardcoded drop list goes stale when migrations
+		// add tables, while a removed file cannot collide with the schema.
+		// (Dev sessions in fiber_storage go with it; acceptable for a dev tool.)
+		if err := database.Close(); err != nil {
+			return fmt.Errorf("close db for rebuild: %w", err)
 		}
+		if err := os.Remove(dbFile); err != nil {
+			return fmt.Errorf("remove %s for rebuild: %w", dbFile, err)
+		}
+		database, err = db.InitDB(dbFile)
+		if err != nil {
+			return fmt.Errorf("init db: %w", err)
+		}
+		defer func() { _ = database.Close() }()
 	}
 
 	if err := applySchema(ctx, database); err != nil {
@@ -163,35 +159,6 @@ func Run(ctx context.Context, cmd *cli.Command) error {
 
 	log.Info("db-init: complete", slog.String("db_file", dbFile))
 	return nil
-}
-
-// blockedProdPath refuses the container production paths even when
-// ENVIRONMENT=dev. The build tag + env gate keeps a dev build deployed by
-// mistake from seeding prod, but `ENVIRONMENT=dev go run -tags dev .
-// db-init --db-file /data/kids-checkin.db --force` on a prod host would still
-// destroy prod. Tests use /tmp/... absolute paths, which stay allowed.
-//
-// The check absolutizes first: `--db-file database/k.db` with CWD=/data opens
-// /data/database/k.db under the prod volume, so a relative path must not
-// bypass the gate. Symlinks are resolved too when they exist; a dangling link
-// falls back to the lexical clean path.
-func blockedProdPath(dbFile string) (bool, string) {
-	abs := dbFile
-	if resolved, err := filepath.Abs(dbFile); err == nil {
-		abs = resolved
-	}
-	if eval, err := filepath.EvalSymlinks(abs); err == nil {
-		abs = eval
-	} else {
-		abs = filepath.Clean(abs)
-	}
-	if abs == "/data/kids-checkin.db" || strings.HasPrefix(abs, "/data/") {
-		return true, "path is under the container /data volume"
-	}
-	if strings.HasPrefix(abs, "/app/database/") || strings.HasPrefix(abs, "/app/db/") || abs == "/app/database/kids-checkin.db" {
-		return true, "path is under the container /app image"
-	}
-	return false, ""
 }
 
 // hasSchema reports whether the app schema is already present. A missing or
@@ -218,141 +185,11 @@ func hasSchema(ctx context.Context, database *sql.DB) (bool, error) {
 	return n > 0, nil
 }
 
-// keepTables lists the tables dropEverything leaves in place. Everything else is
-// dropped.
-//
-// It is a denylist of drops rather than a list of drops on purpose: a hardcoded
-// list of the tables that exist today would let a table introduced by a future
-// migration survive a rebuild and then collide with the schema being applied.
-var keepTables = map[string]bool{
-	// Owned by the Fiber session store rather than by structure.sql, so
-	// dropping it would sign everyone out of a running dev server.
-	"fiber_storage": true,
-}
-
-// dropEverything removes every table, view and trigger except the ones in
-// keepTables, so --force yields a clean rebuild.
-func dropEverything(ctx context.Context, database *sql.DB) error {
-	tables, err := objectNames(ctx, database, "table")
-	if err != nil {
-		return err
-	}
-	views, err := objectNames(ctx, database, "view")
-	if err != nil {
-		return err
-	}
-	triggers, err := objectNames(ctx, database, "trigger")
-	if err != nil {
-		return err
-	}
-
-	// Foreign keys are on and SQLite will not drop a table that another table
-	// still references, which would otherwise force a dependency-order drop
-	// list -- the same kind of list that goes stale. Deferring the checks to
-	// commit-time avoids the ordering problem: every referencing table is gone
-	// by the time the transaction commits.
-	tx, err := database.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin drop transaction: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	if _, err := tx.ExecContext(ctx, `PRAGMA defer_foreign_keys = ON`); err != nil {
-		return fmt.Errorf("defer foreign keys: %w", err)
-	}
-
-	for _, name := range tables {
-		if keepTables[name] {
-			continue
-		}
-		if _, err := tx.ExecContext(ctx, `DROP TABLE IF EXISTS `+quoteIdentifier(name)); err != nil {
-			return fmt.Errorf("drop table %s: %w", name, err)
-		}
-	}
-
-	// Views and triggers have no such dependency on the tables above, so
-	// dropping them first would be safe too -- but they are dropped after for
-	// the same reason the tables are: a view left behind by a previous
-	// --force would otherwise survive the rebuild and collide with the schema
-	// being applied. A standalone index goes away with its table, and an index
-	// attached to a kept table is left alone, which is the intent of
-	// keepTables.
-	for _, kind := range []struct {
-		keyword string
-		names   []string
-	}{
-		{"VIEW", views},
-		{"TRIGGER", triggers},
-	} {
-		for _, name := range kind.names {
-			if _, err := tx.ExecContext(ctx, `DROP `+kind.keyword+` IF EXISTS `+quoteIdentifier(name)); err != nil {
-				return fmt.Errorf("drop %s %s: %w", strings.ToLower(kind.keyword), name, err)
-			}
-		}
-	}
-
-	// Reset AUTOINCREMENT counters inside the same transaction so --force is an
-	// atomic clean rebuild. DROP TABLE removes its own sqlite_sequence row, but
-	// an explicit reset covers counters left by prior partial runs. This wipes
-	// all counters including a kept table's; today harmless (fiber_storage has
-	// no AUTOINCREMENT row), and a future AUTOINCREMENT kept table would restart
-	// at 1 after --force by design.
-	if _, err := tx.ExecContext(ctx, `DELETE FROM sqlite_sequence`); err != nil {
-		// sqlite_sequence only exists when some table uses AUTOINCREMENT; a
-		// database without one legitimately has no such table.
-		if !strings.Contains(strings.ToLower(err.Error()), "no such table") {
-			return fmt.Errorf("reset autoincrement counters: %w", err)
-		}
-	}
-
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit drop: %w", err)
-	}
-	return nil
-}
-
-// objectNames lists the user-defined objects of one sqlite_master type.
-// SQLite's own bookkeeping (sqlite_sequence and anything beginning with
-// "sqlite_") is excluded: the LIKE pattern escapes the underscore so it cannot
-// act as a single-character wildcard.
-func objectNames(ctx context.Context, database *sql.DB, kind string) ([]string, error) {
-	rows, err := database.QueryContext(ctx,
-		`SELECT name FROM sqlite_master WHERE type = ? AND name NOT LIKE 'sqlite\_%' ESCAPE '\' ORDER BY name`, kind)
-	if err != nil {
-		return nil, fmt.Errorf("list %ss: %w", kind, err)
-	}
-	defer func() { _ = rows.Close() }()
-
-	var names []string
-	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
-			return nil, fmt.Errorf("scan %s name: %w", kind, err)
-		}
-		names = append(names, name)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("list %ss: %w", kind, err)
-	}
-	return names, nil
-}
-
-// quoteIdentifier renders name as a SQL identifier, doubling any embedded
-// quote. sqlite_master only ever yields valid identifiers, but an unquoted name
-// is a syntax error the moment one does need quoting.
-func quoteIdentifier(name string) string {
-	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
-}
-
-// applySchema loads db/structure.sql, the snapshot `make db-migrate` generates
-// from the migrations. Loading the snapshot rather than replaying migrations
-// keeps this command in step with `make db-reset` and with the test database.
+// applySchema loads the schema snapshot generated by `make db-migrate`.
+// Loading the snapshot rather than replaying migrations keeps this command in
+// step with `make db-reset` and with the test database.
 func applySchema(ctx context.Context, database *sql.DB) error {
-	schema, err := db.StructureSQL()
-	if err != nil {
-		return err
-	}
-	if _, err := database.ExecContext(ctx, schema); err != nil {
+	if _, err := database.ExecContext(ctx, dbschema.Schema); err != nil {
 		return fmt.Errorf("apply schema: %w", err)
 	}
 	return nil
@@ -367,31 +204,20 @@ func stampMigrations(ctx context.Context, database *sql.DB) error {
 	if err != nil {
 		return err
 	}
-	// IF NOT EXISTS + DELETE+INSERT in one transaction keeps this idempotent
-	// and atomic: without it a snapshot change would make CREATE fail after
-	// applySchema already committed, and a DELETE-then-INSERT split could leave
-	// zero rows on lock/I-O failure.
-	tx, err := database.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin stamp transaction: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-	const ddl = `
+	if _, err := database.ExecContext(ctx, `
 		CREATE TABLE IF NOT EXISTS schema_migrations (version uint64, dirty bool);
 		CREATE UNIQUE INDEX IF NOT EXISTS version_unique ON schema_migrations (version);
-	`
-	if _, err := tx.ExecContext(ctx, ddl); err != nil {
+	`); err != nil {
 		return fmt.Errorf("create schema_migrations: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM schema_migrations`); err != nil {
+	// Clear first so a future snapshot that starts including the bookkeeping
+	// table still converges to exactly one row.
+	if _, err := database.ExecContext(ctx, `DELETE FROM schema_migrations`); err != nil {
 		return fmt.Errorf("clear schema_migrations: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx,
+	if _, err := database.ExecContext(ctx,
 		`INSERT INTO schema_migrations (version, dirty) VALUES (?, 0)`, version); err != nil {
 		return fmt.Errorf("stamp schema_migrations at %s: %w", version, err)
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit stamp: %w", err)
 	}
 	return nil
 }
@@ -502,23 +328,6 @@ func validateFixture(f fixture) error {
 			return fmt.Errorf("location %q cannot be its own parent", l.Name)
 		}
 	}
-	// Parent pointers must stay within the same event and form no cycles.
-	// locationEvent maps pcid -> event key for the checks below.
-	locationEvent := map[string]string{}
-	for _, l := range f.Locations {
-		locationEvent[l.PlanningCenterID] = l.Event
-	}
-	for _, l := range f.Locations {
-		if l.PlanningCenterParentID == nil {
-			continue
-		}
-		if parentEvent, ok := locationEvent[*l.PlanningCenterParentID]; ok && parentEvent != l.Event {
-			return fmt.Errorf("location %q (event %q) has parent %q in event %q; parents must stay within the same event", l.Name, l.Event, *l.PlanningCenterParentID, parentEvent)
-		}
-	}
-	if err := checkParentCycles(f); err != nil {
-		return err
-	}
 	for _, w := range f.EventCheckWindows {
 		if w.Event == "" {
 			return fmt.Errorf("check window with empty event")
@@ -526,52 +335,6 @@ func validateFixture(f fixture) error {
 		if !seenEventKey[w.Event] {
 			return fmt.Errorf("check window references unknown event %q", w.Event)
 		}
-		if err := validateCheckWindowFields(w.Event, w.StartDayOfWeek, w.StartTime, w.EndDayOfWeek, w.EndTime, w.Timezone); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// checkParentCycles rejects A<->B (and longer) parent loops. The column has no
-// FK, so without this two typo'd rows seed silently and read back as a cycle.
-func checkParentCycles(f fixture) error {
-	parentOf := map[string]string{}
-	for _, l := range f.Locations {
-		if l.PlanningCenterParentID != nil && *l.PlanningCenterParentID != "" {
-			parentOf[l.PlanningCenterID] = *l.PlanningCenterParentID
-		}
-	}
-	for _, l := range f.Locations {
-		seen := map[string]bool{l.PlanningCenterID: true}
-		for cur, ok := parentOf[l.PlanningCenterID]; ok; {
-			if seen[cur] {
-				return fmt.Errorf("parent cycle detected at %q", cur)
-			}
-			seen[cur] = true
-			cur, ok = parentOf[cur]
-		}
-	}
-	return nil
-}
-
-// validateCheckWindowFields mirrors the repo's window validation so a bad
-// window fails before the drop, not inside the fixture transaction.
-func validateCheckWindowFields(event string, startDay int, startTime string, endDay int, endTime string, timezone string) error {
-	if startDay < 1 || startDay > 7 {
-		return fmt.Errorf("check window for event %q: start_day_of_week must be between 1 and 7", event)
-	}
-	if endDay < 1 || endDay > 7 {
-		return fmt.Errorf("check window for event %q: end_day_of_week must be between 1 and 7", event)
-	}
-	if _, err := time.Parse("15:04", startTime); err != nil {
-		return fmt.Errorf("check window for event %q: invalid start_time %q, expected HH:MM", event, startTime)
-	}
-	if _, err := time.Parse("15:04", endTime); err != nil {
-		return fmt.Errorf("check window for event %q: invalid end_time %q, expected HH:MM", event, endTime)
-	}
-	if _, err := time.LoadLocation(timezone); err != nil {
-		return fmt.Errorf("check window for event %q: invalid timezone %q", event, timezone)
 	}
 	return nil
 }
@@ -672,12 +435,12 @@ func applyFixture(ctx context.Context, database *sql.DB) error {
 	// these repos upsert, so a duplicate planning_center_id -- the single most
 	// likely fixture edit -- inserts fewer rows than the fixture lists, and
 	// logging len(f.Locations) would report rooms that are not there.
+	// Validation above rejects duplicates, so the counts must match the slices;
+	// a mismatch means a repo changed shape underneath the seeder.
 	counts, err := fixtureCounts(ctx, tx)
 	if err != nil {
 		return err
 	}
-	// Defense in depth: validation above rejects duplicates, but a future
-	// upsert-shaped repo change must not silently seed fewer rows than listed.
 	for _, want := range []struct {
 		name string
 		got  int
@@ -717,7 +480,8 @@ func fixtureCounts(ctx context.Context, tx *sql.Tx) (map[string]int, error) {
 	counts := make(map[string]int, len(tables))
 	for _, table := range tables {
 		var n int
-		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+quoteIdentifier(table)).Scan(&n); err != nil {
+		// Table names come from the fixed list above, never from input.
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+table).Scan(&n); err != nil {
 			return nil, fmt.Errorf("count %s: %w", table, err)
 		}
 		counts[table] = n

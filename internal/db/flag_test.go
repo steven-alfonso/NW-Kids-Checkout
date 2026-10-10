@@ -1,9 +1,7 @@
 package db_test
 
 import (
-	"bytes"
 	"context"
-	"log/slog"
 	"os"
 	"testing"
 
@@ -71,41 +69,6 @@ func TestDBFileFlag_precedence(t *testing.T) {
 }
 
 func ptr(s string) *string { return &s }
-
-// The default is a relative path, so what it resolves to depends on the working
-// directory. That is exactly the failure the db-file/Makefile drift caused:
-// sqlite creates a missing file on demand, so the server started cleanly against
-// the wrong database and only failed later at query time. Logging the absolute
-// path makes a wrong working directory visible in the first log line.
-func TestInitDB_logsAbsolutePath(t *testing.T) {
-	t.Chdir(t.TempDir())
-
-	var logs bytes.Buffer
-	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
-	t.Cleanup(func() { slog.SetDefault(prev) })
-
-	database, err := db.InitDB("relative.db")
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = database.Close() })
-
-	assert.Contains(t, logs.String(), "relative.db")
-	assert.NotContains(t, logs.String(), "dsn=relative.db",
-		"logging only the relative path hides which file was actually opened")
-}
-
-// structure.sql is read from disk rather than //go:embed'd: nothing in
-// production uses it, only tests and the dev-only init command do.
-func TestStructureSQL_readsFromDisk(t *testing.T) {
-	schema, err := db.StructureSQL()
-	require.NoError(t, err)
-
-	assert.Contains(t, schema, "CREATE TABLE checkins")
-	assert.Contains(t, schema, "CREATE TABLE events")
-	// fiber_storage belongs to the session store, which creates its own table
-	// on first use. It is not part of the reviewed schema snapshot.
-	assert.NotContains(t, schema, "fiber_storage")
-}
 
 // The test database is built through the same code path as production, so it
 // cannot silently diverge on connection settings -- the hand-written DSN

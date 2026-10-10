@@ -7,8 +7,26 @@ import (
 	"regexp"
 )
 
-// migrationsGlob matches the up-migrations in db/migrations.
-const migrationsGlob = "migrations/*.up.sqlite"
+// migrationsDir is the repository's db/migrations directory, resolved from the
+// working directory. It is only used by the dev-only db-init command and its
+// tests, never in production.
+func migrationsDir() string {
+	if wd, err := os.Getwd(); err == nil {
+		dir := wd
+		for {
+			candidate := filepath.Join(dir, "db", "migrations")
+			if st, err := os.Stat(candidate); err == nil && st.IsDir() {
+				return candidate
+			}
+			parent := filepath.Dir(dir)
+			if parent == dir {
+				break
+			}
+			dir = parent
+		}
+	}
+	return filepath.Join("db", "migrations")
+}
 
 // migrationVersion matches the golang-migrate version prefix of a migration
 // filename, e.g. the 20260823160408 in 20260823160408_add_checkins.up.sqlite.
@@ -23,44 +41,21 @@ var migrationVersion = regexp.MustCompile(`^(\d+)_`)
 // replaying every migration against a database already built from the current
 // schema snapshot.
 func LatestMigrationVersion() (string, error) {
-	dir := filepath.Join(dbDir(), "migrations")
-	if st, err := os.Stat(dir); err != nil || !st.IsDir() {
-		return "", fmt.Errorf("migrations directory not found at %s: %w", dir, err)
-	}
-	names, err := filepath.Glob(filepath.Join(dbDir(), migrationsGlob))
+	names, err := filepath.Glob(filepath.Join(migrationsDir(), "*.up.sqlite"))
 	if err != nil {
 		return "", fmt.Errorf("list migrations: %w", err)
 	}
 	if len(names) == 0 {
-		return "", fmt.Errorf("no migrations found in %s", dir)
+		return "", fmt.Errorf("no migrations found in %s", migrationsDir())
 	}
 
-	// Take the max over all files, comparing by (length, lexicographic) so a
-	// short non-timestamp name like "9_hotfix" cannot beat a 14-digit
-	// timestamp: lexicographic "9" > "2" would otherwise win. All real
-	// migrations are 14 digits, where this coincides with numeric order.
-	var newest string
-	for _, name := range names {
-		match := migrationVersion.FindStringSubmatch(filepath.Base(name))
-		if match == nil {
-			continue
-		}
-		if longerOrGreater(match[1], newest) {
-			newest = match[1]
-		}
+	// Glob sorts, and the fixed-width version prefix sorts the same way the
+	// filenames do -- the same assumption `make db-migrate` makes with
+	// `ls | sort | tail -1` -- so the last entry is the newest migration.
+	newest := names[len(names)-1]
+	match := migrationVersion.FindStringSubmatch(filepath.Base(newest))
+	if match == nil {
+		return "", fmt.Errorf("migration %q has no version prefix", filepath.Base(newest))
 	}
-	if newest == "" {
-		return "", fmt.Errorf("no versioned migrations in %s", dir)
-	}
-	return newest, nil
-}
-
-// longerOrGreater reports whether a sorts after b by (length, lexicographic).
-// Migration versions are zero-padded timestamps, so longer means newer across
-// widths and lexicographic decides within a width.
-func longerOrGreater(a, b string) bool {
-	if len(a) != len(b) {
-		return len(a) > len(b)
-	}
-	return a > b
+	return match[1], nil
 }

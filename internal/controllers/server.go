@@ -41,20 +41,15 @@ func StartServer(port int, dbFilepath string) error {
 	// absolutizes internally, but the session store below builds its own DSN
 	// from this string, so passing the raw relative value would have the app
 	// database opened twice under two different paths.
-	dbPath := db.ResolveDSN(dbFilepath)
-
-	database, err := db.InitDB(dbPath)
+	database, err := db.InitDB(dbFilepath)
 	if err != nil {
 		return fmt.Errorf("init db: %w", err)
 	}
 
-	// The session store builds its own DSN from the same path string, so it
-	// shares the spelling but not the connection settings: InitDB appends
-	// _foreign_keys/_busy_timeout/_txlock while the storage driver uses the
-	// bare path. Same file, asymmetric lock/timeout config. Pre-existing;
-	// only the spelling ambiguity is fixed here.
+	// The session store points at the same database file, using the same
+	// spelling so both connections name one file.
 	storage := sqlite3.New(sqlite3.Config{
-		Database: dbPath,
+		Database: dbFilepath,
 		Reset:    false, // Don't clear sessions on start
 	})
 
