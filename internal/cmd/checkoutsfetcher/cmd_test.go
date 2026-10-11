@@ -1942,7 +1942,7 @@ func Test_eventCheckoutLoop_windowsDisabled_ignoresWindows(t *testing.T) {
 func fetchCheckoutsCommand() *cli.Command {
 	return &cli.Command{
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "db-file", Value: "kids-checkin.db"},
+			db.DBFileFlag(),
 			&cli.DurationFlag{Name: "interval", Value: 3 * time.Second},
 			&cli.DurationFlag{Name: "event-update-interval", Value: 3 * time.Second},
 			&cli.DurationFlag{Name: "runtime", Value: 5 * time.Second},
@@ -1956,7 +1956,12 @@ func fetchCheckoutsCommand() *cli.Command {
 // panicking when the database cannot be initialized (bad path, permissions,
 // corrupt file).
 func Test_FetchCheckouts_dbInitFailure(t *testing.T) {
-	missingDB := filepath.Join(t.TempDir(), "does-not-exist", "kids-checkin.db")
+	// InitDB now mkdirs the parent, so a missing dir no longer fails. Use a
+	// parent that is a file: MkdirAll fails with "not a directory", which is
+	// the same class (bad path) the test exists to cover.
+	blocker := filepath.Join(t.TempDir(), "blocker")
+	require.NoError(t, os.WriteFile(blocker, []byte("x"), 0o644))
+	missingDB := filepath.Join(blocker, "kids-checkin.db")
 
 	cmd := fetchCheckoutsCommand()
 	require.NoError(t, cmd.Set("db-file", missingDB))
