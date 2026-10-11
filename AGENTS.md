@@ -181,16 +181,16 @@ This file guides coding agents working in this repo. Keep changes small, follow 
   creates a missing file but never a missing directory.
 
 ### Dev-only assets (debug tooling)
-- Dev/debug tools live in `internal/web/dev-assets/` and are served at `/static/dev/*` **only when `ENVIRONMENT=dev`** (via `static.IsDev()`); in production they 404 and are not embedded into the binary. See `internal/web/dev-assets/README.md`.
+- Dev/debug tools live in `internal/web/dev-assets/` and are served at `/static/dev/*` **only when `ENVIRONMENT=dev`** (via `static.IsDev()`, case-insensitive); in production they 404 and are not embedded into the binary. See `internal/web/dev-assets/README.md`.
 - `static.DevAssetsDir` resolves from `runtime.Caller`, which `-trimpath` rewrites
   to a module-relative path, so the candidate is verified before it is trusted and
   a walk up from the working directory backs it up.
   `internal/web/static/static_test.go` covers the walk. Without both,
   `TestReadDevAsset` fails under `go test -trimpath ./...` — a failure a plain
   `go test ./...` cannot see, which is why CI runs that pass.
-- **Never put a non-`*.test.js` file under `internal/web/static/`.** That
-  directory is embedded wholesale by `//go:embed *`, so a shared test helper
-  placed there ships in the production binary. Shared test support goes in
+- **Never put a shared JS test helper as a plain `.js` file under `internal/web/static/`.** That
+  directory is embedded wholesale by `//go:embed *`, so a shared helper
+  placed there ships in the production binary. Name shared helpers `*.test.js`, or put them in
   `test-support/` at the repository root, which is also in `.dockerignore`.
 - Add a new tool by dropping the file in `internal/web/dev-assets/` and referencing it from a page handler (inject the `<script>` tag in the page's HTML handler when `static.IsDev()`, mirroring the `checkoutsWeb` preview.js pattern).
 - Helpers: `static.DevAssetsDir`, `static.ReadDevAsset(filename)`, `static.IsDev()`.

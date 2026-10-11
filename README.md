@@ -21,8 +21,10 @@ The project is structured as a command-line application with commands:
 ```shell
 cp .env.example .env
 ```
-An empty `.env` is not enough: `.env.example` is where `ENVIRONMENT=dev` lives,
-and step 2 below needs it.
+An empty `.env` works for `make db-init` (`ENVIRONMENT=dev` is set inline by the
+target), but the file itself must exist: `godotenv` exits non-zero when `.env`
+is absent. Other targets read their configuration from it, so copying the
+example and filling it in remains step one.
 
 `LOGIN_PASSWORD_ADMIN` and `LOGIN_PASSWORD_USER` take bcrypt hashes, not
 plaintext. Generate one with the same `golang.org/x/crypto/bcrypt` the login
@@ -77,8 +79,9 @@ To rebuild one that already has schema, pass `FORCE=1`:
 ```shell
 make db-init FORCE=1
 ```
-`FORCE=1` drops every app table and starts over (keeps `fiber_storage` sessions), including any check-ins you have
-added since. Only pass it when you intend to discard them -- otherwise use
+`FORCE=1` removes the database file and rebuilds it from the snapshot,
+including any check-ins you have added since — and `fiber_storage` sessions
+go with the file, so developers are signed out. Only pass it when you intend to discard them -- otherwise use
 `make db-migrate` to apply new migrations to an existing database.
 3. In one terminal, start the checkout fetcher:
 ```shell
@@ -188,7 +191,7 @@ non-zero when `.env` is absent, and `.env` is gitignored.
 The project uses SQLite for its database. Database migrations are managed with the `migrate` tool.
 
 - **Resetting the database (empty schema):** `make db-reset`
-- **Building a development database (schema + reference topology):** `make db-init`. Fails if the database already has schema; `make db-init FORCE=1` drops and rebuilds it.
+- **Building a development database (schema + reference topology):** `make db-init`. Fails if the database already has schema; `make db-init FORCE=1` removes the file and rebuilds it.
 - **Running migrations:** `make db-migrate`
 - **Creating a new migration:** `make db-new-migration NAME=<migration_name>`
 
@@ -218,8 +221,7 @@ file. Move real data with `mkdir -p database && mv kids-checkin.db
 database/kids-checkin.db`, and pass `--db-file` explicitly (absolute path) in
 any service unit -- a relative default still resolves against the process CWD,
 so a wrong `WorkingDirectory` opens the wrong file. The binary logs the absolute
-path it opened and warns if `./kids-checkin.db` exists while the default is in
-effect. `make db-seed` was replaced by `make db-init`; old runbooks calling it
+path it opened. `make db-seed` was replaced by `make db-init`; old runbooks calling it
 now get an explicit error pointing at the new target.
 
 ### Production Migrations

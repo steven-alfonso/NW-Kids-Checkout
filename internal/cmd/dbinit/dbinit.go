@@ -18,6 +18,8 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
+	"time"
 
 	dbschema "kids-checkin/db"
 	"kids-checkin/internal/db"
@@ -86,13 +88,7 @@ func Commands() []*cli.Command {
 
 // Flags returns just the flags, for tests that drive Run directly.
 func Flags() []cli.Flag {
-	commands := Commands()
-	if len(commands) == 0 {
-		// Commands is a literal, so this cannot happen today. Indexing [0]
-		// without it would turn a future edit into a panic in a test helper.
-		return nil
-	}
-	return commands[0].Flags
+	return Commands()[0].Flags
 }
 
 func Run(ctx context.Context, cmd *cli.Command) error {
@@ -107,6 +103,17 @@ func Run(ctx context.Context, cmd *cli.Command) error {
 	dbFile := cmd.String("db-file")
 	force := cmd.Bool("force")
 
+	// db-init builds a file. Memory and file: URIs have no file to remove on
+	// --force and nothing persists without it; refuse those plainly instead of
+	// seeding a throwaway database and reporting complete.
+	// Query params are not part of the filename: InitDB opens
+	// "data.db?_txlock=..." as file data.db, so strip them for the check (and
+	// for the --force Remove below).
+	filePath, _, _ := strings.Cut(dbFile, "?")
+	if filePath == "" || filePath == ":memory:" || strings.HasPrefix(filePath, "file:") {
+		return fmt.Errorf("db-init needs a file path, got %q", dbFile)
+	}
+
 	// Validate the fixture before touching the database: a broken fixture must
 	// not destroy a good dev DB via --force and then fail.
 	if err := validateFixtureBytes(fixtureJSON); err != nil {
@@ -119,14 +126,15 @@ func Run(ctx context.Context, cmd *cli.Command) error {
 	if err != nil {
 		return fmt.Errorf("init db: %w", err)
 	}
-	defer func() { _ = database.Close() }()
 
 	populated, err := hasSchema(ctx, database)
 	if err != nil {
+		_ = database.Close()
 		return err
 	}
 	switch {
 	case populated && !force:
+		_ = database.Close()
 		return fmt.Errorf("%s already has schema; re-run with --force to rebuild it", dbFile)
 	case populated:
 		log.Warn("db-init: rebuilding an existing database", slog.String("db_file", dbFile))
@@ -134,18 +142,26 @@ func Run(ctx context.Context, cmd *cli.Command) error {
 		// tables one by one: a hardcoded drop list goes stale when migrations
 		// add tables, while a removed file cannot collide with the schema.
 		// (Dev sessions in fiber_storage go with it; acceptable for a dev tool.)
+		// Query params are not part of the filename: InitDB opens
+		// "data.db?_txlock=..." as file data.db, so Remove must strip them.
+		// (Memory and file: URIs are rejected up front, so removePath here is
+		// always a real file.)
+		removePath, _, _ := strings.Cut(dbFile, "?")
 		if err := database.Close(); err != nil {
 			return fmt.Errorf("close db for rebuild: %w", err)
 		}
-		if err := os.Remove(dbFile); err != nil {
-			return fmt.Errorf("remove %s for rebuild: %w", dbFile, err)
+		if err := os.Remove(removePath); err != nil {
+			return fmt.Errorf("remove %s for rebuild: %w", removePath, err)
 		}
 		database, err = db.InitDB(dbFile)
 		if err != nil {
 			return fmt.Errorf("init db: %w", err)
 		}
-		defer func() { _ = database.Close() }()
 	}
+	// Single deferred close, registered after any reopen: it closes whichever
+	// DB is live at return, and a failed reopen returns before this line so no
+	// deferred Close ever runs on a nil handle.
+	defer func() { _ = database.Close() }()
 
 	if err := applySchema(ctx, database); err != nil {
 		return err
@@ -172,13 +188,12 @@ func Run(ctx context.Context, cmd *cli.Command) error {
 // which points at neither --force nor the real cause.
 func hasSchema(ctx context.Context, database *sql.DB) (bool, error) {
 	var n int
-	// fiber_storage (session store), schema_migrations (bookkeeping), and its
-	// version_unique index are not app schema: starting apiserver once creates
-	// fiber_storage, which must not make an otherwise empty file demand --force.
-	// The type filter keeps a standalone bookkeeping index from counting when
-	// its table is absent.
+	// fiber_storage (session store) and schema_migrations (bookkeeping) are not
+	// app schema: starting apiserver once creates fiber_storage, which must not
+	// make an otherwise empty file demand --force. The type filter already
+	// excludes indexes, so only tables, views, and triggers count.
 	err := database.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM sqlite_master WHERE type IN ('table', 'view', 'trigger') AND name NOT LIKE 'sqlite\_%' ESCAPE '\' AND name NOT IN ('fiber_storage', 'schema_migrations', 'version_unique')`).Scan(&n)
+		`SELECT COUNT(*) FROM sqlite_master WHERE type IN ('table', 'view', 'trigger') AND name NOT LIKE 'sqlite\_%' ESCAPE '\' AND name NOT IN ('fiber_storage', 'schema_migrations')`).Scan(&n)
 	if err != nil {
 		return false, fmt.Errorf("inspect existing schema: %w", err)
 	}
@@ -280,7 +295,10 @@ func validateFixture(f fixture) error {
 			return fmt.Errorf("duplicate event name %q (events.name is UNIQUE)", e.Name)
 		}
 		seenEventName[e.Name] = true
-		if e.LocationGroup != nil && *e.LocationGroup != "" && !seenGroups[*e.LocationGroup] {
+		if e.LocationGroup != nil && *e.LocationGroup == "" {
+			return fmt.Errorf("event %q has empty location_group (use null, not \"\")", e.Name)
+		}
+		if e.LocationGroup != nil && !seenGroups[*e.LocationGroup] {
 			return fmt.Errorf("event %q references unknown location group %q", e.Name, *e.LocationGroup)
 		}
 	}
@@ -334,6 +352,20 @@ func validateFixture(f fixture) error {
 		}
 		if !seenEventKey[w.Event] {
 			return fmt.Errorf("check window references unknown event %q", w.Event)
+		}
+		// Mirror the repo's range checks so a typo fails here, before the
+		// --force remove, rather than late in the fixture transaction.
+		if w.StartDayOfWeek < 1 || w.StartDayOfWeek > 7 || w.EndDayOfWeek < 1 || w.EndDayOfWeek > 7 {
+			return fmt.Errorf("check window for event %q: day of week must be between 1 and 7", w.Event)
+		}
+		if _, err := time.Parse("15:04", w.StartTime); err != nil {
+			return fmt.Errorf("check window for event %q: invalid start_time %q, expected HH:MM", w.Event, w.StartTime)
+		}
+		if _, err := time.Parse("15:04", w.EndTime); err != nil {
+			return fmt.Errorf("check window for event %q: invalid end_time %q, expected HH:MM", w.Event, w.EndTime)
+		}
+		if _, err := time.LoadLocation(w.Timezone); err != nil {
+			return fmt.Errorf("check window for event %q: invalid timezone %q", w.Event, w.Timezone)
 		}
 	}
 	return nil

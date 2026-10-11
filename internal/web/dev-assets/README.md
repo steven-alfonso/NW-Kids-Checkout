@@ -8,7 +8,7 @@ served, referenced, or embedded in production**.
 - Any file here is served at `GET /static/dev/<filename>`.
 - The `internal/web/static` package exposes three helpers:
 
-  - `IsDev()` — true only when the `ENVIRONMENT` env var is `dev`.
+  - `IsDev()` — true when the `ENVIRONMENT` env var is `dev` (case-insensitive, trimmed).
   - `DevAssetsDir` — the absolute path to this directory, resolved from the
     package source so it works regardless of the process working directory.
   - `ReadDevAsset(filename)` — reads one file from this directory and guards
@@ -65,8 +65,9 @@ It:
 
 - blocks the 3-second auto-refresh from overwriting the demo data
   (`API_CALL_BLOCKS.fetchChildrenData = true`),
-- seeds four checkouts: green (0 min), a yellow step at 3.9 min, a red step
-  at 7.9 min (both step to the next color within ~1s so the `duration-1000`
+- seeds ten checkouts (five Planning Center rows mirrored by five manual rows):
+  fresh (0 min), an edge step at 3.9 min, an overdue step at 6 min, a late step
+  at 7.9 min (steps change color within ~1s so the `duration-1000`
   transition is visible), and a confirmed one (gray),
 - re-renders the list.
 

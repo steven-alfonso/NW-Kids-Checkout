@@ -37,10 +37,12 @@ import (
 )
 
 func StartServer(port int, dbFilepath string) error {
-	// Resolve the path once and use one spelling for both connections. InitDB
-	// absolutizes internally, but the session store below builds its own DSN
-	// from this string, so passing the raw relative value would have the app
-	// database opened twice under two different paths.
+	// One spelling for both connections: InitDB only logs the absolute path
+	// and opens the given spelling, so trim once here. Otherwise a padded
+	// path would open the trimmed file for the app database and a spaced
+	// filename for the session store.
+	dbFilepath = strings.TrimSpace(dbFilepath)
+
 	database, err := db.InitDB(dbFilepath)
 	if err != nil {
 		return fmt.Errorf("init db: %w", err)

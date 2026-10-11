@@ -95,6 +95,11 @@ func ensureParentDir(dsn string) error {
 	if path == "" {
 		return nil
 	}
+	// A file: URI is handled by the driver, not the filesystem: creating
+	// ./file:/tmp/ in the working directory would be junk.
+	if strings.HasPrefix(path, "file:") {
+		return nil
+	}
 	dir := filepath.Dir(path)
 	if dir == "" || dir == "." {
 		return nil

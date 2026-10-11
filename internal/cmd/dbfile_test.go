@@ -22,7 +22,9 @@ func TestDefaultDBFileMatchesMakefile(t *testing.T) {
 	require.NoError(t, err)
 	// All assignments are checked: make uses last-wins, so checking only the
 	// first would stay green while `make db-reset` writes a second value.
-	m := regexp.MustCompile(`(?m)^\s*KIDS_CHECKIN_DB_FILE\s*[:?+]?=\s*(\S+)`)
+	// Target-specific assignments (`db-reset: VAR = ...`) are out of scope:
+	// the database path must stay a global.
+	m := regexp.MustCompile(`(?m)^\s*(?:export\s+)?KIDS_CHECKIN_DB_FILE\s*[:?+]?=\s*(\S+)`)
 	all := m.FindAllSubmatch(mk, -1)
 	require.NotEmpty(t, all, "KIDS_CHECKIN_DB_FILE not found in Makefile")
 	for _, got := range all {

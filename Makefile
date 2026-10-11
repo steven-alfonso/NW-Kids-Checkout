@@ -16,9 +16,7 @@ help:
 # development database with the Planning Center reference topology use
 # `make db-init` instead.
 #
-# The mkdir matters: database/ is gitignored, so it does not exist on a fresh
-# clone and both `touch` and sqlite3 would otherwise fail with a bare
-# "no such file or directory".
+# The mkdir matters: database/ is gitignored and absent on a fresh clone.
 db-reset:
 	mkdir -p $(dir $(KIDS_CHECKIN_DB_FILE)) && \
 	rm -f $(KIDS_CHECKIN_DB_FILE) && \
@@ -33,9 +31,8 @@ db-reset:
 # The snapshot dumps raw sqlite_master text (not .schema) so db/structure.sql
 # is byte-identical regardless of the sqlite3 CLI version.
 #
-# The mkdir matters for the same reason it does in db-reset: database/ is
-# gitignored, so on a fresh clone the migrate step at the end of this recipe
-# would otherwise fail with a bare "unable to open database file".
+# The mkdir matters (see db-reset): database/ is gitignored and absent on a
+# fresh clone.
 db-migrate:
 	@mkdir -p $(dir $(KIDS_CHECKIN_DB_FILE)) && \
 	tmpdb=$$(mktemp) && \
@@ -126,9 +123,8 @@ db-seed:
 	$(error `make db-seed` was replaced by `make db-init` (schema + reference topology from fixture.json); run `make db-init` instead)
 
 .PHONY: random-data
-# The mkdir matters for the same reason it does in db-reset and db-init:
-# database/ is gitignored, so it is absent on a fresh clone and sqlite creates
-# a missing file but never a missing directory.
+# The mkdir matters (see db-reset): sqlite creates a missing file but never a
+# missing directory.
 random-data:
 	mkdir -p $(dir $(KIDS_CHECKIN_DB_FILE)) && \
 	go tool godotenv go run ./cmd/random-data --db-file $(KIDS_CHECKIN_DB_FILE)
