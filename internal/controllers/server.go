@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -36,7 +37,7 @@ import (
 	"github.com/gofiber/storage/sqlite3"
 )
 
-func StartServer(port int, dbFilepath string) error {
+func StartServer(ctx context.Context, port int, dbFilepath string) error {
 	// One spelling for both connections: InitDB only logs the absolute path
 	// and opens the given spelling, so trim once here. Otherwise a padded
 	// path would open the trimmed file for the app database and a spaced
@@ -185,6 +186,14 @@ func StartServer(port int, dbFilepath string) error {
 	}))
 
 	slog.Info("server listening", slog.Int("port", port))
+
+	// Without this, a signal-aware root context would be swallowed: signal
+	// delivery disables the default kill behavior, so Ctrl-C would hang a
+	// server that never watches ctx. Shutting down Fiber lets Listen return.
+	go func() {
+		<-ctx.Done()
+		_ = app.Shutdown()
+	}()
 
 	err = app.Listen(":" + strconv.Itoa(port))
 	if err != nil {

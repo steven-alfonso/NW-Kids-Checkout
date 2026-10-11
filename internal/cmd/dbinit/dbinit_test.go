@@ -3,7 +3,6 @@
 package dbinit_test
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -37,7 +36,7 @@ func run(t *testing.T, env map[string]string, args ...string) error {
 		Flags:  dbinit.Flags(),
 		Action: dbinit.Run,
 	}
-	return cmd.Run(context.Background(), append([]string{"prog"}, args...))
+	return cmd.Run(t.Context(), append([]string{"prog"}, args...))
 }
 
 // devEnv is the environment `make db-init` runs under.

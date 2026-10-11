@@ -127,4 +127,4 @@ db-seed:
 # missing directory.
 random-data:
 	mkdir -p $(dir $(KIDS_CHECKIN_DB_FILE)) && \
-	go tool godotenv go run ./cmd/random-data --db-file $(KIDS_CHECKIN_DB_FILE)
+	go tool godotenv go run ./cmd/randomdata --db-file $(KIDS_CHECKIN_DB_FILE)

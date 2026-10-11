@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"math/rand"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"kids-checkin/internal/db"
@@ -37,7 +39,12 @@ func main() {
 		Action: run,
 	}
 
-	if err := cmd.Run(context.Background(), os.Args); err != nil {
+	// Signal-aware root context so Ctrl-C cancels in-flight seeding instead
+	// of leaving a half-written batch with no way to stop it.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	if err := cmd.Run(ctx, os.Args); err != nil {
 		slog.Error("random-data failed", slog.String("error", err.Error()))
 		os.Exit(1)
 	}
