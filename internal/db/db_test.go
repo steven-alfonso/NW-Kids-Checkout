@@ -191,3 +191,18 @@ func TestInitDB_logsFileURIVerbatim(t *testing.T) {
 
 	assert.Contains(t, logs.String(), "file::memory:?cache=shared")
 }
+
+func TestInitDB_logsMemoryVerbatim(t *testing.T) {
+	var logs bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	database, err := InitDB(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = database.Close() })
+
+	assert.Contains(t, logs.String(), ":memory:")
+	assert.NotContains(t, logs.String(), string(filepath.Separator)+":memory:",
+		"must not resolve :memory: against the working directory")
+}

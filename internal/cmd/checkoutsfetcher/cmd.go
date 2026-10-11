@@ -184,7 +184,10 @@ var errForceExitNow = errors.New("second shutdown signal received; exiting immed
 // in-flight polls can complete (see shouldSwallowLoopError). Deriving
 // WithCancel/WithTimeout directly from the signal-aware parent would let the
 // first Ctrl-C cancel every in-flight query instead of draining, so detach
-// first and let the parent's deadline/values flow through without its cancel.
+// first. Values flow through; cancellation and deadline do not —
+// context.WithoutCancel strips both, which is what keeps a parent deadline
+// from preempting the drain. The non-service timeout below is the only deadline
+// on the work ctx.
 func fetcherContext(parent context.Context, serviceMode bool, runtime time.Duration) (context.Context, context.CancelFunc) {
 	detached := context.WithoutCancel(parent)
 	if serviceMode {

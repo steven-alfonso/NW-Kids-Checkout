@@ -48,6 +48,19 @@ func TestDefaultDBFileNoTargetSpecificOverride(t *testing.T) {
 		"database path must stay a Makefile global; a target-specific override diverges silently")
 }
 
+// dbFileLinePattern matches a line that sets $DB_FILE. Case-sensitive: Unix
+// env vars are case-sensitive, so a lowercase db_file= line sets nothing.
+// Callers pass a TrimSpace'd line: godotenv trims leading whitespace, so an
+// indented line counts too.
+var dbFileLinePattern = regexp.MustCompile(`^(export\s+)?DB_FILE\s*=`)
+
+// dbFileLineSetsDBFile reports whether an .env.example line sets $DB_FILE.
+// Single definition of the guard so the case-sensitivity test below exercises
+// the same pattern the file scan uses, instead of a copy that could drift.
+func dbFileLineSetsDBFile(line string) bool {
+	return dbFileLinePattern.MatchString(strings.TrimSpace(line))
+}
+
 // .env is gitignored, so a DB_FILE line there is an invisible third copy of the
 // path that nothing checks. It was the copy that would have kept the old,
 // wrong default alive on any machine set up before the fix. .env.example is
@@ -66,18 +79,17 @@ func TestEnvExampleDoesNotPinDBFile(t *testing.T) {
 		// godotenv trims leading whitespace, so an indented line counts too.
 		// Case-sensitive: Unix env vars are case-sensitive, so a lowercase
 		// db_file= line would not set $DB_FILE and must not fail this test.
-		assert.NotRegexp(t, `^(export\s+)?DB_FILE\s*=`, strings.TrimSpace(line),
+		assert.False(t, dbFileLineSetsDBFile(line),
 			".env.example line %d must not set DB_FILE; the default already matches the Makefile", i+1)
 	}
 }
 
-// TestEnvExamplePattern_isCaseSensitive pins that the guard above only fires
-// on the exact variable name. A case-insensitive pattern would reject a
-// harmless lowercase line that sets nothing.
-func TestEnvExamplePattern_isCaseSensitive(t *testing.T) {
-	pat := `^(export\s+)?DB_FILE\s*=`
-	assert.NotRegexp(t, pat, "db_file=/tmp/other.db")
-	assert.NotRegexp(t, pat, "  db_file = /tmp/other.db")
-	assert.Regexp(t, pat, "DB_FILE=/tmp/other.db")
-	assert.Regexp(t, pat, "export DB_FILE=/tmp/other.db")
+func TestDBFileLineSetsDBFile(t *testing.T) {
+	assert.False(t, dbFileLineSetsDBFile("db_file=/tmp/other.db"))
+	assert.False(t, dbFileLineSetsDBFile("  db_file = /tmp/other.db"))
+	assert.True(t, dbFileLineSetsDBFile("DB_FILE=/tmp/other.db"))
+	assert.True(t, dbFileLineSetsDBFile("export DB_FILE=/tmp/other.db"))
+	assert.True(t, dbFileLineSetsDBFile("  DB_FILE = /tmp/other.db"),
+		"godotenv trims leading whitespace, so an indented line counts too")
+	assert.False(t, dbFileLineSetsDBFile("# DB_FILE=/tmp/other.db"))
 }

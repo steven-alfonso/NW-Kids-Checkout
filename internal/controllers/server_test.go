@@ -112,3 +112,16 @@ func TestStaticCacheControl(t *testing.T) {
 			"an unset ENVIRONMENT must not silently downgrade to dev caching")
 	})
 }
+
+func TestShouldSuppressListenError(t *testing.T) {
+	bindErr := errors.New("failed to listen: address already in use")
+	serveErr := errors.New("accept tcp: too many open files")
+
+	assert.False(t, shouldSuppressListenError(nil, true))
+	assert.False(t, shouldSuppressListenError(nil, false))
+	assert.False(t, shouldSuppressListenError(bindErr, true),
+		"a bind failure racing cancel must surface, not exit 0 with no server")
+	assert.False(t, shouldSuppressListenError(bindErr, false))
+	assert.True(t, shouldSuppressListenError(serveErr, true))
+	assert.False(t, shouldSuppressListenError(serveErr, false))
+}

@@ -39,10 +39,10 @@ func InitDB(dataSourceName string) (*sql.DB, error) {
 	// log line instead of surfacing as a query error later. The open below
 	// uses the given spelling; both name the same file. Strip query params
 	// before resolving (a DSN like "db.sqlite?cache=shared" names db.sqlite)
-	// and leave file: URIs alone (they are driver-handled, not file paths).
+	// and leave file: URIs and :memory: alone (driver-handled, not file paths).
 	logPath, _, _ := strings.Cut(dataSourceName, "?")
 	var abs string
-	if strings.HasPrefix(logPath, "file:") {
+	if strings.HasPrefix(logPath, "file:") || logPath == ":memory:" {
 		abs = dataSourceName
 	} else {
 		var err error

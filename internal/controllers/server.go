@@ -201,7 +201,8 @@ func StartServer(ctx context.Context, port int, dbFilepath string) error {
 	// shutdownInitiated records that WE called Shutdown in response to ctx.
 	// Testing ctx.Err() here instead would swallow any Listen failure that
 	// races a cancel (e.g. port already in use + Ctrl-C at the same moment)
-	// and exit 0 with no server running.
+	// and exit 0 with no server running. Bind failures bypass the flag
+	// entirely (see shouldSuppressListenError).
 	var shutdownInitiated atomic.Bool
 	go func() {
 		select {
@@ -217,7 +218,7 @@ func StartServer(ctx context.Context, port int, dbFilepath string) error {
 		// A context-driven shutdown is a clean exit, not a failure:
 		// Listen returns an error after Shutdown, which must not turn
 		// every Ctrl-C into exit 1 in main.
-		if shutdownInitiated.Load() {
+		if shouldSuppressListenError(err, shutdownInitiated.Load()) {
 			return nil
 		}
 		return err
@@ -225,6 +226,32 @@ func StartServer(ctx context.Context, port int, dbFilepath string) error {
 
 	slog.Info("server stopped")
 	return nil
+}
+
+// shouldSuppressListenError reports whether a Listen error is a clean
+// context-driven shutdown rather than a real failure.
+//
+// Bind failures ("failed to listen: ...", Fiber listen.go) happen before Serve
+// and must always surface: suppressing one that races ctx cancel exits 0 with
+// no server running. Clean shutdown returns nil from Serve (fasthttp), so it
+// never reaches here as an error.
+func shouldSuppressListenError(err error, shutdownInitiated bool) bool {
+	if err == nil {
+		return false
+	}
+	if isBindError(err) {
+		return false
+	}
+	return shutdownInitiated
+}
+
+// isBindError reports whether err is a listener bind failure, which Fiber
+// prefixes with "failed to listen:" (listen.go) before Serve starts.
+func isBindError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.HasPrefix(err.Error(), "failed to listen")
 }
 
 // staticCacheControl returns the Cache-Control header for a file served out of
