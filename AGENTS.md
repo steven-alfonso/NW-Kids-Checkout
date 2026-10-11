@@ -53,6 +53,8 @@ This file guides coding agents working in this repo. Keep changes small, follow 
 
 - Entry point: `main.go` calls `internal/cmd` to build the CLI.
 - CLI commands: `internal/cmd/*` (e.g., `apiserver`, `checkout-fetcher`).
+- Standalone mains live in `cmd/` (`randomdata`, `assets`): directory names are
+  Go paths, so no hyphens even when the make target keeps one (`make random-data`).
 - HTTP controllers: `internal/controllers/*` (versioned packages like `checkinv1`).
 - Repos and DB access: `internal/repo/*` using `squirrel` and `context.Context`.
 - Two packages are named `db`: the Go package `internal/db/*` (DB init, the
@@ -92,6 +94,10 @@ This file guides coding agents working in this repo. Keep changes small, follow 
 - Pass `context.Context` to repo methods and DB queries (pattern in `internal/repo/*`).
 - Use `t.Context()` in tests for DB operations.
 - Avoid `context.Background()` inside request handlers unless you explicitly need to decouple from the request.
+- Entrypoints (`main.go`, `cmd/*`) run under `signal.NotifyContext`, never bare
+  `Background`. `StartServer` takes that ctx and shuts Fiber down on cancel.
+  The checkout-fetcher manages SIGINT/SIGTERM itself for its two-stage
+  graceful drain — do not add a second signal handler around it.
 
 ### Time handling
 - Store timestamps in UTC when persisting to DB (`time.Now().UTC()`), as seen in repos.
@@ -156,6 +162,8 @@ This file guides coding agents working in this repo. Keep changes small, follow 
   definition; it was removed as overbuilt — a cross-file const or a func-param
   handoff walked through it, while legitimate refactors tripped it. The two
   tests above plus review are the guard now.)
+- A command in a separate `main` package (today `cmd/randomdata`) is invisible
+  to any tree walk: mount `db.DBFileFlag()` there too, by hand.
 
 ### Schema
 - Migrations are applied by the `migrate` CLI, **not** by the application
@@ -173,12 +181,14 @@ This file guides coding agents working in this repo. Keep changes small, follow 
   and sets `ENVIRONMENT=dev` so the target does not depend on `.env` carrying
   the right value. It still requires a `.env` file to exist -- `godotenv` exits
   non-zero without one -- so `cp .env.example .env` remains step one.
-  `make db-init FORCE=1` passes `--force` to rebuild.
+  `make db-init FORCE=1` passes `--force` to rebuild: the file is removed and
+  recreated from the snapshot, so `fiber_storage` sessions go with it.
 - Its tests are behind the same tag, so `make test` runs `-tags dev ./...` as
   well; without that, `internal/cmd/dbinit` is skipped entirely.
-- `make db-init` and `make db-reset` both `mkdir -p` the database directory.
-  `database/` is gitignored, so it is absent on a fresh clone and sqlite3
-  creates a missing file but never a missing directory.
+- Every target touching the database file `mkdir -p`s its parent, and
+  `db.InitDB` does too for direct binary runs. `database/` is gitignored, so
+  it is absent on a fresh clone and sqlite3 creates a missing file but never
+  a missing directory.
 
 ### Dev-only assets (debug tooling)
 - Dev/debug tools live in `internal/web/dev-assets/` and are served at `/static/dev/*` **only when `ENVIRONMENT=dev`** (via `static.IsDev()`, case-insensitive); in production they 404 and are not embedded into the binary. See `internal/web/dev-assets/README.md`.
