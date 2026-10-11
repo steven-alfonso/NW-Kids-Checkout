@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strings"
 )
 
 // migrationsDir is the repository's db/migrations directory.
@@ -27,10 +28,9 @@ func migrationsDir() string {
 		}
 	}
 	if wd, err := os.Getwd(); err == nil {
-		dir := wd
-		for {
+		for dir := wd; ; {
 			candidate := filepath.Join(dir, "db", "migrations")
-			if st, err := os.Stat(candidate); err == nil && st.IsDir() {
+			if st, err := os.Stat(candidate); err == nil && st.IsDir() && isRepoRoot(dir) {
 				return candidate
 			}
 			parent := filepath.Dir(dir)
@@ -39,8 +39,23 @@ func migrationsDir() string {
 			}
 			dir = parent
 		}
+		// No verified tree. Do not fall back to a CWD-relative guess: under
+		// -trimpath runtime.Caller is module-relative and unverifiable, so a
+		// relative guess would stamp from whatever db/migrations happens to
+		// sit near the working directory. Fail loudly instead.
+		return ""
 	}
 	return filepath.Join("db", "migrations")
+}
+
+// isRepoRoot reports whether dir is this module's root, so the Getwd walk-up
+// cannot mistake an unrelated directory's db/migrations for this repo's tree.
+func isRepoRoot(dir string) bool {
+	raw, err := os.ReadFile(filepath.Join(dir, "go.mod"))
+	if err != nil {
+		return false
+	}
+	return strings.HasPrefix(strings.TrimSpace(string(raw)), "module kids-checkin")
 }
 
 // migrationVersion matches the golang-migrate version prefix of a migration
@@ -56,12 +71,16 @@ var migrationVersion = regexp.MustCompile(`^(\d+)_`)
 // replaying every migration against a database already built from the current
 // schema snapshot.
 func LatestMigrationVersion() (string, error) {
-	names, err := filepath.Glob(filepath.Join(migrationsDir(), "*.up.sqlite"))
+	dir := migrationsDir()
+	if dir == "" {
+		return "", fmt.Errorf("no verified db/migrations found: run db-init from the repository root")
+	}
+	names, err := filepath.Glob(filepath.Join(dir, "*.up.sqlite"))
 	if err != nil {
 		return "", fmt.Errorf("list migrations: %w", err)
 	}
 	if len(names) == 0 {
-		return "", fmt.Errorf("no migrations found in %s", migrationsDir())
+		return "", fmt.Errorf("no migrations found in %s", dir)
 	}
 
 	// Glob sorts, and the fixed-width version prefix sorts the same way the

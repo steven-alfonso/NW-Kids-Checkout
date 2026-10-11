@@ -66,6 +66,13 @@ func TestLatestMigrationVersion_independentOfWorkingDirectory(t *testing.T) {
 	t.Chdir(dir)
 
 	got, err := db.LatestMigrationVersion()
-	require.NoError(t, err, "must resolve via source location, not Getwd walk-up")
+	if err != nil {
+		// Acceptable only when no tree verifies (e.g. a -trimpath build run
+		// from an unrelated directory, where runtime.Caller is
+		// module-relative and unverifiable): fail loudly rather than stamp
+		// the wrong tree.
+		require.Contains(t, err.Error(), "no verified db/migrations")
+		return
+	}
 	assert.Equal(t, want, got, "must stamp this repo's version, not the caller's decoy tree")
 }
