@@ -14,13 +14,14 @@ This file guides coding agents working in this repo. Keep changes small, follow 
 
 ### Database tasks
 - Reset DB (empty schema): `make db-reset`
+- Build dev DB (schema + Planning Center reference topology): `make db-init`
 - Run migrations: `make db-migrate`
 - Create migration: `make db-new-migration NAME=<migration_name>`
 - Seed DB: `make db-seed`
 - Add random per-visit check-in data: `make random-data`
 
 ### Tests
-- Run all tests: `make test` (runs `go test ./...` + `npm test` via godotenv)
+- Run all tests: `make test` (runs `go test ./...` + `-tags dev ./...` + `npm test` via godotenv)
 - CI runs `go test` directly rather than through `make test`: godotenv exits
   non-zero when `.env` is absent, and it is gitignored. No test reads a real
   `.env`; the ones that care about a variable set it with `t.Setenv`.
@@ -164,9 +165,23 @@ This file guides coding agents working in this repo. Keep changes small, follow 
 ### Schema
 - Migrations are applied by the `migrate` CLI, **not** by the application
   binary. `db/structure.sql` is the snapshot `make db-migrate` generates from
-  them; the test database loads that snapshot via the embedded
+  them; the test database and `make db-init` load that snapshot via the embedded
   `db.Schema` (`db/db.go`).
 - `db/structure_test.go` fails if the snapshot drifts from the migrations.
+
+### Dev-only commands
+- `make db-init` builds a development database (schema + the real Planning
+  Center reference topology in `internal/cmd/dbinit/fixture.json`).
+- The `db-init` command is behind the `//go:build dev` tag, so it is absent from
+  production binaries, and it refuses to run unless `static.IsDev()`. A new
+  dev-only command should do both. `make db-init` applies `-tags dev` itself,
+  and sets `ENVIRONMENT=dev` so the target does not depend on `.env` carrying
+  the right value. It still requires a `.env` file to exist -- `godotenv` exits
+  non-zero without one -- so `cp .env.example .env` remains step one.
+  `make db-init FORCE=1` passes `--force` to rebuild: the file is removed and
+  recreated from the snapshot, so `fiber_storage` sessions go with it.
+- Its tests are behind the same tag, so `make test` runs `-tags dev ./...` as
+  well; without that, `internal/cmd/dbinit` is skipped entirely.
 - Every target touching the database file `mkdir -p`s its parent, and
   `db.InitDB` does too for direct binary runs. `database/` is gitignored, so
   it is absent on a fresh clone and sqlite3 creates a missing file but never

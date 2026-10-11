@@ -22,6 +22,7 @@ test-support/
 
 # Build artifacts
 bin/kids-checkin
+/kids-checkin
 
 # IDE and OS files
 .vscode/
@@ -34,6 +35,3 @@ Thumbs.db
 
 # air live reload
 tmp
-
-# Seed database used for testing
-seed

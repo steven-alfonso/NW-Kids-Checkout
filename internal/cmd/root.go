@@ -13,8 +13,12 @@ import (
 )
 
 func NewCommand() *cli.Command {
+	// devCommands() is empty unless built with -tags dev, so the dev-only
+	// commands are absent from production binaries.
+	commands := append([]*cli.Command{}, devCommands()...)
+
 	return &cli.Command{
-		Commands: []*cli.Command{
+		Commands: append(commands, []*cli.Command{
 			{
 				Name:  "apiserver",
 				Usage: "Starts the API server",
@@ -71,6 +75,6 @@ func NewCommand() *cli.Command {
 				Usage:    "Commands to manage checkins",
 				Commands: checkins.Commands,
 			},
-		},
+		}...),
 	}
 }

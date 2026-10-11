@@ -13,7 +13,8 @@ help:
 
 .PHONY: db-reset
 # Drops and recreates an empty database with the current schema. For a
-# development database with the reference topology use `make db-seed` after it.
+# development database with the Planning Center reference topology use
+# `make db-init` instead.
 #
 # The mkdir matters: database/ is gitignored and absent on a fresh clone.
 db-reset:
@@ -78,17 +79,48 @@ checkout-fetcher: build
 	go tool godotenv $(BIN_PATH) checkout-fetcher --use-check-windows --service
 
 .PHONY: test
+# Both tag sets are run. The dev-tagged packages hold every test for the
+# dev-only db-init command; without -tags dev those packages are skipped
+# entirely, which is how a few hundred lines of dbinit tests went unrun.
 test:
 	go tool godotenv go test ./...
+	go tool godotenv go test -tags dev ./...
 	npm test
 
-.PHONY: db-seed
-# Seeds the reference topology from the committed fixture. The database path
-# is passed explicitly so this writes the same file the Makefile and the
-# binary default to; bin/db-seed takes it as $1 with $DB_FILE as fallback.
-db-seed:
+.PHONY: db-init
+# Builds a development database: schema, migration stamp, and the Planning
+# Center reference topology. The db-init command only exists under the `dev`
+# build tag and refuses to run unless ENVIRONMENT=dev, so the tag is applied
+# here rather than left to the caller to remember.
+#
+# This replaces the old `make db-seed`, which shelled out to a checked-in bash
+# script (bin/db-seed) and a committed sqlite fixture (seed/seed.db). The
+# topology now lives in internal/cmd/dbinit/fixture.json and is applied through
+# parameterized statements, so it can no longer drift from the schema.
+#
+# Use `make random-data` afterwards for per-visit check-in data.
+#
+# ENVIRONMENT=dev is set here so this target does not depend on .env having
+# been filled in with the right value: the command refuses to run without it,
+# and db-init should not be the thing that breaks when ENVIRONMENT was edited,
+# emptied, or dropped. This does NOT make the target work without a .env file --
+# the godotenv below exits non-zero when .env is absent, so the README's
+# `cp .env.example .env` is still step one.
+#
+# --force is opt-in via `make db-init FORCE=1` so that rebuilding an existing
+# database is possible without hand-typing the go run invocation. Only 1/true/yes
+# count (case-sensitive; TRUE/True/YES take the safe non-force path) --
+# `FORCE=0` must not rebuild.
+db-init:
 	mkdir -p $(dir $(KIDS_CHECKIN_DB_FILE)) && \
-	go tool godotenv ./bin/db-seed $(KIDS_CHECKIN_DB_FILE)
+	ENVIRONMENT=dev go tool godotenv go run -tags dev . db-init \
+		--db-file $(KIDS_CHECKIN_DB_FILE) $(if $(filter 1 true yes,$(FORCE)),--force,)
+
+# Old entry point removed in favor of db-init. Fail loudly rather than
+# "No rule to make target" so runbooks referencing the old name learn the new one.
+.PHONY: db-seed
+db-seed:
+	$(error `make db-seed` was replaced by `make db-init` (schema + reference topology from fixture.json); run `make db-init` instead)
 
 .PHONY: random-data
 # The mkdir matters (see db-reset): sqlite creates a missing file but never a
