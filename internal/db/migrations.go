@@ -9,7 +9,11 @@ import (
 
 // migrationsDir is the repository's db/migrations directory, resolved from the
 // working directory. It is only used by the dev-only db-init command and its
-// tests, never in production.
+// tests, never in production (the symbol still ships in prod builds -- it has
+// no build tag -- but has no production caller). Run db-init from the repo
+// root (as `make db-init` does): resolving from getwd means a dev binary run
+// from an unrelated directory containing its own db/migrations would stamp
+// from the wrong tree.
 func migrationsDir() string {
 	if wd, err := os.Getwd(); err == nil {
 		dir := wd

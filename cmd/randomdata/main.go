@@ -34,6 +34,9 @@ func main() {
 				Name:  "count",
 				Usage: "number of records to create per type",
 				Value: 20,
+				// Deliberately flag-only: every sibling --db-file wires an env
+				// source, but a record count has no sensible environment
+				// default.
 			},
 		},
 		Action: run,

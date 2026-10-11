@@ -139,8 +139,8 @@ Delete old checkins (default 7 days):
 ```sh
 ./bin/kids-checkin checkins delete-old --age -168h
 # The database path comes from --db-file, then $DB_FILE, then the default
-# database/kids-checkin.db. It matches the Makefile, so `make db-reset` and a
-# bare `./bin/kids-checkin` always mean the same file.
+# database/kids-checkin.db. It matches the Makefile, so when run from the repo
+# root `make db-reset` and a bare `./bin/kids-checkin` always mean the same file.
 ```
 
 Seed preview data (DB equivalent of `internal/web/dev-assets/preview.js`):

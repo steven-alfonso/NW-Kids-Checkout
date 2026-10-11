@@ -190,13 +190,29 @@ func StartServer(ctx context.Context, port int, dbFilepath string) error {
 	// Without this, a signal-aware root context would be swallowed: signal
 	// delivery disables the default kill behavior, so Ctrl-C would hang a
 	// server that never watches ctx. Shutting down Fiber lets Listen return.
+	// The stop channel keeps this goroutine from leaking when the caller
+	// never cancels (e.g. context.Background() in a test).
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	stopCh := make(chan struct{})
+	defer close(stopCh)
 	go func() {
-		<-ctx.Done()
-		_ = app.Shutdown()
+		select {
+		case <-ctx.Done():
+			_ = app.Shutdown()
+		case <-stopCh:
+		}
 	}()
 
 	err = app.Listen(":" + strconv.Itoa(port))
 	if err != nil {
+		// A context-driven shutdown is a clean exit, not a failure:
+		// Listen returns an error after Shutdown, which must not turn
+		// every Ctrl-C into exit 1 in main.
+		if ctx.Err() != nil {
+			return nil
+		}
 		return err
 	}
 

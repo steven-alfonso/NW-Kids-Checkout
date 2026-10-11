@@ -211,3 +211,45 @@ func TestRun_createsTheDatabaseDirectory(t *testing.T) {
 
 	assert.FileExists(t, path, "db-init should have created the database directory and the file")
 }
+
+func TestRun_rejectsMemoryAndFileURIs(t *testing.T) {
+	for _, dsn := range []string{":memory:", "file::memory:?cache=shared", "file:/tmp/x.db", "file:x.db?cache=shared"} {
+		t.Run(dsn, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "should-not-exist.db")
+			err := run(t, devEnv, "--db-file", dsn)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "plain file path")
+			assert.NoFileExists(t, path)
+		})
+	}
+}
+
+func TestRun_trimsPaddedPath(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "dev.db")
+	initDBAt(t, "  "+path+"  ")
+
+	assert.FileExists(t, path, "padded --db-file must open the trimmed file")
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	for _, e := range entries {
+		assert.NotContains(t, e.Name(), " ", "must not create a spaced junk file in %s", dir)
+	}
+}
+
+func TestRun_forceWithQueryParams(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "dev.db")
+	initDBAt(t, path)
+
+	// InitDB opens "data.db?..." as file data.db, so --force must strip the
+	// query before removing.
+	require.NoError(t, run(t, devEnv, "--db-file", path+"?_txlock=immediate", "--force"))
+
+	database, err := db.InitDB(path)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = database.Close() })
+	var n int
+	require.NoError(t, database.QueryRow(`SELECT COUNT(*) FROM locations`).Scan(&n))
+	assert.Equal(t, 33, n)
+}

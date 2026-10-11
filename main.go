@@ -18,10 +18,7 @@ func main() {
 
 	// Signal-aware root context, shared by every command. Ctrl-C/Ctrl-Break
 	// cancels long-running work (seeding, fetcher polls, in-flight queries)
-	// instead of leaving it unresponsive. The checkout-fetcher additionally
-	// manages SIGINT/SIGTERM itself for its two-stage graceful drain; a parent
-	// cancel there only shortens a drain to a clean nil exit, and its lookback
-	// window re-fetches anything a shortened cycle skipped.
+	// instead of leaving it unresponsive.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 

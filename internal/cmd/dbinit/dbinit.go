@@ -100,18 +100,20 @@ func Run(ctx context.Context, cmd *cli.Command) error {
 		return fmt.Errorf("db-init creates development data and only runs when ENVIRONMENT=dev; refusing to run with ENVIRONMENT=%q", os.Getenv("ENVIRONMENT"))
 	}
 
-	dbFile := cmd.String("db-file")
+	dbFile := strings.TrimSpace(cmd.String("db-file"))
 	force := cmd.Bool("force")
 
-	// db-init builds a file. Memory and file: URIs have no file to remove on
-	// --force and nothing persists without it; refuse those plainly instead of
-	// seeding a throwaway database and reporting complete.
+	// db-init builds a plain file. Memory and file: URIs have no file to
+	// remove on --force and nothing persists without it; only plain paths
+	// are supported, so refuse those plainly instead of seeding a throwaway
+	// database and reporting complete.
 	// Query params are not part of the filename: InitDB opens
 	// "data.db?_txlock=..." as file data.db, so strip them for the check (and
-	// for the --force Remove below).
+	// for the --force Remove below). dbFile is trimmed once here so the
+	// remove path below names the same file InitDB opens.
 	filePath, _, _ := strings.Cut(dbFile, "?")
 	if filePath == "" || filePath == ":memory:" || strings.HasPrefix(filePath, "file:") {
-		return fmt.Errorf("db-init needs a file path, got %q", dbFile)
+		return fmt.Errorf("db-init needs a plain file path, got %q (file: URIs and :memory: are not supported)", dbFile)
 	}
 
 	// Validate the fixture before touching the database: a broken fixture must
@@ -153,6 +155,14 @@ func Run(ctx context.Context, cmd *cli.Command) error {
 		if err := os.Remove(removePath); err != nil {
 			return fmt.Errorf("remove %s for rebuild: %w", removePath, err)
 		}
+		// A crashed run or a WAL-mode database can leave -wal/-shm/-journal
+		// sidecars next to the main file; they must not survive next to the
+		// fresh DB.
+		for _, suffix := range []string{"-wal", "-shm", "-journal"} {
+			if err := os.Remove(removePath + suffix); err != nil && !os.IsNotExist(err) {
+				return fmt.Errorf("remove %s for rebuild: %w", removePath+suffix, err)
+			}
+		}
 		database, err = db.InitDB(dbFile)
 		if err != nil {
 			return fmt.Errorf("init db: %w", err)
@@ -163,6 +173,12 @@ func Run(ctx context.Context, cmd *cli.Command) error {
 	// deferred Close ever runs on a nil handle.
 	defer func() { _ = database.Close() }()
 
+	// Schema, stamp, and fixture are three separate commits: a mid-run failure
+	// (e.g. a fixture FK error) leaves schema+stamp applied with no topology,
+	// and the natural retry without --force is refused by hasSchema. That is
+	// deliberate and cheap to recover from -- re-run with --force, which
+	// rebuilds the deterministic fixture from scratch -- rather than hiding a
+	// half-built DB behind a converging retry.
 	if err := applySchema(ctx, database); err != nil {
 		return err
 	}
@@ -469,9 +485,20 @@ func applyFixture(ctx context.Context, database *sql.DB) error {
 	// logging len(f.Locations) would report rooms that are not there.
 	// Validation above rejects duplicates, so the counts must match the slices;
 	// a mismatch means a repo changed shape underneath the seeder.
+	// events.planning_center_id has only a non-unique index (idx_unique_pcid),
+	// so a duplicate there would still insert twice and pass the count check
+	// while mis-attaching rooms; the distinct check below closes that hole
+	// until a UNIQUE constraint models the natural key.
 	counts, err := fixtureCounts(ctx, tx)
 	if err != nil {
 		return err
+	}
+	var distinctEventPCID int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(DISTINCT planning_center_id) FROM events`).Scan(&distinctEventPCID); err != nil {
+		return fmt.Errorf("count distinct event planning_center_id: %w", err)
+	}
+	if distinctEventPCID != len(f.Events) {
+		return fmt.Errorf("seeded distinct event planning_center_id = %d, want %d; duplicate planning_center_id mis-attached rooms", distinctEventPCID, len(f.Events))
 	}
 	for _, want := range []struct {
 		name string

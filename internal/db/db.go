@@ -37,10 +37,19 @@ func InitDB(dataSourceName string) (*sql.DB, error) {
 
 	// Log the absolute path so a wrong working directory shows up in the first
 	// log line instead of surfacing as a query error later. The open below
-	// uses the given spelling; both name the same file.
-	abs, err := filepath.Abs(dataSourceName)
-	if err != nil {
+	// uses the given spelling; both name the same file. Strip query params
+	// before resolving (a DSN like "db.sqlite?cache=shared" names db.sqlite)
+	// and leave file: URIs alone (they are driver-handled, not file paths).
+	logPath, _, _ := strings.Cut(dataSourceName, "?")
+	var abs string
+	if strings.HasPrefix(logPath, "file:") {
 		abs = dataSourceName
+	} else {
+		var err error
+		abs, err = filepath.Abs(logPath)
+		if err != nil {
+			abs = logPath
+		}
 	}
 	slog.Info("initializing database connection", slog.String("dsn", abs))
 

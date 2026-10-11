@@ -2,6 +2,7 @@ package checkins
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -69,12 +70,14 @@ func deleteOlderThanCmd(ctx context.Context, cmd *cli.Command) error {
 	log.InfoContext(ctx, "deleted old checkins", slog.Int64("deleted_count", deletedCount), slog.Duration("older_than", olderThan))
 
 	manualCheckinRepo := manualcheckin.NewRepo(database)
-	deletedCount, err = manualCheckinRepo.RemoveOldManualCheckins(ctx, time.Now().Add(olderThan))
+	manualDeletedCount, err := manualCheckinRepo.RemoveOldManualCheckins(ctx, time.Now().Add(olderThan))
 	if err != nil {
-		return cli.Exit(err.Error(), 1)
+		// The checkins above are already committed (two non-transactional
+		// deletes), so include their count in the error path.
+		return cli.Exit(fmt.Sprintf("%s (deleted %d checkins before failing)", err.Error(), deletedCount), 1)
 	}
 
-	log.InfoContext(ctx, "deleted old manual checkins", slog.Int64("deleted_count", deletedCount), slog.Duration("older_than", olderThan))
+	log.InfoContext(ctx, "deleted old manual checkins", slog.Int64("deleted_count", manualDeletedCount), slog.Duration("older_than", olderThan))
 
 	return nil
 }
