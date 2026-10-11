@@ -2,6 +2,7 @@ package checkins
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -44,13 +45,13 @@ var Commands = []*cli.Command{
 func deleteOlderThanCmd(ctx context.Context, cmd *cli.Command) error {
 	olderThan := cmd.Duration("age")
 	if olderThan > 0 {
-		return cli.Exit("Age in the future is not allowed. Use a negative value", 1)
+		return fmt.Errorf("age in the future is not allowed: use a negative value")
 	}
 
 	dbFile := cmd.String("db-file")
 	database, err := db.InitDB(dbFile)
 	if err != nil {
-		panic(err)
+		return fmt.Errorf("init db: %w", err)
 	}
 
 	defer database.Close()
@@ -63,17 +64,20 @@ func deleteOlderThanCmd(ctx context.Context, cmd *cli.Command) error {
 	checkinRepo := checkin.NewRepo(database)
 	deletedCount, err := checkinRepo.RemoveOldCheckins(ctx, time.Now().Add(olderThan))
 	if err != nil {
-		return cli.Exit(err.Error(), 1)
+		return fmt.Errorf("remove old checkins: %w", err)
 	}
 
 	log.InfoContext(ctx, "deleted old checkins", slog.Int64("deleted_count", deletedCount), slog.Duration("older_than", olderThan))
 
 	manualCheckinRepo := manualcheckin.NewRepo(database)
-	deletedCount, err = manualCheckinRepo.RemoveOldManualCheckins(ctx, time.Now().Add(olderThan))
+	manualDeletedCount, err := manualCheckinRepo.RemoveOldManualCheckins(ctx, time.Now().Add(olderThan))
 	if err != nil {
+		// The checkins above are already committed (two non-transactional
+		// deletes), so include their count in the error path.
+		return fmt.Errorf("remove old manual checkins: %w (deleted %d checkins before failing)", err, deletedCount)
 	}
 
-	log.InfoContext(ctx, "deleted old manual checkins", slog.Int64("deleted_count", deletedCount), slog.Duration("older_than", olderThan))
+	log.InfoContext(ctx, "deleted old manual checkins", slog.Int64("deleted_count", manualDeletedCount), slog.Duration("older_than", olderThan))
 
 	return nil
 }

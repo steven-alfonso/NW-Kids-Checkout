@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"kids-checkin/internal/controllers/checkinv1"
@@ -36,12 +38,20 @@ import (
 	"github.com/gofiber/storage/sqlite3"
 )
 
-func StartServer(port int, dbFilepath string) error {
+func StartServer(ctx context.Context, port int, dbFilepath string) error {
+	// One spelling for both connections: InitDB only logs the absolute path
+	// and opens the given spelling, so trim once here. Otherwise a padded
+	// path would open the trimmed file for the app database and a spaced
+	// filename for the session store.
+	dbFilepath = strings.TrimSpace(dbFilepath)
+
 	database, err := db.InitDB(dbFilepath)
 	if err != nil {
-		panic(err)
+		return fmt.Errorf("init db: %w", err)
 	}
 
+	// The session store points at the same database file, using the same
+	// spelling so both connections name one file.
 	storage := sqlite3.New(sqlite3.Config{
 		Database: dbFilepath,
 		Reset:    false, // Don't clear sessions on start
@@ -178,13 +188,70 @@ func StartServer(port int, dbFilepath string) error {
 
 	slog.Info("server listening", slog.Int("port", port))
 
+	// Without this, a signal-aware root context would be swallowed: signal
+	// delivery disables the default kill behavior, so Ctrl-C would hang a
+	// server that never watches ctx. Shutting down Fiber lets Listen return.
+	// The stop channel keeps this goroutine from leaking when the caller
+	// never cancels (e.g. context.Background() in a test).
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	stopCh := make(chan struct{})
+	defer close(stopCh)
+	// shutdownInitiated records that WE called Shutdown in response to ctx.
+	// Testing ctx.Err() here instead would swallow any Listen failure that
+	// races a cancel (e.g. port already in use + Ctrl-C at the same moment)
+	// and exit 0 with no server running. Bind failures bypass the flag
+	// entirely (see shouldSuppressListenError).
+	var shutdownInitiated atomic.Bool
+	go func() {
+		select {
+		case <-ctx.Done():
+			shutdownInitiated.Store(true)
+			_ = app.Shutdown()
+		case <-stopCh:
+		}
+	}()
+
 	err = app.Listen(":" + strconv.Itoa(port))
 	if err != nil {
+		// A context-driven shutdown is a clean exit, not a failure:
+		// Listen returns an error after Shutdown, which must not turn
+		// every Ctrl-C into exit 1 in main.
+		if shouldSuppressListenError(err, shutdownInitiated.Load()) {
+			return nil
+		}
 		return err
 	}
 
 	slog.Info("server stopped")
 	return nil
+}
+
+// shouldSuppressListenError reports whether a Listen error is a clean
+// context-driven shutdown rather than a real failure.
+//
+// Bind failures ("failed to listen: ...", Fiber listen.go) happen before Serve
+// and must always surface: suppressing one that races ctx cancel exits 0 with
+// no server running. Clean shutdown returns nil from Serve (fasthttp), so it
+// never reaches here as an error.
+func shouldSuppressListenError(err error, shutdownInitiated bool) bool {
+	if err == nil {
+		return false
+	}
+	if isBindError(err) {
+		return false
+	}
+	return shutdownInitiated
+}
+
+// isBindError reports whether err is a listener bind failure, which Fiber
+// prefixes with "failed to listen:" (listen.go) before Serve starts.
+func isBindError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.HasPrefix(err.Error(), "failed to listen")
 }
 
 // staticCacheControl returns the Cache-Control header for a file served out of

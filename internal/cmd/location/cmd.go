@@ -2,6 +2,7 @@ package location
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 
 	"kids-checkin/internal/client/planningcenter"
@@ -32,7 +33,7 @@ func upsertLocation(ctx context.Context, cmd *cli.Command) error {
 	dbFile := cmd.String("db-file")
 	database, err := db.InitDB(dbFile)
 	if err != nil {
-		panic(err)
+		return fmt.Errorf("init db: %w", err)
 	}
 
 	defer database.Close()
