@@ -5,16 +5,27 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 )
 
-// migrationsDir is the repository's db/migrations directory, resolved from the
-// working directory. It is only used by the dev-only db-init command and its
-// tests, never in production (the symbol still ships in prod builds -- it has
-// no build tag -- but has no production caller). Run db-init from the repo
-// root (as `make db-init` does): resolving from getwd means a dev binary run
-// from an unrelated directory containing its own db/migrations would stamp
-// from the wrong tree.
+// migrationsDir is the repository's db/migrations directory.
+//
+// Resolution prefers this source file's compile-time location (two directories
+// up from internal/db), verified before it is trusted, so a dev binary run
+// from an unrelated directory still stamps from this repository's tree rather
+// than the caller's. A -trimpath build rewrites runtime.Caller to a
+// module-relative path, so the preferred candidate may point at nothing; the
+// Getwd walk-up below backs it up (same pattern as static.DevAssetsDir).
+// It is only used by the dev-only db-init command and its tests, never in
+// production (the symbol still ships in prod builds -- it has no build tag --
+// but has no production caller).
 func migrationsDir() string {
+	if _, thisFile, _, ok := runtime.Caller(0); ok {
+		candidate := filepath.Join(filepath.Dir(thisFile), "..", "..", "db", "migrations")
+		if st, err := os.Stat(candidate); err == nil && st.IsDir() {
+			return candidate
+		}
+	}
 	if wd, err := os.Getwd(); err == nil {
 		dir := wd
 		for {

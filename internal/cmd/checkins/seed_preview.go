@@ -2,6 +2,7 @@ package checkins
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -17,13 +18,13 @@ import (
 
 func seedPreviewCmd(ctx context.Context, cmd *cli.Command) error {
 	if !cmd.Bool("force") {
-		return cli.Exit("must pass --force to seed preview data (destructive operation)", 1)
+		return fmt.Errorf("must pass --force to seed preview data (destructive operation)")
 	}
 
 	dbFile := cmd.String("db-file")
 	database, err := db.InitDB(dbFile)
 	if err != nil {
-		return cli.Exit(err.Error(), 1)
+		return fmt.Errorf("init db: %w", err)
 	}
 	defer database.Close()
 
@@ -39,20 +40,20 @@ func seedPreviewCmd(ctx context.Context, cmd *cli.Command) error {
 
 	deletedCheckins, err := checkinRepo.DeleteAllCheckins(ctx)
 	if err != nil {
-		return cli.Exit(err.Error(), 1)
+		return fmt.Errorf("delete all checkins: %w", err)
 	}
 	log.InfoContext(ctx, "deleted checkins", slog.Int64("deleted_count", deletedCheckins))
 
 	deletedManual, err := manualRepo.DeleteAllManualCheckins(ctx)
 	if err != nil {
-		return cli.Exit(err.Error(), 1)
+		return fmt.Errorf("delete all manual checkins: %w", err)
 	}
 	log.InfoContext(ctx, "deleted manual checkins", slog.Int64("deleted_count", deletedManual))
 
 	// Ensure we have a location to attach checkins to (checkins.location_id is NOT NULL).
 	locationID, err := ensurePreviewLocation(ctx, locationRepo, eventRepo)
 	if err != nil {
-		return cli.Exit(err.Error(), 1)
+		return fmt.Errorf("ensure preview location: %w", err)
 	}
 
 	// Helper to compute checked_out_at offsets matching preview.js ago().
@@ -75,7 +76,7 @@ func seedPreviewCmd(ctx context.Context, cmd *cli.Command) error {
 	for _, c := range pcSeeds {
 		_, err := checkinRepo.CreateCheckin(ctx, c)
 		if err != nil {
-			return cli.Exit(err.Error(), 1)
+			return fmt.Errorf("create preview checkin: %w", err)
 		}
 	}
 	log.InfoContext(ctx, "seeded planning center checkins", slog.Int("count", len(pcSeeds)))
@@ -92,7 +93,7 @@ func seedPreviewCmd(ctx context.Context, cmd *cli.Command) error {
 	for _, m := range manualSeeds {
 		_, err := manualRepo.CreateManualCheckin(ctx, m)
 		if err != nil {
-			return cli.Exit(err.Error(), 1)
+			return fmt.Errorf("create preview manual checkin: %w", err)
 		}
 	}
 	log.InfoContext(ctx, "seeded manual checkins", slog.Int("count", len(manualSeeds)))

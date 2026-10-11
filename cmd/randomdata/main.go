@@ -8,6 +8,7 @@ import (
 	"math/rand"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -54,7 +55,7 @@ func main() {
 }
 
 func run(ctx context.Context, cmd *cli.Command) error {
-	dbFile := cmd.String("db-file")
+	dbFile := strings.TrimSpace(cmd.String("db-file"))
 	count := cmd.Int("count")
 	if count < 0 {
 		return fmt.Errorf("count must be >= 0, got %d", count)
@@ -212,7 +213,10 @@ func seedCheckins(ctx context.Context, database *sql.DB, count int) error {
 	}
 
 	eventRepo := event.NewRepo(database)
-	events, _ := eventRepo.ListEvents(ctx, event.EventFilter{})
+	events, err := eventRepo.ListEvents(ctx, event.EventFilter{})
+	if err != nil {
+		return fmt.Errorf("listing events: %w", err)
+	}
 	var eventIDs []int64
 	for _, e := range events {
 		eventIDs = append(eventIDs, e.ID)

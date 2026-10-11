@@ -278,11 +278,9 @@ func (r *sqliteRepo) CreateLocation(ctx context.Context, location Location) (Loc
 		Values(values...).
 		SuffixExpr(squirrel.Expr("ON CONFLICT(planning_center_id) DO UPDATE SET name = excluded.name"))
 
-	result, err := builder.ExecContext(ctx)
-	if err != nil {
+	if _, err := builder.ExecContext(ctx); err != nil {
 		return Location{}, fmt.Errorf("inserting location: %w", err)
 	}
-	_ = result
 
 	// Same stale-rowid trap as CreateLocationGroup: on the conflict path the
 	// statement is an UPDATE, so LastInsertId is meaningless. Resolve by

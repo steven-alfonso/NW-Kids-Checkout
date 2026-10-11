@@ -1,6 +1,7 @@
 package db_test
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -47,4 +48,24 @@ func TestLatestMigrationVersion_matchesNewestFile(t *testing.T) {
 	// It must be at least as new as the guest family model migration, which is
 	// the newest one in the tree at the time of writing.
 	assert.GreaterOrEqual(t, got, "20260906164308")
+}
+
+// TestLatestMigrationVersion_independentOfWorkingDirectory pins that the
+// version lookup does not depend on being run from the repo tree. A dev
+// binary invoked from /tmp (or any dir with its own db/migrations) must
+// still stamp from this repository's migrations, not the caller's.
+func TestLatestMigrationVersion_independentOfWorkingDirectory(t *testing.T) {
+	want, err := db.LatestMigrationVersion()
+	require.NoError(t, err)
+
+	// An unrelated directory containing its own decoy db/migrations: the
+	// Getwd walk-up would find this tree first and stamp the wrong version.
+	dir := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "db", "migrations"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "db", "migrations", "19990101000000_decoy.up.sqlite"), []byte("SELECT 1;"), 0o644))
+	t.Chdir(dir)
+
+	got, err := db.LatestMigrationVersion()
+	require.NoError(t, err, "must resolve via source location, not Getwd walk-up")
+	assert.Equal(t, want, got, "must stamp this repo's version, not the caller's decoy tree")
 }

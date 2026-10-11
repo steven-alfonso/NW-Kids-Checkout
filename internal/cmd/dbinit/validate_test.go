@@ -42,3 +42,25 @@ func TestValidateFixtureBytes_rejectsBroken(t *testing.T) {
 	require.NoError(t, err)
 	require.Error(t, validateFixtureBytes(raw))
 }
+
+// TestValidateFixture_rejectsParentCycle pins that a 2-cycle (A parented to B
+// and B parented to A) is rejected. The column has no FK, so without this a
+// cyclic fixture seeds silently and can loop tree rendering.
+func TestValidateFixture_rejectsParentCycle(t *testing.T) {
+	var f fixture
+	require.NoError(t, json.Unmarshal(fixtureJSON, &f))
+	require.GreaterOrEqual(t, len(f.Locations), 2)
+
+	cyclic := f
+	a := cyclic.Locations[0].PlanningCenterID
+	b := cyclic.Locations[1].PlanningCenterID
+	require.NotEqual(t, a, b)
+	cyclic.Locations[0].PlanningCenterParentID = &b
+	cyclic.Locations[1].PlanningCenterParentID = &a
+
+	raw, err := json.Marshal(cyclic)
+	require.NoError(t, err)
+	err = validateFixtureBytes(raw)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cycle")
+}

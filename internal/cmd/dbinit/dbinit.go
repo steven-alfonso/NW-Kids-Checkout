@@ -362,6 +362,26 @@ func validateFixture(f fixture) error {
 			return fmt.Errorf("location %q cannot be its own parent", l.Name)
 		}
 	}
+	// Parent cycles (A parented to B and B parented to A, or longer loops)
+	// have no FK to stop them -- the column is deliberately unconstrained --
+	// so a cyclic fixture would seed silently and can loop tree rendering.
+	// Walk each chain; revisiting a node on the current path is a cycle.
+	parentOf := make(map[string]string, len(f.Locations))
+	for _, l := range f.Locations {
+		if l.PlanningCenterParentID != nil {
+			parentOf[l.PlanningCenterID] = *l.PlanningCenterParentID
+		}
+	}
+	for _, l := range f.Locations {
+		onPath := map[string]bool{l.PlanningCenterID: true}
+		for p, ok := parentOf[l.PlanningCenterID]; ok; {
+			if onPath[p] {
+				return fmt.Errorf("location %q is in a parent cycle involving planning_center_id %q", l.Name, p)
+			}
+			onPath[p] = true
+			p, ok = parentOf[p]
+		}
+	}
 	for _, w := range f.EventCheckWindows {
 		if w.Event == "" {
 			return fmt.Errorf("check window with empty event")

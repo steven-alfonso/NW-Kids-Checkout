@@ -2381,3 +2381,29 @@ func Test_runSignalLoop_sigDoneClosed_noSignal_exitsCleanly(t *testing.T) {
 
 	assert.False(t, channelClosed(t, stopCh, 20*time.Millisecond), "no signal should never close stopCh")
 }
+
+// Test_fetcherContext_detachedFromParentCancel pins that the fetcher's work
+// context survives a parent cancel. main.go wraps every command in
+// signal.NotifyContext, while FetchCheckouts owns SIGINT/SIGTERM itself for a
+// two-stage graceful drain that expects the work ctx to stay alive until
+// stopCh closes. Deriving WithCancel/WithTimeout directly from the parent
+// lets the first Ctrl-C abort in-flight polls instead of draining.
+func Test_fetcherContext_detachedFromParentCancel(t *testing.T) {
+	parent, parentCancel := context.WithCancel(context.Background())
+
+	child, cancel := fetcherContext(parent, true, 0)
+	defer cancel()
+	parentCancel()
+
+	assert.NoError(t, child.Err(), "parent cancel (root NotifyContext signal) must not cancel fetcher work ctx; drain uses stopCh")
+}
+
+func Test_fetcherContext_timeoutDetachedFromParentCancel(t *testing.T) {
+	parent, parentCancel := context.WithCancel(context.Background())
+
+	child, cancel := fetcherContext(parent, false, 5*time.Second)
+	defer cancel()
+	parentCancel()
+
+	assert.NoError(t, child.Err(), "parent cancel must not cancel the non-service timeout ctx either")
+}

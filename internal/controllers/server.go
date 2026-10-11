@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"kids-checkin/internal/controllers/checkinv1"
@@ -197,9 +198,15 @@ func StartServer(ctx context.Context, port int, dbFilepath string) error {
 	}
 	stopCh := make(chan struct{})
 	defer close(stopCh)
+	// shutdownInitiated records that WE called Shutdown in response to ctx.
+	// Testing ctx.Err() here instead would swallow any Listen failure that
+	// races a cancel (e.g. port already in use + Ctrl-C at the same moment)
+	// and exit 0 with no server running.
+	var shutdownInitiated atomic.Bool
 	go func() {
 		select {
 		case <-ctx.Done():
+			shutdownInitiated.Store(true)
 			_ = app.Shutdown()
 		case <-stopCh:
 		}
@@ -210,7 +217,7 @@ func StartServer(ctx context.Context, port int, dbFilepath string) error {
 		// A context-driven shutdown is a clean exit, not a failure:
 		// Listen returns an error after Shutdown, which must not turn
 		// every Ctrl-C into exit 1 in main.
-		if ctx.Err() != nil {
+		if shutdownInitiated.Load() {
 			return nil
 		}
 		return err

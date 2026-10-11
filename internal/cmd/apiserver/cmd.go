@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strings"
 
 	"kids-checkin/internal/controllers"
 
@@ -17,9 +18,12 @@ func ServeCmd(ctx context.Context, cmd *cli.Command) error {
 		return errors.New("port must be greater than 0")
 	}
 
-	slog.Info("starting api server", slog.Int("port", port), slog.String("db_file", cmd.String("db-file")))
+	// Trimmed once here so this line names the same file StartServer opens
+	// (which trims before both InitDB and the session store).
+	dbFile := strings.TrimSpace(cmd.String("db-file"))
+	slog.Info("starting api server", slog.Int("port", port), slog.String("db_file", dbFile))
 
-	err := controllers.StartServer(ctx, port, cmd.String("db-file"))
+	err := controllers.StartServer(ctx, port, dbFile)
 	if err != nil {
 		slog.Error("api server failed", slog.String("error", err.Error()))
 		return err
