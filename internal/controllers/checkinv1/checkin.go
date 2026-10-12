@@ -2,7 +2,6 @@ package checkinv1
 
 import (
 	"bytes"
-	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -289,21 +288,34 @@ func (controller *Controller) checkoutsWebsocket(c *fiber.Ctx) error {
 
 			log.InfoContext(c.Context(), "recv filter", slog.String("filter", fmt.Sprintf("%+v", filter)))
 
-			checkins, err := controller.checkinRepo.ListCheckins(context.Background(), checkin.Filter{
+			// Tied to the request context so server shutdown cancels in-flight
+			// queries. fasthttp's RequestCtx only cancels on server shutdown,
+			// not on client disconnect, so this gives shutdown propagation
+			// rather than per-connection teardown. On cancellation the loop
+			// must break and clean up, not continue onto a dead socket.
+			checkins, err := controller.checkinRepo.ListCheckins(c.Context(), checkin.Filter{
 				LocationName:      controller.wsClients[webscocketConn].location,
 				CheckedOutAtAfter: time.Now().Add(controller.wsClients[webscocketConn].checkedOutAfterDelta),
 			})
 			if err != nil {
 				log.ErrorContext(c.Context(), "cannot list checkins", slog.String("error", err.Error()), slog.Any("err", err))
+				if c.Context().Err() != nil {
+					delete(controller.wsClients, webscocketConn)
+					break
+				}
 				continue
 			}
 
-			manualCheckins, err := controller.manualRepo.ListManualCheckins(context.Background(), manualcheckin.Filter{
+			manualCheckins, err := controller.manualRepo.ListManualCheckins(c.Context(), manualcheckin.Filter{
 				CheckedOutAtAfter: time.Now().Add(controller.wsClients[webscocketConn].checkedOutAfterDelta),
 				Recent:            true,
 			})
 			if err != nil {
 				log.ErrorContext(c.Context(), "cannot list manual checkins", slog.String("error", err.Error()), slog.Any("err", err))
+				if c.Context().Err() != nil {
+					delete(controller.wsClients, webscocketConn)
+					break
+				}
 				continue
 			}
 
