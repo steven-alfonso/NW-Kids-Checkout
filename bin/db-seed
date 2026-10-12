@@ -2,6 +2,10 @@
 
 set -euo pipefail
 
+# The Makefile passes the converged database path as $1; $DB_FILE remains as
+# a fallback so direct invocations keep working.
+DB_FILE="${1:-${DB_FILE:?set DB_FILE or pass the database path as \$1}}"
+
 echo "$DB_FILE"
 
 sqlite3 "$DB_FILE" <<'SQL'
