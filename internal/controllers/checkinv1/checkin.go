@@ -2,6 +2,7 @@ package checkinv1
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -291,15 +292,19 @@ func (controller *Controller) checkoutsWebsocket(c *fiber.Ctx) error {
 			// Tied to the request context, not Background: websocket.New runs
 			// synchronously within the request lifetime, so c.Context() stays
 			// valid until the socket closes and gives faster teardown than a
-			// decoupled context. A cancelled request aborts in-flight
-			// ListCheckins and the loop continues onto a likely-dead
-			// WriteMessage before breaking.
+			// decoupled context. A cancelled request aborts in-flight queries
+			// and breaks the loop (see websocketQueryShouldBreak) instead of
+			// idling until the next client message.
 			checkins, err := controller.checkinRepo.ListCheckins(c.Context(), checkin.Filter{
 				LocationName:      controller.wsClients[webscocketConn].location,
 				CheckedOutAtAfter: time.Now().Add(controller.wsClients[webscocketConn].checkedOutAfterDelta),
 			})
 			if err != nil {
 				log.ErrorContext(c.Context(), "cannot list checkins", slog.String("error", err.Error()), slog.Any("err", err))
+				if websocketQueryShouldBreak(c.Context()) {
+					delete(controller.wsClients, webscocketConn)
+					break
+				}
 				continue
 			}
 
@@ -309,6 +314,10 @@ func (controller *Controller) checkoutsWebsocket(c *fiber.Ctx) error {
 			})
 			if err != nil {
 				log.ErrorContext(c.Context(), "cannot list manual checkins", slog.String("error", err.Error()), slog.Any("err", err))
+				if websocketQueryShouldBreak(c.Context()) {
+					delete(controller.wsClients, webscocketConn)
+					break
+				}
 				continue
 			}
 
@@ -620,4 +629,11 @@ type CheckinFilter struct {
 	Location         string    `json:"location"`
 	CheckedOutBefore time.Time `json:"checked_out_before"`
 	CheckedOutAfter  time.Time `json:"checked_out_after"`
+}
+
+// websocketQueryShouldBreak reports whether a checkouts-websocket list error
+// should close the loop. A cancelled request context means every future query
+// fails the same way, so break instead of idling until the next message.
+func websocketQueryShouldBreak(ctx context.Context) bool {
+	return ctx.Err() != nil
 }
