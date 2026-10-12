@@ -730,9 +730,9 @@ func TestController_Checkouts_location_group_filtering(t *testing.T) {
 // of continuing to wait for the next client message (every future query would
 // fail the same way and the socket would idle).
 func Test_websocketQueryShouldBreak(t *testing.T) {
-	assert.False(t, websocketQueryShouldBreak(context.Background()),
+	assert.False(t, websocketQueryShouldBreak(t.Context()),
 		"live context must continue on transient query errors")
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	assert.True(t, websocketQueryShouldBreak(ctx),
 		"cancelled context must break instead of idling until the next message")
