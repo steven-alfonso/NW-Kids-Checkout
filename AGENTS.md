@@ -95,6 +95,10 @@ This file guides coding agents working in this repo. Keep changes small, follow 
 - Pass `context.Context` to repo methods and DB queries (pattern in `internal/repo/*`).
 - Use `t.Context()` in tests for DB operations.
 - Avoid `context.Background()` inside request handlers unless you explicitly need to decouple from the request.
+- Entrypoints (`main.go`, `cmd/*`) run under `signal.NotifyContext`, never bare
+  `Background`. `StartServer` takes that ctx and shuts Fiber down on cancel.
+  The checkout-fetcher manages SIGINT/SIGTERM itself for its two-stage
+  graceful drain — do not add a second signal handler around it.
 
 ### Time handling
 - Store timestamps in UTC when persisting to DB (`time.Now().UTC()`), as seen in repos.

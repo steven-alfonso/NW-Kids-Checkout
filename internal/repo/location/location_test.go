@@ -326,13 +326,50 @@ func Test_sqliteRepo_CreateLocationGroup(t *testing.T) {
 
 	first, err := s.CreateLocationGroup(t.Context(), LocationGroup{Name: "group-unique"})
 	require.NoError(t, err)
-	_, err = s.CreateLocationGroup(t.Context(), LocationGroup{Name: "group-unique"})
+	second, err := s.CreateLocationGroup(t.Context(), LocationGroup{Name: "group-unique"})
 	require.NoError(t, err)
+	assert.Equal(t, first.ID, second.ID)
 
 	groups, err := s.ListLocationGroups(t.Context(), LocationGroupFilter{Name: "group-unique"})
 	require.NoError(t, err)
 	require.Len(t, groups, 1)
 	assert.Equal(t, first.ID, groups[0].ID)
+}
+
+func Test_sqliteRepo_CreateLocationGroup_conflictReturnsCorrectID(t *testing.T) {
+	testDB, cleanup, err := db.PrepareTestDB()
+	require.NoError(t, err, "Failed to prepare test DB")
+	t.Cleanup(cleanup)
+	s := &sqliteRepo{db: testDB}
+
+	a, err := s.CreateLocationGroup(t.Context(), LocationGroup{Name: "group-a-conflict"})
+	require.NoError(t, err)
+	b, err := s.CreateLocationGroup(t.Context(), LocationGroup{Name: "group-b-conflict"})
+	require.NoError(t, err)
+	require.NotEqual(t, a.ID, b.ID)
+
+	// The conflict path is an UPDATE, so LastInsertId would be stale (b.ID).
+	// The returned ID must still be a.ID.
+	upserted, err := s.CreateLocationGroup(t.Context(), LocationGroup{Name: "group-a-conflict"})
+	require.NoError(t, err)
+	assert.Equal(t, a.ID, upserted.ID)
+}
+
+func Test_sqliteRepo_CreateLocation_conflictReturnsCorrectID(t *testing.T) {
+	testDB, cleanup, err := db.PrepareTestDB()
+	require.NoError(t, err, "Failed to prepare test DB")
+	t.Cleanup(cleanup)
+	s := &sqliteRepo{db: testDB}
+
+	a, err := s.CreateLocation(t.Context(), Location{PlanningCenterID: "pc-conflict-a", Name: "A"})
+	require.NoError(t, err)
+	b, err := s.CreateLocation(t.Context(), Location{PlanningCenterID: "pc-conflict-b", Name: "B"})
+	require.NoError(t, err)
+	require.NotEqual(t, a.ID, b.ID)
+
+	upserted, err := s.CreateLocation(t.Context(), Location{PlanningCenterID: "pc-conflict-a", Name: "A2"})
+	require.NoError(t, err)
+	assert.Equal(t, a.ID, upserted.ID)
 }
 
 func Test_sqliteRepo_UpdateLocationGroup(t *testing.T) {

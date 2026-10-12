@@ -2,7 +2,6 @@ package checkinv1
 
 import (
 	"bytes"
-	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -289,7 +288,13 @@ func (controller *Controller) checkoutsWebsocket(c *fiber.Ctx) error {
 
 			log.InfoContext(c.Context(), "recv filter", slog.String("filter", fmt.Sprintf("%+v", filter)))
 
-			checkins, err := controller.checkinRepo.ListCheckins(context.Background(), checkin.Filter{
+			// Tied to the request context, not Background: websocket.New runs
+			// synchronously within the request lifetime, so c.Context() stays
+			// valid until the socket closes and gives faster teardown than a
+			// decoupled context. A cancelled request aborts in-flight
+			// ListCheckins and the loop continues onto a likely-dead
+			// WriteMessage before breaking.
+			checkins, err := controller.checkinRepo.ListCheckins(c.Context(), checkin.Filter{
 				LocationName:      controller.wsClients[webscocketConn].location,
 				CheckedOutAtAfter: time.Now().Add(controller.wsClients[webscocketConn].checkedOutAfterDelta),
 			})
@@ -298,7 +303,7 @@ func (controller *Controller) checkoutsWebsocket(c *fiber.Ctx) error {
 				continue
 			}
 
-			manualCheckins, err := controller.manualRepo.ListManualCheckins(context.Background(), manualcheckin.Filter{
+			manualCheckins, err := controller.manualRepo.ListManualCheckins(c.Context(), manualcheckin.Filter{
 				CheckedOutAtAfter: time.Now().Add(controller.wsClients[webscocketConn].checkedOutAfterDelta),
 				Recent:            true,
 			})
