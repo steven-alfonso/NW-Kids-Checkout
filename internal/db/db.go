@@ -20,6 +20,17 @@ import (
 // run without DB_FILE then opened a different file than the one just seeded.
 // The compiler ties the flags to this constant but nothing ties it to the
 // Makefile, so TestDefaultDBFileMatchesMakefile in internal/cmd does that.
+//
+// Production note: moving the default from kids-checkin.db to
+// database/kids-checkin.db orphans a bare-metal host that already has data at
+// the old repo-root path -- it boots an empty DB and writes to the new file.
+// Containers are unaffected (the Dockerfile sets DB_FILE=/data/kids-checkin.db
+// explicitly). Likewise, ensureParentDir below plus sqlite auto-create can mask
+// a misspelled --db-file/DB_FILE by creating an empty DB instead of failing.
+// Both are accepted tradeoffs for fresh-clone UX (database/ is gitignored and
+// absent on clone); the absolute-path log in InitDB is the mitigation, and
+// there is deliberately no auto-migration -- an operator with data at the old
+// path moves it once.
 const DefaultDBFile = "database/kids-checkin.db"
 
 // InitDB initializes the database connection.

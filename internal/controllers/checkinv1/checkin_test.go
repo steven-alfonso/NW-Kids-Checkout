@@ -3,6 +3,7 @@ package checkinv1
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -722,6 +723,19 @@ func TestController_Checkouts_location_group_filtering(t *testing.T) {
 		_, payload = idsFor(t, "/v1/checkins/checkouts?include_unassigned=1")
 		assert.Len(t, payload.ManualCheckins, 1)
 	})
+}
+
+// Test_websocketQueryShouldBreak pins the checkouts-websocket cancel path: a
+// query that fails on a cancelled request context must break the loop instead
+// of continuing to wait for the next client message (every future query would
+// fail the same way and the socket would idle).
+func Test_websocketQueryShouldBreak(t *testing.T) {
+	assert.False(t, websocketQueryShouldBreak(context.Background()),
+		"live context must continue on transient query errors")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	assert.True(t, websocketQueryShouldBreak(ctx),
+		"cancelled context must break instead of idling until the next message")
 }
 
 func setupAuthedApp() (*fiber.App, *session.Store) {
