@@ -19,13 +19,14 @@ type Item struct {
 	Href  string
 }
 
-// For returns the kebab menu items visible to the given session. Guest
-// check-in and manual check-ins are always visible. Log In is only shown to
-// anonymous users; Log Out only to authenticated users; Admin only to admin
-// users.
+// For returns the kebab menu items visible to the given session. Manual
+// check-ins are always visible. Log In is only shown to anonymous users; Log
+// Out only to authenticated users; Admin only to admin users.
+//
+// The guest check-in kiosk (/guest-checkin) is intentionally absent here: it is
+// reached by direct URL or QR code, not through the shared menu.
 func For(authenticated bool, role string) []Item {
 	items := []Item{
-		{ID: "guest-checkin-link", Label: "Guest Check-In", Href: "/guest-checkin"},
 		{ID: "manual-checkins-link", Label: "Manual Check-Ins", Href: "/manual-checkins"},
 	}
 	if !authenticated {

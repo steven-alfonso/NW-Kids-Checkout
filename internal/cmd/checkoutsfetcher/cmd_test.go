@@ -50,57 +50,6 @@ func testService(checkWindowRepo eventcheckwindow.Repo, eventRepo event.Repo, ch
 	}
 }
 
-type concurrentEventRepo struct {
-	events      []event.Event
-	onUpdate    func()
-	mu          sync.Mutex
-	updateCount atomic.Int64
-}
-
-func (m *concurrentEventRepo) ListEvents(ctx context.Context, filter event.EventFilter) ([]event.Event, error) {
-	return m.events, nil
-}
-
-func (m *concurrentEventRepo) GetEventByID(ctx context.Context, id int64) (event.Event, error) {
-	for _, e := range m.events {
-		if e.ID == id {
-			return e, nil
-		}
-	}
-	return event.Event{}, nil
-}
-
-func (m *concurrentEventRepo) GetEventByPlanningCenterID(ctx context.Context, planningCenterID string) (event.Event, error) {
-	for _, e := range m.events {
-		if e.PlanningCenterID == planningCenterID {
-			return e, nil
-		}
-	}
-	return event.Event{}, nil
-}
-
-func (m *concurrentEventRepo) CreateEvent(ctx context.Context, ev event.Event) (event.Event, error) {
-	ev.ID = int64(len(m.events) + 1)
-	m.events = append(m.events, ev)
-	return ev, nil
-}
-
-func (m *concurrentEventRepo) UpdateEvent(ctx context.Context, ev event.Event) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.updateCount.Add(1)
-	if m.onUpdate != nil {
-		m.onUpdate()
-	}
-	for i, e := range m.events {
-		if e.ID == ev.ID {
-			m.events[i] = ev
-			return nil
-		}
-	}
-	return nil
-}
-
 func Test_eventCheckoutLoop_noEvents(t *testing.T) {
 	var events []event.Event
 	eventRepo := &event.MockRepo{
@@ -1666,48 +1615,70 @@ func TestParseTime(t *testing.T) {
 }
 
 func TestMergeWindows(t *testing.T) {
+	// Minutes are anchored to Monday 2026-03-23 00:00 UTC, so a weekday offset
+	// of N days is N*1440. America/New_York is EDT (UTC-4) in late March.
+	const (
+		mon = 0
+		tue = 1440
+		fri = 4 * 1440
+		sat = 5 * 1440
+		sun = 6 * 1440
+	)
 	tests := []struct {
 		name         string
 		checkWindows []eventcheckwindow.EventCheckWindow
-		wantLen      int
-		wantErr      bool
+		want         []Window
 	}{
 		{
+			// Mon 09:00 EDT = Mon 13:00 UTC, Mon 12:00 EDT = Mon 16:00 UTC.
 			name: "single window same day",
 			checkWindows: []eventcheckwindow.EventCheckWindow{
 				{StartDayOfWeek: 1, StartTime: "09:00", EndDayOfWeek: 1, EndTime: "12:00", Timezone: "America/New_York"},
 			},
-			wantLen: 1,
+			want: []Window{{mon + 13*60, mon + 16*60}},
 		},
 		{
+			// 09:00-11:00 EDT = 13:00-15:00 UTC; 14:00-16:00 EDT = 18:00-20:00 UTC.
 			name: "multiple non-overlapping",
 			checkWindows: []eventcheckwindow.EventCheckWindow{
 				{StartDayOfWeek: 1, StartTime: "09:00", EndDayOfWeek: 1, EndTime: "11:00", Timezone: "America/New_York"},
 				{StartDayOfWeek: 1, StartTime: "14:00", EndDayOfWeek: 1, EndTime: "16:00", Timezone: "America/New_York"},
 			},
-			wantLen: 2,
+			want: []Window{
+				{mon + 13*60, mon + 15*60},
+				{mon + 18*60, mon + 20*60},
+			},
 		},
 		{
+			// 11:00 EDT (15:00 UTC) falls inside 09:00-12:00 EDT, and the second
+			// window ends later, so the union must run to 18:00 UTC.
 			name: "overlapping windows merge",
 			checkWindows: []eventcheckwindow.EventCheckWindow{
 				{StartDayOfWeek: 1, StartTime: "09:00", EndDayOfWeek: 1, EndTime: "12:00", Timezone: "America/New_York"},
 				{StartDayOfWeek: 1, StartTime: "11:00", EndDayOfWeek: 1, EndTime: "14:00", Timezone: "America/New_York"},
 			},
-			wantLen: 1,
+			want: []Window{{mon + 13*60, mon + 18*60}},
 		},
 		{
+			// Fri 22:00 EDT = Sat 02:00 UTC; Sat 02:00 EDT = Sat 06:00 UTC.
 			name: "crosses week boundary",
 			checkWindows: []eventcheckwindow.EventCheckWindow{
 				{StartDayOfWeek: 5, StartTime: "22:00", EndDayOfWeek: 6, EndTime: "02:00", Timezone: "America/New_York"},
 			},
-			wantLen: 1,
+			want: []Window{{sat + 2*60, sat + 6*60}},
 		},
 		{
+			// Sun 22:00 UTC to Mon 02:00 UTC wraps past the end of the week, so it
+			// must split into the tail of this week and the head of the next. The
+			// tail sorts last because it starts later.
 			name: "splits true Sunday/Monday crossing into two ranges",
 			checkWindows: []eventcheckwindow.EventCheckWindow{
 				{StartDayOfWeek: 7, StartTime: "22:00", EndDayOfWeek: 1, EndTime: "02:00", Timezone: "UTC"},
 			},
-			wantLen: 2,
+			want: []Window{
+				{0, 2 * 60},
+				{sun + 22*60, minutesPerWeek},
+			},
 		},
 	}
 
@@ -1717,12 +1688,8 @@ func TestMergeWindows(t *testing.T) {
 			// merged minute ranges are deterministic regardless of wall clock.
 			now := time.Date(2026, 3, 25, 12, 0, 0, 0, time.UTC)
 			got, err := mergeWindows(tt.checkWindows, now)
-			if tt.wantErr {
-				assert.Error(t, err)
-				return
-			}
 			require.NoError(t, err)
-			assert.Len(t, got, tt.wantLen)
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }
@@ -1975,7 +1942,7 @@ func Test_eventCheckoutLoop_windowsDisabled_ignoresWindows(t *testing.T) {
 func fetchCheckoutsCommand() *cli.Command {
 	return &cli.Command{
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "db-file", Value: "kids-checkin.db"},
+			db.DBFileFlag(),
 			&cli.DurationFlag{Name: "interval", Value: 3 * time.Second},
 			&cli.DurationFlag{Name: "event-update-interval", Value: 3 * time.Second},
 			&cli.DurationFlag{Name: "runtime", Value: 5 * time.Second},
@@ -1989,7 +1956,12 @@ func fetchCheckoutsCommand() *cli.Command {
 // panicking when the database cannot be initialized (bad path, permissions,
 // corrupt file).
 func Test_FetchCheckouts_dbInitFailure(t *testing.T) {
-	missingDB := filepath.Join(t.TempDir(), "does-not-exist", "kids-checkin.db")
+	// InitDB now mkdirs the parent, so a missing dir no longer fails. Use a
+	// parent that is a file: MkdirAll fails with "not a directory", which is
+	// the same class (bad path) the test exists to cover.
+	blocker := filepath.Join(t.TempDir(), "blocker")
+	require.NoError(t, os.WriteFile(blocker, []byte("x"), 0o644))
+	missingDB := filepath.Join(blocker, "kids-checkin.db")
 
 	cmd := fetchCheckoutsCommand()
 	require.NoError(t, cmd.Set("db-file", missingDB))
@@ -2408,4 +2380,30 @@ func Test_runSignalLoop_sigDoneClosed_noSignal_exitsCleanly(t *testing.T) {
 	}
 
 	assert.False(t, channelClosed(t, stopCh, 20*time.Millisecond), "no signal should never close stopCh")
+}
+
+// Test_fetcherContext_detachedFromParentCancel pins that the fetcher's work
+// context survives a parent cancel. main.go wraps every command in
+// signal.NotifyContext, while FetchCheckouts owns SIGINT/SIGTERM itself for a
+// two-stage graceful drain that expects the work ctx to stay alive until
+// stopCh closes. Deriving WithCancel/WithTimeout directly from the parent
+// lets the first Ctrl-C abort in-flight polls instead of draining.
+func Test_fetcherContext_detachedFromParentCancel(t *testing.T) {
+	parent, parentCancel := context.WithCancel(context.Background())
+
+	child, cancel := fetcherContext(parent, true, 0)
+	defer cancel()
+	parentCancel()
+
+	assert.NoError(t, child.Err(), "parent cancel (root NotifyContext signal) must not cancel fetcher work ctx; drain uses stopCh")
+}
+
+func Test_fetcherContext_timeoutDetachedFromParentCancel(t *testing.T) {
+	parent, parentCancel := context.WithCancel(context.Background())
+
+	child, cancel := fetcherContext(parent, false, 5*time.Second)
+	defer cancel()
+	parentCancel()
+
+	assert.NoError(t, child.Err(), "parent cancel must not cancel the non-service timeout ctx either")
 }

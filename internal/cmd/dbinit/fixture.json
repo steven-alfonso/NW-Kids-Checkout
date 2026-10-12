@@ -1,0 +1,295 @@
+{
+  "_comment": [
+    "Development fixture: the real Planning Center reference topology, as of",
+    "2026-09. Applied only by the dev-only `db-init` command, through the repo",
+    "layer rather than raw SQL.",
+    "",
+    "planning_center_id values are REAL Planning Center ids, not synthetic ones,",
+    "so the checkout fetcher and the room tree stay exercisable against the live",
+    "API. Rows reference each other by natural key -- an event's planning center",
+    "id, a group's name -- because the repos assign surrogate keys themselves.",
+    "",
+    "Deliberately absent: children, parents, checkins and guest_submissions.",
+    "Those are per-visit transactional data and belong to `make random-data`.",
+    "",
+    "locations.auto_fetch is not seeded. No Go code reads or writes that column;",
+    "auto-fetch is configured per event (events.auto_fetch), which is what the",
+    "fetcher filters on."
+  ],
+  "location_groups": [
+    {
+      "name": "Kids"
+    },
+    {
+      "name": "Kids Jr"
+    },
+    {
+      "name": "Nursery"
+    }
+  ],
+  "events": [
+    {
+      "name": "Weekend Experience",
+      "planning_center_id": "151353",
+      "auto_fetch": true,
+      "location_group": null
+    },
+    {
+      "name": "Wednesday Night Live",
+      "planning_center_id": "152112",
+      "auto_fetch": true,
+      "location_group": null
+    }
+  ],
+  "locations": [
+    {
+      "name": "NW Kids",
+      "planning_center_id": "295939",
+      "planning_center_parent_id": null,
+      "location_group": null,
+      "event": "151353"
+    },
+    {
+      "name": "1st - 6th",
+      "planning_center_id": "295919",
+      "planning_center_parent_id": "295939",
+      "location_group": null,
+      "event": "151353"
+    },
+    {
+      "name": "Crawler (1-2 years)",
+      "planning_center_id": "1755166",
+      "planning_center_parent_id": "295939",
+      "location_group": null,
+      "event": "151353"
+    },
+    {
+      "name": "Elementary (1st Grade)",
+      "planning_center_id": "723452",
+      "planning_center_parent_id": "295939",
+      "location_group": "Kids",
+      "event": "151353"
+    },
+    {
+      "name": "Elementary (2nd Grade)",
+      "planning_center_id": "1338155",
+      "planning_center_parent_id": "295939",
+      "location_group": "Kids",
+      "event": "151353"
+    },
+    {
+      "name": "Elementary (3rd Grade)",
+      "planning_center_id": "1338156",
+      "planning_center_parent_id": "295939",
+      "location_group": "Kids",
+      "event": "151353"
+    },
+    {
+      "name": "Elementary (4th Grade)",
+      "planning_center_id": "723453",
+      "planning_center_parent_id": "295939",
+      "location_group": "Kids",
+      "event": "151353"
+    },
+    {
+      "name": "Elementary (5th Grade)",
+      "planning_center_id": "1338157",
+      "planning_center_parent_id": "295939",
+      "location_group": "Kids",
+      "event": "151353"
+    },
+    {
+      "name": "Elementary (6th Grade)",
+      "planning_center_id": "1338160",
+      "planning_center_parent_id": "295939",
+      "location_group": "Kids",
+      "event": "151353"
+    },
+    {
+      "name": "Infant",
+      "planning_center_id": "295916",
+      "planning_center_parent_id": "295939",
+      "location_group": null,
+      "event": "151353"
+    },
+    {
+      "name": "Kids Jr (3yrs - 4yrs)",
+      "planning_center_id": "295918",
+      "planning_center_parent_id": "295939",
+      "location_group": "Kids Jr",
+      "event": "151353"
+    },
+    {
+      "name": "Kids Jr (5yrs - K)",
+      "planning_center_id": "405785",
+      "planning_center_parent_id": "295939",
+      "location_group": "Kids Jr",
+      "event": "151353"
+    },
+    {
+      "name": "Serve Team Members",
+      "planning_center_id": "1349822",
+      "planning_center_parent_id": "295939",
+      "location_group": null,
+      "event": "151353"
+    },
+    {
+      "name": "Toddler",
+      "planning_center_id": "295917",
+      "planning_center_parent_id": "295939",
+      "location_group": null,
+      "event": "151353"
+    },
+    {
+      "name": "Closed Groups",
+      "planning_center_id": "613596",
+      "planning_center_parent_id": null,
+      "location_group": null,
+      "event": "152112"
+    },
+    {
+      "name": "Infant",
+      "planning_center_id": "295942",
+      "planning_center_parent_id": null,
+      "location_group": null,
+      "event": "152112"
+    },
+    {
+      "name": "Kids Jr (3 -4 )",
+      "planning_center_id": "295944",
+      "planning_center_parent_id": null,
+      "location_group": "Kids Jr",
+      "event": "152112"
+    },
+    {
+      "name": "Kids Jr (5yrs - K)",
+      "planning_center_id": "416621",
+      "planning_center_parent_id": null,
+      "location_group": "Kids Jr",
+      "event": "152112"
+    },
+    {
+      "name": "Toddler",
+      "planning_center_id": "295943",
+      "planning_center_parent_id": null,
+      "location_group": null,
+      "event": "152112"
+    },
+    {
+      "name": "WNL Connect Groups",
+      "planning_center_id": "613594",
+      "planning_center_parent_id": null,
+      "location_group": null,
+      "event": "152112"
+    },
+    {
+      "name": "1st-6th Grade",
+      "planning_center_id": "613613",
+      "planning_center_parent_id": "613594",
+      "location_group": "Kids",
+      "event": "152112"
+    },
+    {
+      "name": "Community Builders",
+      "planning_center_id": "613609",
+      "planning_center_parent_id": "613594",
+      "location_group": null,
+      "event": "152112"
+    },
+    {
+      "name": "Crafting",
+      "planning_center_id": "613605",
+      "planning_center_parent_id": "613594",
+      "location_group": null,
+      "event": "152112"
+    },
+    {
+      "name": "Friendship",
+      "planning_center_id": "613612",
+      "planning_center_parent_id": "613594",
+      "location_group": null,
+      "event": "152112"
+    },
+    {
+      "name": "Jr. Interns",
+      "planning_center_id": "613578",
+      "planning_center_parent_id": "613594",
+      "location_group": null,
+      "event": "152112"
+    },
+    {
+      "name": "Prayer Warriors",
+      "planning_center_id": "613610",
+      "planning_center_parent_id": "613594",
+      "location_group": null,
+      "event": "152112"
+    },
+    {
+      "name": "The 56",
+      "planning_center_id": "613600",
+      "planning_center_parent_id": "613594",
+      "location_group": null,
+      "event": "152112"
+    },
+    {
+      "name": "Worship Team",
+      "planning_center_id": "613611",
+      "planning_center_parent_id": "613594",
+      "location_group": null,
+      "event": "152112"
+    },
+    {
+      "name": "1st-2nd Grade",
+      "planning_center_id": "311683",
+      "planning_center_parent_id": "613596",
+      "location_group": "Kids",
+      "event": "152112"
+    },
+    {
+      "name": "3rd-4th Grade",
+      "planning_center_id": "311684",
+      "planning_center_parent_id": "613596",
+      "location_group": "Kids",
+      "event": "152112"
+    },
+    {
+      "name": "5th-6th Grade",
+      "planning_center_id": "311685",
+      "planning_center_parent_id": "613596",
+      "location_group": "Kids",
+      "event": "152112"
+    },
+    {
+      "name": "Girls 3rd-6th",
+      "planning_center_id": "311687",
+      "planning_center_parent_id": "613596",
+      "location_group": "Kids",
+      "event": "152112"
+    },
+    {
+      "name": "K - 6",
+      "planning_center_id": "295945",
+      "planning_center_parent_id": "613596",
+      "location_group": "Kids",
+      "event": "152112"
+    }
+  ],
+  "event_check_windows": [
+    {
+      "event": "152112",
+      "start_day_of_week": 3,
+      "start_time": "18:00",
+      "end_day_of_week": 3,
+      "end_time": "21:00",
+      "timezone": "America/Chicago"
+    },
+    {
+      "event": "151353",
+      "start_day_of_week": 7,
+      "start_time": "08:00",
+      "end_day_of_week": 7,
+      "end_time": "13:30",
+      "timezone": "America/Chicago"
+    }
+  ]
+}

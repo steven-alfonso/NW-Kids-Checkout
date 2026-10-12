@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 
@@ -42,7 +43,7 @@ func TestController_ListLocationsIncludesEventID(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	req := httptest.NewRequest("GET", "/v1/locations", nil)
+	req := httptest.NewRequest(http.MethodGet, "/v1/locations", nil)
 	resp, err := app.Test(req)
 	require.NoError(t, err)
 	require.Equal(t, fiber.StatusOK, resp.StatusCode)
@@ -81,7 +82,7 @@ func TestController_PatchUpdateLocation(t *testing.T) {
 		}
 		body, _ := json.Marshal(payload)
 
-		req := httptest.NewRequest("PATCH", fmt.Sprintf("/v1/locations/%d", created.ID), bytes.NewReader(body))
+		req := httptest.NewRequest(http.MethodPatch, fmt.Sprintf("/v1/locations/%d", created.ID), bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := app.Test(req)
 		require.NoError(t, err)
@@ -98,7 +99,7 @@ func TestController_PatchUpdateLocation(t *testing.T) {
 		payload := map[string]any{}
 		body, _ := json.Marshal(payload)
 
-		req := httptest.NewRequest("PATCH", "/v1/locations/9999", bytes.NewReader(body))
+		req := httptest.NewRequest(http.MethodPatch, "/v1/locations/9999", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := app.Test(req)
 		require.NoError(t, err)
@@ -109,7 +110,7 @@ func TestController_PatchUpdateLocation(t *testing.T) {
 		payload := map[string]any{}
 		body, _ := json.Marshal(payload)
 
-		req := httptest.NewRequest("PATCH", "/v1/locations/not-a-number", bytes.NewReader(body))
+		req := httptest.NewRequest(http.MethodPatch, "/v1/locations/not-a-number", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := app.Test(req)
 		require.NoError(t, err)
@@ -117,7 +118,7 @@ func TestController_PatchUpdateLocation(t *testing.T) {
 	})
 
 	t.Run("invalid json", func(t *testing.T) {
-		req := httptest.NewRequest("PATCH", fmt.Sprintf("/v1/locations/%d", created.ID), bytes.NewReader([]byte("not json")))
+		req := httptest.NewRequest(http.MethodPatch, fmt.Sprintf("/v1/locations/%d", created.ID), bytes.NewReader([]byte("not json")))
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := app.Test(req)
 		require.NoError(t, err)
@@ -131,7 +132,7 @@ func TestController_PatchUpdateLocation(t *testing.T) {
 		}
 		body, _ := json.Marshal(payload)
 
-		req := httptest.NewRequest("PATCH", fmt.Sprintf("/v1/locations/%d", created.ID), bytes.NewReader(body))
+		req := httptest.NewRequest(http.MethodPatch, fmt.Sprintf("/v1/locations/%d", created.ID), bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := app.Test(req)
 		require.NoError(t, err)
@@ -149,7 +150,7 @@ func TestController_PatchUpdateLocation(t *testing.T) {
 		}
 		body, _ := json.Marshal(payload)
 
-		req := httptest.NewRequest("PATCH", fmt.Sprintf("/v1/locations/%d", created.ID), bytes.NewReader(body))
+		req := httptest.NewRequest(http.MethodPatch, fmt.Sprintf("/v1/locations/%d", created.ID), bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := app.Test(req)
 		require.NoError(t, err)
@@ -167,7 +168,7 @@ func TestController_PatchUpdateLocation(t *testing.T) {
 		}
 		body, _ := json.Marshal(payload)
 
-		req := httptest.NewRequest("PATCH", fmt.Sprintf("/v1/locations/%d", created.ID), bytes.NewReader(body))
+		req := httptest.NewRequest(http.MethodPatch, fmt.Sprintf("/v1/locations/%d", created.ID), bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := app.Test(req)
 		require.NoError(t, err)
@@ -192,7 +193,7 @@ func TestController_PostCreateLocation(t *testing.T) {
 		}
 		body, _ := json.Marshal(payload)
 
-		req := httptest.NewRequest("POST", "/v1/locations", bytes.NewReader(body))
+		req := httptest.NewRequest(http.MethodPost, "/v1/locations", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := app.Test(req)
 		require.NoError(t, err)
@@ -212,7 +213,7 @@ func TestController_PostCreateLocation(t *testing.T) {
 		}
 		body, _ := json.Marshal(payload)
 
-		req := httptest.NewRequest("POST", "/v1/locations", bytes.NewReader(body))
+		req := httptest.NewRequest(http.MethodPost, "/v1/locations", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := app.Test(req)
 		require.NoError(t, err)
@@ -220,7 +221,7 @@ func TestController_PostCreateLocation(t *testing.T) {
 	})
 
 	t.Run("invalid json returns bad request", func(t *testing.T) {
-		req := httptest.NewRequest("POST", "/v1/locations", bytes.NewReader([]byte("not json")))
+		req := httptest.NewRequest(http.MethodPost, "/v1/locations", bytes.NewReader([]byte("not json")))
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := app.Test(req)
 		require.NoError(t, err)
@@ -251,7 +252,7 @@ func TestController_GetListLocations(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Run("filter by name", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/v1/locations?name=Filter+Room+1", nil)
+		req := httptest.NewRequest(http.MethodGet, "/v1/locations?name=Filter+Room+1", nil)
 		resp, err := app.Test(req)
 		require.NoError(t, err)
 		require.Equal(t, fiber.StatusOK, resp.StatusCode)
@@ -264,7 +265,7 @@ func TestController_GetListLocations(t *testing.T) {
 	})
 
 	t.Run("filter by planning_center_id", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/v1/locations?planning_center_id=filter_pc_2", nil)
+		req := httptest.NewRequest(http.MethodGet, "/v1/locations?planning_center_id=filter_pc_2", nil)
 		resp, err := app.Test(req)
 		require.NoError(t, err)
 		require.Equal(t, fiber.StatusOK, resp.StatusCode)
@@ -277,7 +278,7 @@ func TestController_GetListLocations(t *testing.T) {
 	})
 
 	t.Run("no filter returns all", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/v1/locations", nil)
+		req := httptest.NewRequest(http.MethodGet, "/v1/locations", nil)
 		resp, err := app.Test(req)
 		require.NoError(t, err)
 		require.Equal(t, fiber.StatusOK, resp.StatusCode)
@@ -289,7 +290,7 @@ func TestController_GetListLocations(t *testing.T) {
 	})
 
 	t.Run("response contains no auto_fetch field", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/v1/locations", nil)
+		req := httptest.NewRequest(http.MethodGet, "/v1/locations", nil)
 		resp, err := app.Test(req)
 		require.NoError(t, err)
 		require.Equal(t, fiber.StatusOK, resp.StatusCode)

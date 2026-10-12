@@ -70,7 +70,9 @@ func Test_sqliteRepo_ListCheckins(t *testing.T) {
 	confirmed2 := time1.Add(45 * time.Minute)
 	confirmed3 := time2.Add(15 * time.Minute)
 
-	checkin1, err := s.CreateCheckin(t.Context(), Checkin{
+	// checkin1 and checkin3 are fixture rows only; their behavior is asserted
+	// through the filters below rather than by binding the result.
+	_, err = s.CreateCheckin(t.Context(), Checkin{
 		PlanningCenterID:      "plc_1234",
 		LocationID:            location1ID,
 		FirstName:             "sam",
@@ -92,7 +94,7 @@ func Test_sqliteRepo_ListCheckins(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	checkin3, err := s.CreateCheckin(t.Context(), Checkin{
+	_, err = s.CreateCheckin(t.Context(), Checkin{
 		PlanningCenterID:      "plc_1236",
 		LocationID:            location3ID,
 		FirstName:             "alex",
@@ -196,9 +198,6 @@ func Test_sqliteRepo_ListCheckins(t *testing.T) {
 		assert.Equal(t, checkin2.ID, c[0].ID)
 		assert.Equal(t, confirmed2, c[0].CheckedOutConfirmedAt)
 	})
-
-	_ = checkin1
-	_ = checkin3
 }
 
 func Test_sqliteRepo_CreateCheckin(t *testing.T) {
@@ -207,10 +206,8 @@ func Test_sqliteRepo_CreateCheckin(t *testing.T) {
 	require.NoError(t, err)
 
 	tests := []struct {
-		name      string
-		arg       Checkin
-		expected  Checkin
-		expectErr bool
+		name string
+		arg  Checkin
 	}{
 		{
 			name: "create checkin",
@@ -252,21 +249,11 @@ func Test_sqliteRepo_CreateCheckin(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			actual, err := s.CreateCheckin(t.Context(), tt.arg)
-			if tt.expectErr {
-				assert.Error(t, err)
-				return
-			}
 			require.NoError(t, err)
 			assert.NotZero(t, actual.ID)
-			assert.Equal(t, tt.arg.PlanningCenterID, actual.PlanningCenterID)
-			assert.Equal(t, tt.arg.LocationID, actual.LocationID)
-			assert.Equal(t, tt.arg.FirstName, actual.FirstName)
-			assert.Equal(t, tt.arg.LastName, actual.LastName)
-			assert.Equal(t, tt.arg.SecurityCode, actual.SecurityCode)
-			assert.Equal(t, tt.arg.CheckedOutAt, actual.CheckedOutAt)
-			assert.Equal(t, tt.arg.FetchedAt, actual.FetchedAt)
-			assert.Equal(t, tt.arg.CheckedOutConfirmedAt, actual.CheckedOutConfirmedAt)
 
+			// The meaningful assertion is the DB round trip below; CreateCheckin
+			// otherwise returns its input struct with the ID populated.
 			checkins, err := s.ListCheckins(t.Context(), Filter{
 				PlanningCenterID: tt.arg.PlanningCenterID,
 			})
@@ -626,8 +613,7 @@ func Test_sqliteRepo_ListCheckins_filter_by_EventID(t *testing.T) {
 func Test_sqliteRepo_ListCheckins_includes_location_group_id(t *testing.T) {
 	tDB, err := sql.Open("sqlite3", ":memory:")
 	require.NoError(t, err)
-	_, err = tDB.Exec(dbschema.Schema)
-	require.NoError(t, err)
+	execSchema(t, tDB)
 	t.Cleanup(func() { _ = tDB.Close() })
 	s := NewRepo(tDB)
 
@@ -682,8 +668,7 @@ func Test_sqliteRepo_ListCheckins_includes_location_group_id(t *testing.T) {
 func Test_sqliteRepo_ListCheckins_filter_by_multiple_location_group_ids(t *testing.T) {
 	tDB, err := sql.Open("sqlite3", ":memory:")
 	require.NoError(t, err)
-	_, err = tDB.Exec(dbschema.Schema)
-	require.NoError(t, err)
+	execSchema(t, tDB)
 	t.Cleanup(func() { _ = tDB.Close() })
 	s := NewRepo(tDB)
 
@@ -754,4 +739,12 @@ func Test_sqliteRepo_ListCheckins_filter_by_multiple_location_group_ids(t *testi
 		require.NoError(t, err)
 		require.Len(t, list, 3)
 	})
+}
+
+// execSchema applies db/structure.sql to tDB. The snapshot is embedded, so
+// tests reach it through the db package.
+func execSchema(t *testing.T, tDB *sql.DB) {
+	t.Helper()
+	_, err := tDB.Exec(dbschema.Schema)
+	require.NoError(t, err)
 }

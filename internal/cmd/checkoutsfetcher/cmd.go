@@ -185,6 +185,26 @@ func isEventDropped(err error) bool {
 // is intentionally terminal and is not part of the normal error plumbing.
 var errForceExitNow = errors.New("second shutdown signal received; exiting immediately")
 
+// fetcherContext derives the fetcher's work context detached from the parent's
+// cancellation. main.go wraps every command in signal.NotifyContext, while
+// FetchCheckouts owns SIGINT/SIGTERM itself for its two-stage graceful drain
+// (runSignalLoop closes stopCh on first signal, force-exits on second). The
+// drain design expects the work ctx to stay alive until stopCh closes so
+// in-flight polls can complete (see shouldSwallowLoopError). Deriving
+// WithCancel/WithTimeout directly from the signal-aware parent would let the
+// first Ctrl-C cancel every in-flight query instead of draining, so detach
+// first. Values flow through; cancellation and deadline do not —
+// context.WithoutCancel strips both, which is what keeps a parent deadline
+// from preempting the drain. The non-service timeout below is the only deadline
+// on the work ctx.
+func fetcherContext(parent context.Context, serviceMode bool, runtime time.Duration) (context.Context, context.CancelFunc) {
+	detached := context.WithoutCancel(parent)
+	if serviceMode {
+		return context.WithCancel(detached)
+	}
+	return context.WithTimeout(detached, runtime)
+}
+
 // runSignalLoop relays OS signals to the fetcher's shutdown machinery until
 // sigDone is closed. The first signal starts a graceful drain: stopCh is closed
 // so no new work is scheduled, and a timer arms forceExitCh after gracePeriod so
@@ -311,14 +331,10 @@ func FetchCheckouts(ctx context.Context, cmd *cli.Command) error {
 
 	var cancel context.CancelFunc
 	serviceMode := cmd.Bool("service")
-	if serviceMode {
-		ctx, cancel = context.WithCancel(ctx)
-	} else {
-		if runtime <= 0 {
-			return fmt.Errorf("runtime must be greater than 0")
-		}
-		ctx, cancel = context.WithTimeout(ctx, runtime)
+	if !serviceMode && runtime <= 0 {
+		return fmt.Errorf("runtime must be greater than 0")
 	}
+	ctx, cancel = fetcherContext(ctx, serviceMode, runtime)
 	defer cancel()
 
 	logCtx := logger.WithLogger(ctx, slog.With(slog.String("worker", "checkout-fetcher-v2")))
@@ -796,8 +812,7 @@ func (s *Service) processEventCheckouts(ctx context.Context, ev event.Event, now
 	checkouts, err := s.pcClient.GetCheckoutsForEvent(ctx, currentEvent.PlanningCenterID, timeToUse, 0)
 
 	if err != nil {
-		var timeoutErr *planningcenter.TimeoutError
-		if errors.As(err, &timeoutErr) {
+		if _, ok := errors.AsType[*planningcenter.TimeoutError](err); ok {
 			logger.FromContext(ctx).WarnContext(ctx, "timeout fetching checkouts for event", slog.String("event_id", currentEvent.PlanningCenterID), slog.String("error", err.Error()))
 			s.recordRetryFailure(ctx, currentEvent.ID, now, nil)
 			return errEventTimeout{eventID: currentEvent.PlanningCenterID, err: err}

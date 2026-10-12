@@ -3,6 +3,7 @@ package locationgroupv1
 import (
 	"bytes"
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"testing"
@@ -30,7 +31,7 @@ func TestController_PostCreateLocationGroup(t *testing.T) {
 		payload := map[string]any{"name": "K-3"}
 		body, _ := json.Marshal(payload)
 
-		req := httptest.NewRequest("POST", "/v1/admin/location_groups", bytes.NewReader(body))
+		req := httptest.NewRequest(http.MethodPost, "/v1/admin/location_groups", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := app.Test(req)
 		require.NoError(t, err)
@@ -47,7 +48,7 @@ func TestController_PostCreateLocationGroup(t *testing.T) {
 		payload := map[string]any{"name": "   "}
 		body, _ := json.Marshal(payload)
 
-		req := httptest.NewRequest("POST", "/v1/admin/location_groups", bytes.NewReader(body))
+		req := httptest.NewRequest(http.MethodPost, "/v1/admin/location_groups", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := app.Test(req)
 		require.NoError(t, err)
@@ -73,7 +74,7 @@ func TestController_PatchUpdateLocationGroup(t *testing.T) {
 		payload := map[string]any{"name": "Renamed"}
 		body, _ := json.Marshal(payload)
 
-		req := httptest.NewRequest("PATCH", "/v1/admin/location_groups/"+itoa(created.ID), bytes.NewReader(body))
+		req := httptest.NewRequest(http.MethodPatch, "/v1/admin/location_groups/"+itoa(created.ID), bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := app.Test(req)
 		require.NoError(t, err)
@@ -89,7 +90,7 @@ func TestController_PatchUpdateLocationGroup(t *testing.T) {
 		payload := map[string]any{"name": "Whatever"}
 		body, _ := json.Marshal(payload)
 
-		req := httptest.NewRequest("PATCH", "/v1/admin/location_groups/999999", bytes.NewReader(body))
+		req := httptest.NewRequest(http.MethodPatch, "/v1/admin/location_groups/999999", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := app.Test(req)
 		require.NoError(t, err)
@@ -113,7 +114,7 @@ func TestController_DeleteLocationGroup(t *testing.T) {
 		created, err := locRepo.CreateLocationGroup(t.Context(), location.LocationGroup{Name: "Unused"})
 		require.NoError(t, err)
 
-		req := httptest.NewRequest("DELETE", "/v1/admin/location_groups/"+itoa(created.ID), nil)
+		req := httptest.NewRequest(http.MethodDelete, "/v1/admin/location_groups/"+itoa(created.ID), nil)
 		resp, err := app.Test(req)
 		require.NoError(t, err)
 		assert.Equal(t, fiber.StatusNoContent, resp.StatusCode)
@@ -135,14 +136,14 @@ func TestController_DeleteLocationGroup(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		req := httptest.NewRequest("DELETE", "/v1/admin/location_groups/"+itoa(created.ID), nil)
+		req := httptest.NewRequest(http.MethodDelete, "/v1/admin/location_groups/"+itoa(created.ID), nil)
 		resp, err := app.Test(req)
 		require.NoError(t, err)
 		assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
 	})
 
 	t.Run("unknown group returns not found", func(t *testing.T) {
-		req := httptest.NewRequest("DELETE", "/v1/admin/location_groups/999999", nil)
+		req := httptest.NewRequest(http.MethodDelete, "/v1/admin/location_groups/999999", nil)
 		resp, err := app.Test(req)
 		require.NoError(t, err)
 		assert.Equal(t, fiber.StatusNotFound, resp.StatusCode)

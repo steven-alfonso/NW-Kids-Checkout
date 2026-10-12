@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 
@@ -37,7 +39,7 @@ func TestController_GetEventByID(t *testing.T) {
 	insertedID, _ := res.LastInsertId()
 
 	t.Run("success", func(t *testing.T) {
-		req := httptest.NewRequest("GET", fmt.Sprintf("/v1/events/%d", insertedID), nil)
+		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/v1/events/%d", insertedID), nil)
 		resp, err := app.Test(req)
 		require.NoError(t, err)
 		require.Equal(t, fiber.StatusOK, resp.StatusCode)
@@ -51,17 +53,18 @@ func TestController_GetEventByID(t *testing.T) {
 	})
 
 	t.Run("not found", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/v1/events/9999", nil)
+		req := httptest.NewRequest(http.MethodGet, "/v1/events/9999", nil)
 		resp, err := app.Test(req)
 		require.NoError(t, err)
 		assert.Equal(t, fiber.StatusNotFound, resp.StatusCode)
 	})
 
 	t.Run("invalid id", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/v1/events/not-a-number", nil)
+		req := httptest.NewRequest(http.MethodGet, "/v1/events/not-a-number", nil)
 		resp, err := app.Test(req)
 		require.NoError(t, err)
 		assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
+		assert.Equal(t, "invalid id", bodyString(t, resp.Body))
 	})
 }
 
@@ -96,7 +99,7 @@ func TestController_PostCreateEvent(t *testing.T) {
 		}, nil
 	}
 
-	req := httptest.NewRequest("POST", "/v1/admin/events", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/v1/admin/events", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := app.Test(req)
 	require.NoError(t, err)
@@ -121,7 +124,7 @@ func TestController_PostCreateEvent_MissingPlanningCenterID(t *testing.T) {
 	controller.client = &planningcenter.MockClient{}
 	controller.RegisterRoutes(app)
 
-	req := httptest.NewRequest("POST", "/v1/admin/events", bytes.NewReader([]byte(`{}`)))
+	req := httptest.NewRequest(http.MethodPost, "/v1/admin/events", bytes.NewReader([]byte(`{}`)))
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := app.Test(req)
 	require.NoError(t, err)
@@ -163,7 +166,7 @@ func TestController_PostCreateEvent_SyncExisting(t *testing.T) {
 		return []planningcenter.Location{{ID: "loc-1", Name: "Room A"}}, nil
 	}
 
-	req := httptest.NewRequest("POST", "/v1/admin/events", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/v1/admin/events", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := app.Test(req)
 	require.NoError(t, err)
@@ -195,7 +198,7 @@ func TestController_GetEventByPlanningCenterID(t *testing.T) {
 	insertedID, _ := res.LastInsertId()
 	require.NotZero(t, insertedID)
 
-	req := httptest.NewRequest("GET", "/v1/admin/events/lookup?planning_center_id=pc_evt_22", nil)
+	req := httptest.NewRequest(http.MethodGet, "/v1/admin/events/lookup?planning_center_id=pc_evt_22", nil)
 	resp, err := app.Test(req)
 	require.NoError(t, err)
 	require.Equal(t, fiber.StatusOK, resp.StatusCode)
@@ -208,14 +211,14 @@ func TestController_GetEventByPlanningCenterID(t *testing.T) {
 	assert.Equal(t, "pc_evt_22", payload.PlanningCenterID)
 
 	t.Run("not found", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/v1/admin/events/lookup?planning_center_id=missing", nil)
+		req := httptest.NewRequest(http.MethodGet, "/v1/admin/events/lookup?planning_center_id=missing", nil)
 		resp, err := app.Test(req)
 		require.NoError(t, err)
 		require.Equal(t, fiber.StatusNotFound, resp.StatusCode)
 	})
 
 	t.Run("missing query", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/v1/admin/events/lookup", nil)
+		req := httptest.NewRequest(http.MethodGet, "/v1/admin/events/lookup", nil)
 		resp, err := app.Test(req)
 		require.NoError(t, err)
 		require.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
@@ -263,7 +266,7 @@ func TestController_GetEventCheckWindows(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Run("success", func(t *testing.T) {
-		req := httptest.NewRequest("GET", fmt.Sprintf("/v1/admin/events/%d/check-windows", eventID), nil)
+		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/v1/admin/events/%d/check-windows", eventID), nil)
 		resp, err := app.Test(req)
 		require.NoError(t, err)
 		require.Equal(t, fiber.StatusOK, resp.StatusCode)
@@ -285,7 +288,7 @@ func TestController_GetEventCheckWindows(t *testing.T) {
 		require.NoError(t, err)
 		otherEventID, _ := otherRes.LastInsertId()
 
-		req := httptest.NewRequest("GET", fmt.Sprintf("/v1/admin/events/%d/check-windows", otherEventID), nil)
+		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/v1/admin/events/%d/check-windows", otherEventID), nil)
 		resp, err := app.Test(req)
 		require.NoError(t, err)
 		require.Equal(t, fiber.StatusOK, resp.StatusCode)
@@ -297,10 +300,11 @@ func TestController_GetEventCheckWindows(t *testing.T) {
 	})
 
 	t.Run("invalid event id", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/v1/admin/events/not-a-number/check-windows", nil)
+		req := httptest.NewRequest(http.MethodGet, "/v1/admin/events/not-a-number/check-windows", nil)
 		resp, err := app.Test(req)
 		require.NoError(t, err)
 		assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
+		assert.Equal(t, "invalid event id", bodyString(t, resp.Body))
 	})
 }
 
@@ -332,7 +336,7 @@ func TestController_PostCreateCheckWindow(t *testing.T) {
 		}
 		body, _ := json.Marshal(payload)
 
-		req := httptest.NewRequest("POST", fmt.Sprintf("/v1/admin/events/%d/check-windows", eventID), bytes.NewReader(body))
+		req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/v1/admin/events/%d/check-windows", eventID), bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := app.Test(req)
 		require.NoError(t, err)
@@ -356,7 +360,7 @@ func TestController_PostCreateCheckWindow(t *testing.T) {
 		}
 		body, _ := json.Marshal(payload)
 
-		req := httptest.NewRequest("POST", fmt.Sprintf("/v1/admin/events/%d/check-windows", eventID), bytes.NewReader(body))
+		req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/v1/admin/events/%d/check-windows", eventID), bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := app.Test(req)
 		require.NoError(t, err)
@@ -373,7 +377,7 @@ func TestController_PostCreateCheckWindow(t *testing.T) {
 		}
 		body, _ := json.Marshal(payload)
 
-		req := httptest.NewRequest("POST", "/v1/admin/events/not-a-number/check-windows", bytes.NewReader(body))
+		req := httptest.NewRequest(http.MethodPost, "/v1/admin/events/not-a-number/check-windows", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := app.Test(req)
 		require.NoError(t, err)
@@ -390,7 +394,7 @@ func TestController_PostCreateCheckWindow(t *testing.T) {
 		}
 		body, _ := json.Marshal(payload)
 
-		req := httptest.NewRequest("POST", fmt.Sprintf("/v1/admin/events/%d/check-windows", 999999), bytes.NewReader(body))
+		req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/v1/admin/events/%d/check-windows", 999999), bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := app.Test(req)
 		require.NoError(t, err)
@@ -434,7 +438,7 @@ func TestController_PutUpdateCheckWindow(t *testing.T) {
 		}
 		body, _ := json.Marshal(payload)
 
-		req := httptest.NewRequest("PUT", fmt.Sprintf("/v1/admin/events/%d/check-windows/%d", eventID, windowID), bytes.NewReader(body))
+		req := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/v1/admin/events/%d/check-windows/%d", eventID, windowID), bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := app.Test(req)
 		require.NoError(t, err)
@@ -457,7 +461,7 @@ func TestController_PutUpdateCheckWindow(t *testing.T) {
 		}
 		body, _ := json.Marshal(payload)
 
-		req := httptest.NewRequest("PUT", fmt.Sprintf("/v1/admin/events/%d/check-windows/9999", eventID), bytes.NewReader(body))
+		req := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/v1/admin/events/%d/check-windows/9999", eventID), bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := app.Test(req)
 		require.NoError(t, err)
@@ -474,11 +478,12 @@ func TestController_PutUpdateCheckWindow(t *testing.T) {
 		}
 		body, _ := json.Marshal(payload)
 
-		req := httptest.NewRequest("PUT", fmt.Sprintf("/v1/admin/events/%d/check-windows/not-a-number", eventID), bytes.NewReader(body))
+		req := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/v1/admin/events/%d/check-windows/not-a-number", eventID), bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := app.Test(req)
 		require.NoError(t, err)
 		assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
+		assert.Equal(t, "invalid window id", bodyString(t, resp.Body))
 	})
 
 	t.Run("window belongs to another event", func(t *testing.T) {
@@ -510,7 +515,7 @@ func TestController_PutUpdateCheckWindow(t *testing.T) {
 		// ownedWindowID belongs to eventID; the URL uses a different event, so
 		// the update must be rejected rather than silently mutating another
 		// event's window.
-		req := httptest.NewRequest("PUT", fmt.Sprintf("/v1/admin/events/%d/check-windows/%d", otherEventID, ownedWindowID), bytes.NewReader(body))
+		req := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/v1/admin/events/%d/check-windows/%d", otherEventID, ownedWindowID), bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := app.Test(req)
 		require.NoError(t, err)
@@ -558,24 +563,25 @@ func TestController_DeleteCheckWindow(t *testing.T) {
 	windowID, _ := windowRes.LastInsertId()
 
 	t.Run("success", func(t *testing.T) {
-		req := httptest.NewRequest("DELETE", fmt.Sprintf("/v1/admin/events/%d/check-windows/%d", eventID, windowID), nil)
+		req := httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/v1/admin/events/%d/check-windows/%d", eventID, windowID), nil)
 		resp, err := app.Test(req)
 		require.NoError(t, err)
 		require.Equal(t, fiber.StatusNoContent, resp.StatusCode)
 	})
 
 	t.Run("not found", func(t *testing.T) {
-		req := httptest.NewRequest("DELETE", fmt.Sprintf("/v1/admin/events/%d/check-windows/9999", eventID), nil)
+		req := httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/v1/admin/events/%d/check-windows/9999", eventID), nil)
 		resp, err := app.Test(req)
 		require.NoError(t, err)
 		assert.Equal(t, fiber.StatusNotFound, resp.StatusCode)
 	})
 
 	t.Run("invalid window id", func(t *testing.T) {
-		req := httptest.NewRequest("DELETE", fmt.Sprintf("/v1/admin/events/%d/check-windows/not-a-number", eventID), nil)
+		req := httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/v1/admin/events/%d/check-windows/not-a-number", eventID), nil)
 		resp, err := app.Test(req)
 		require.NoError(t, err)
 		assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
+		assert.Equal(t, "invalid window id", bodyString(t, resp.Body))
 	})
 
 	t.Run("window belongs to another event", func(t *testing.T) {
@@ -597,7 +603,7 @@ func TestController_DeleteCheckWindow(t *testing.T) {
 
 		// ownedWindowID belongs to eventID; the URL uses a different event, so
 		// the delete must be rejected rather than removing another event's window.
-		req := httptest.NewRequest("DELETE", fmt.Sprintf("/v1/admin/events/%d/check-windows/%d", otherEventID, ownedWindowID), nil)
+		req := httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/v1/admin/events/%d/check-windows/%d", otherEventID, ownedWindowID), nil)
 		resp, err := app.Test(req)
 		require.NoError(t, err)
 		assert.Equal(t, fiber.StatusNotFound, resp.StatusCode)
@@ -638,7 +644,7 @@ func TestController_PatchUpdateEvent(t *testing.T) {
 		}
 		body, _ := json.Marshal(payload)
 
-		req := httptest.NewRequest("PATCH", fmt.Sprintf("/v1/admin/events/%d", eventID), bytes.NewReader(body))
+		req := httptest.NewRequest(http.MethodPatch, fmt.Sprintf("/v1/admin/events/%d", eventID), bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := app.Test(req)
 		require.NoError(t, err)
@@ -656,7 +662,7 @@ func TestController_PatchUpdateEvent(t *testing.T) {
 		}
 		body, _ := json.Marshal(payload)
 
-		req := httptest.NewRequest("PATCH", fmt.Sprintf("/v1/admin/events/%d", eventID), bytes.NewReader(body))
+		req := httptest.NewRequest(http.MethodPatch, fmt.Sprintf("/v1/admin/events/%d", eventID), bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := app.Test(req)
 		require.NoError(t, err)
@@ -674,7 +680,7 @@ func TestController_PatchUpdateEvent(t *testing.T) {
 		}
 		body, _ := json.Marshal(payload)
 
-		req := httptest.NewRequest("PATCH", "/v1/admin/events/9999", bytes.NewReader(body))
+		req := httptest.NewRequest(http.MethodPatch, "/v1/admin/events/9999", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := app.Test(req)
 		require.NoError(t, err)
@@ -687,15 +693,16 @@ func TestController_PatchUpdateEvent(t *testing.T) {
 		}
 		body, _ := json.Marshal(payload)
 
-		req := httptest.NewRequest("PATCH", "/v1/admin/events/not-a-number", bytes.NewReader(body))
+		req := httptest.NewRequest(http.MethodPatch, "/v1/admin/events/not-a-number", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := app.Test(req)
 		require.NoError(t, err)
 		assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
+		assert.Equal(t, "invalid event id", bodyString(t, resp.Body))
 	})
 
 	t.Run("invalid json", func(t *testing.T) {
-		req := httptest.NewRequest("PATCH", fmt.Sprintf("/v1/admin/events/%d", eventID), bytes.NewReader([]byte("not json")))
+		req := httptest.NewRequest(http.MethodPatch, fmt.Sprintf("/v1/admin/events/%d", eventID), bytes.NewReader([]byte("not json")))
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := app.Test(req)
 		require.NoError(t, err)
@@ -735,7 +742,7 @@ func TestController_PatchUpdateEvent_withLocationGroup(t *testing.T) {
 		}
 		body, _ := json.Marshal(payload)
 
-		req := httptest.NewRequest("PATCH", fmt.Sprintf("/v1/admin/events/%d", eventID), bytes.NewReader(body))
+		req := httptest.NewRequest(http.MethodPatch, fmt.Sprintf("/v1/admin/events/%d", eventID), bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := app.Test(req)
 		require.NoError(t, err)
@@ -754,7 +761,7 @@ func TestController_PatchUpdateEvent_withLocationGroup(t *testing.T) {
 		}
 		body, _ := json.Marshal(payload)
 
-		req := httptest.NewRequest("PATCH", fmt.Sprintf("/v1/admin/events/%d", eventID), bytes.NewReader(body))
+		req := httptest.NewRequest(http.MethodPatch, fmt.Sprintf("/v1/admin/events/%d", eventID), bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := app.Test(req)
 		require.NoError(t, err)
@@ -772,7 +779,7 @@ func TestController_PatchUpdateEvent_withLocationGroup(t *testing.T) {
 		}
 		body, _ := json.Marshal(payload)
 
-		req := httptest.NewRequest("PATCH", fmt.Sprintf("/v1/admin/events/%d", eventID), bytes.NewReader(body))
+		req := httptest.NewRequest(http.MethodPatch, fmt.Sprintf("/v1/admin/events/%d", eventID), bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := app.Test(req)
 		require.NoError(t, err)
@@ -799,23 +806,32 @@ func TestController_DeleteEvent(t *testing.T) {
 	eventID, _ := eventRes.LastInsertId()
 
 	t.Run("success", func(t *testing.T) {
-		req := httptest.NewRequest("DELETE", fmt.Sprintf("/v1/admin/events/%d", eventID), nil)
+		req := httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/v1/admin/events/%d", eventID), nil)
 		resp, err := app.Test(req)
 		require.NoError(t, err)
 		assert.Equal(t, fiber.StatusNoContent, resp.StatusCode)
 	})
 
 	t.Run("not found", func(t *testing.T) {
-		req := httptest.NewRequest("DELETE", fmt.Sprintf("/v1/admin/events/%d", 99999), nil)
+		req := httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/v1/admin/events/%d", 99999), nil)
 		resp, err := app.Test(req)
 		require.NoError(t, err)
 		assert.Equal(t, fiber.StatusNotFound, resp.StatusCode)
 	})
 
 	t.Run("invalid id", func(t *testing.T) {
-		req := httptest.NewRequest("DELETE", "/v1/admin/events/not-a-number", nil)
+		req := httptest.NewRequest(http.MethodDelete, "/v1/admin/events/not-a-number", nil)
 		resp, err := app.Test(req)
 		require.NoError(t, err)
 		assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
+		assert.Equal(t, "invalid event id", bodyString(t, resp.Body))
 	})
+}
+
+// bodyString reads a response body as a string for error-message assertions.
+func bodyString(t *testing.T, r io.Reader) string {
+	t.Helper()
+	b, err := io.ReadAll(r)
+	require.NoError(t, err)
+	return string(b)
 }

@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -40,7 +41,7 @@ func TestController_AdminPages(t *testing.T) {
 	}
 
 	for _, path := range paths {
-		req := httptest.NewRequest("GET", path, nil)
+		req := httptest.NewRequest(http.MethodGet, path, nil)
 		resp, err := app.Test(req)
 		require.NoError(t, err)
 		require.Equal(t, fiber.StatusOK, resp.StatusCode, "path %s", path)

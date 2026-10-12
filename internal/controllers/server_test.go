@@ -4,6 +4,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -62,7 +63,7 @@ func setupHomeApp() (*fiber.App, *session.Store) {
 
 func getHomeHTML(t *testing.T, app *fiber.App) string {
 	t.Helper()
-	req := httptest.NewRequest("GET", "/", nil)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	resp, err := app.Test(req)
 	require.NoError(t, err)
 	require.Equal(t, fiber.StatusOK, resp.StatusCode)
@@ -72,10 +73,10 @@ func getHomeHTML(t *testing.T, app *fiber.App) string {
 }
 
 func TestHomePageMenu(t *testing.T) {
-	t.Run("admin sees guest, manual, admin, logout but no login link", func(t *testing.T) {
+	t.Run("admin sees manual, admin, logout but no login or guest link", func(t *testing.T) {
 		app, _ := setupHomeApp()
 		html := getHomeHTML(t, app)
-		assert.Contains(t, html, `id="guest-checkin-link"`)
+		assert.NotContains(t, html, `id="guest-checkin-link"`)
 		assert.Contains(t, html, `id="manual-checkins-link"`)
 		assert.Contains(t, html, `id="admin-link"`)
 		assert.Contains(t, html, `id="logout-link"`)
@@ -90,7 +91,9 @@ func TestHomePageMenu(t *testing.T) {
 
 		html := getHomeHTML(t, app)
 		assert.Contains(t, html, `id="login-link"`)
-		assert.Contains(t, html, `href="/guest-checkin"`)
+		assert.Contains(t, html, `id="manual-checkins-link"`)
+		assert.NotContains(t, html, `id="guest-checkin-link"`)
+		assert.NotContains(t, html, `href="/guest-checkin"`)
 		assert.NotContains(t, html, "id=\"admin-link\"")
 		assert.NotContains(t, html, "id=\"logout-link\"")
 		assert.False(t, strings.Contains(html, `href="/admin"`), "home HTML must not expose /admin href")
@@ -112,8 +115,41 @@ func TestHomePage_SessionErrorReturns500(t *testing.T) {
 	app.Use(recover.New())
 	app.Get("/", homePageHandler(&errSessionStore{}))
 
-	req := httptest.NewRequest("GET", "/", nil)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	resp, err := app.Test(req)
 	require.NoError(t, err)
 	assert.Equal(t, fiber.StatusInternalServerError, resp.StatusCode)
+}
+
+func TestStaticCacheControl(t *testing.T) {
+	t.Run("dev forbids reuse outright", func(t *testing.T) {
+		t.Setenv("ENVIRONMENT", "dev")
+		assert.Equal(t, "no-store", staticCacheControl(),
+			"no-cache is unenforceable without an ETag or Last-Modified to revalidate against")
+	})
+
+	t.Run("production stays immutable", func(t *testing.T) {
+		t.Setenv("ENVIRONMENT", "production")
+		assert.Equal(t, "public, max-age=31536000, immutable", staticCacheControl())
+	})
+
+	// A container that forgets ENVIRONMENT should not lose production caching.
+	t.Run("unset environment is treated as production", func(t *testing.T) {
+		t.Setenv("ENVIRONMENT", "")
+		assert.Equal(t, "public, max-age=31536000, immutable", staticCacheControl(),
+			"an unset ENVIRONMENT must not silently downgrade to dev caching")
+	})
+}
+
+func TestShouldSuppressListenError(t *testing.T) {
+	bindErr := errors.New("failed to listen: address already in use")
+	serveErr := errors.New("accept tcp: too many open files")
+
+	assert.False(t, shouldSuppressListenError(nil, true))
+	assert.False(t, shouldSuppressListenError(nil, false))
+	assert.False(t, shouldSuppressListenError(bindErr, true),
+		"a bind failure racing cancel must surface, not exit 0 with no server")
+	assert.False(t, shouldSuppressListenError(bindErr, false))
+	assert.True(t, shouldSuppressListenError(serveErr, true))
+	assert.False(t, shouldSuppressListenError(serveErr, false))
 }

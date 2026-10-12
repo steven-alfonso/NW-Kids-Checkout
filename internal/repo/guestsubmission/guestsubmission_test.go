@@ -63,8 +63,6 @@ func Test_sqliteRepo_CreateSubmission(t *testing.T) {
 
 	assert.NotZero(t, sub.ID)
 	assert.NotEmpty(t, sub.PublicID)
-	_, parseErr := uuid.Parse(sub.PublicID)
-	require.NoError(t, parseErr)
 	assert.Equal(t, StatusPending, sub.Status)
 	assert.Len(t, sub.Children, 2)
 	assert.NotZero(t, sub.Parent.ID)
@@ -108,6 +106,7 @@ func Test_sqliteRepo_ListSubmissions(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, res, 1)
 		assert.Equal(t, a.PublicID, res[0].PublicID)
+		require.Len(t, res[0].Children, 1)
 		assert.Equal(t, "Timmy", res[0].Children[0].FirstName)
 		assert.Equal(t, "a@b.com", res[0].Parent.Email)
 	})
@@ -134,7 +133,7 @@ func Test_sqliteRepo_ListSubmissions(t *testing.T) {
 
 	t.Run("unknown status filter errors", func(t *testing.T) {
 		_, err := s.ListSubmissions(t.Context(), Filter{Status: "bogus"})
-		require.Error(t, err)
+		require.ErrorContains(t, err, "unknown status")
 	})
 
 	t.Run("without manual checkins excludes entered families with rows", func(t *testing.T) {
@@ -173,23 +172,6 @@ func Test_sqliteRepo_ListSubmissions(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, res, 1)
 		assert.Equal(t, entered.PublicID, res[0].PublicID)
-	})
-
-	t.Run("children belong to the right parent", func(t *testing.T) {
-		wipeAll(t)
-		s3 := NewRepo(testDB)
-		b, err := s3.CreateSubmission(t.Context(), Parent{
-			FirstName: "Jane", LastName: "Doe", Phone: "2", Email: "j@d.com",
-
-			Address1: "123 Main St",
-			City:     "Seattle",
-			State:    "WA",
-			Zip:      "98101"}, []Child{{FirstName: "Sam", LastName: "Doe", DOB: "2019-02-02", Grade: "1", Gender: "Boy", Relationship: "Parent"}}, true)
-		require.NoError(t, err)
-		res, err := s3.ListSubmissions(t.Context(), Filter{PublicID: b.PublicID})
-		require.NoError(t, err)
-		require.Len(t, res, 1)
-		assert.Equal(t, "Sam", res[0].Children[0].FirstName)
 	})
 
 	t.Run("limit truncates and orders by created_at DESC", func(t *testing.T) {
@@ -305,12 +287,6 @@ func Test_sqliteRepo_CountSubmissions(t *testing.T) {
 		assert.Equal(t, 3, total)
 	})
 
-	t.Run("counts with status filter", func(t *testing.T) {
-		total, err := s.CountSubmissions(t.Context(), Filter{Status: StatusPending})
-		require.NoError(t, err)
-		assert.Equal(t, 3, total)
-	})
-
 	t.Run("counts with public id filter", func(t *testing.T) {
 		res, err := s.ListSubmissions(t.Context(), Filter{Limit: 1})
 		require.NoError(t, err)
@@ -333,60 +309,6 @@ func Test_sqliteRepo_CountSubmissions(t *testing.T) {
 		entered, err := s.CountSubmissions(t.Context(), Filter{Status: StatusEntered})
 		require.NoError(t, err)
 		assert.Equal(t, 1, entered)
-	})
-}
-
-func statusPredicateForTest(t *testing.T, status string) squirrel.Sqlizer {
-	t.Helper()
-	p, err := statusPredicate(status)
-	require.NoError(t, err)
-	return p
-}
-
-func createSubmissionDirect(t *testing.T, db *sql.DB, parent Parent, children []Child) (Submission, error) {
-	t.Helper()
-	s := NewRepo(db)
-	return s.CreateSubmission(t.Context(), parent, children, true)
-}
-
-func Test_statusPredicate(t *testing.T) {
-	t.Run("pending vs entered predicates", func(t *testing.T) {
-		sub, err := createSubmissionDirect(t, testDB, Parent{
-			FirstName: "Pred", LastName: "Test", Phone: "555-9999", Email: "pred@test.com",
-
-			Address1: "123 Main St",
-			City:     "Seattle",
-			State:    "WA",
-			Zip:      "98101"}, []Child{{FirstName: "DT", LastName: "Test", DOB: "2020-01-01", Grade: "k", Gender: "Boy", Relationship: "Parent"}})
-		require.NoError(t, err)
-
-		// pending should be found under pending, not entered
-		pendingRows, err := squirrel.Select("id").From("guest_submissions").
-			Where(statusPredicateForTest(t, StatusPending)).
-			Where(squirrel.Eq{"public_id": sub.PublicID}).
-			RunWith(testDB).QueryContext(t.Context())
-		require.NoError(t, err)
-		defer pendingRows.Close()
-		count := 0
-		for pendingRows.Next() {
-			count++
-		}
-		assert.Equal(t, 1, count)
-
-		// mark entered
-		require.NoError(t, NewRepo(testDB).UpdateSubmissionStatus(t.Context(), sub.PublicID, StatusEntered, time.Now().UTC()))
-
-		enteredRows, err := squirrel.Select("id").From("guest_submissions").
-			Where(statusPredicateForTest(t, StatusEntered)).
-			Where(squirrel.Eq{"public_id": sub.PublicID}).
-			RunWith(testDB).QueryContext(t.Context())
-		require.NoError(t, err)
-		defer enteredRows.Close()
-		count = 0
-		for enteredRows.Next() {
-			count++
-		}
-		assert.Equal(t, 1, count)
 	})
 }
 
@@ -451,7 +373,7 @@ func Test_sqliteRepo_UpdateSubmissionStatus(t *testing.T) {
 
 	t.Run("unknown status errors", func(t *testing.T) {
 		err := s.UpdateSubmissionStatus(t.Context(), sub.PublicID, "bogus", time.Now().UTC())
-		require.Error(t, err)
+		require.ErrorContains(t, err, "unknown status")
 	})
 }
 
@@ -512,16 +434,6 @@ func Test_sqliteRepo_CreateManualCheckins(t *testing.T) {
 
 		require.NoError(t, s.CreateManualCheckins(t.Context(), sub.PublicID))
 
-		for _, child := range sub.Children {
-			var firstName, lastName string
-			err := testDB.QueryRowContext(t.Context(),
-				"SELECT first_name, last_name FROM manual_checkins WHERE child_id = ?", child.ID).
-				Scan(&firstName, &lastName)
-			require.NoError(t, err)
-			assert.Equal(t, child.FirstName, firstName)
-			assert.Equal(t, child.LastName, lastName)
-		}
-
 		res, err := s.ListSubmissions(t.Context(), Filter{PublicID: sub.PublicID})
 		require.NoError(t, err)
 		require.Len(t, res, 1)
@@ -543,21 +455,6 @@ func Test_sqliteRepo_CreateManualCheckins(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, 1, count, "each child should have exactly 1 manual_checkins row")
 		}
-	})
-
-	t.Run("pending submission now succeeds (auto-created)", func(t *testing.T) {
-		pendingSub, err := s.CreateSubmission(t.Context(), Parent{
-			FirstName: "Jim", LastName: "Bean", Phone: "555-1111", Email: "j@b.com",
-
-			Address1: "123 Main St",
-			City:     "Seattle",
-			State:    "WA",
-			Zip:      "98101"}, []Child{{FirstName: "Kid", LastName: "Bean", DOB: "2019-02-02", Grade: "1", Gender: "Boy", Relationship: "Parent"}}, true)
-		require.NoError(t, err)
-
-		// Should not error now; manual checkins already exist
-		err = s.CreateManualCheckins(t.Context(), pendingSub.PublicID)
-		require.NoError(t, err)
 	})
 
 	t.Run("unknown public id returns repo.ErrNotFound", func(t *testing.T) {

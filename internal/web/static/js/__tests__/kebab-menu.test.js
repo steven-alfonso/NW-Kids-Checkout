@@ -12,7 +12,7 @@ function menuHtml() {
         <body>
             <button id="menu-button" type="button" aria-expanded="false" aria-controls="kebab-menu"></button>
             <div id="kebab-menu" class="hidden">
-                <a id="guest-checkin-link" href="/guest-checkin">Guest Check-In</a>
+                <a id="manual-checkins-link" href="/manual-checkins">Manual Check-Ins</a>
                 <a id="login-link" href="/login?next=/">Log In</a>
             </div>
         </body></html>`;
@@ -92,13 +92,13 @@ describe('kebab-menu', () => {
         window.setupKebabMenu();
         const button = window.document.getElementById('menu-button');
         const menu = window.document.getElementById('kebab-menu');
-        const guest = window.document.getElementById('guest-checkin-link');
+        const manual = window.document.getElementById('manual-checkins-link');
 
         button.click();
         expect(menu.classList.contains('hidden')).toBe(false);
 
-        guest.addEventListener('click', (event) => event.preventDefault());
-        guest.dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
+        manual.addEventListener('click', (event) => event.preventDefault());
+        manual.dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
         expect(menu.classList.contains('hidden')).toBe(true);
     });
 

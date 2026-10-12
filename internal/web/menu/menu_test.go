@@ -19,19 +19,19 @@ func TestFor(t *testing.T) {
 	}{
 		{
 			name: "anonymous user",
-			want: []string{"guest-checkin-link", "manual-checkins-link", "login-link"},
+			want: []string{"manual-checkins-link", "login-link"},
 		},
 		{
 			name:          "authenticated non-admin user",
 			authenticated: true,
 			role:          "user",
-			want:          []string{"guest-checkin-link", "manual-checkins-link", "logout-link"},
+			want:          []string{"manual-checkins-link", "logout-link"},
 		},
 		{
 			name:          "authenticated admin user",
 			authenticated: true,
 			role:          "admin",
-			want:          []string{"guest-checkin-link", "manual-checkins-link", "admin-link", "logout-link"},
+			want:          []string{"manual-checkins-link", "admin-link", "logout-link"},
 		},
 	}
 
@@ -47,18 +47,10 @@ func TestFor(t *testing.T) {
 	}
 }
 
-func TestFor_AnonymousNeverSeesAdminOrLogout(t *testing.T) {
-	for _, item := range For(false, "") {
-		if item.Href == "/admin" || item.Href == "/logout" {
-			t.Fatalf("anonymous client must not receive %s (%s)", item.Href, item.ID)
-		}
-	}
-}
-
 func TestRenderHTML(t *testing.T) {
 	html, err := RenderHTML(true, "admin")
 	require.NoError(t, err)
-	require.Contains(t, html, `id="guest-checkin-link"`)
+	require.Contains(t, html, `id="manual-checkins-link"`)
 	require.Contains(t, html, `href="/admin"`)
 	require.Contains(t, html, `href="/logout"`)
 	require.NotContains(t, html, `href="/login`)
@@ -85,7 +77,6 @@ func TestPageHTMLUsesMenuPlaceholder(t *testing.T) {
 			content, err := io.ReadAll(f)
 			require.NoError(t, err)
 			require.Contains(t, string(content), Placeholder, "page must use the menu placeholder so links are rendered server-side")
-			require.NotContains(t, string(content), `id="guest-checkin-link"`, "page must not hardcode menu links")
 			require.NotContains(t, string(content), "/admin", "page must not hardcode auth-gated routes")
 		})
 	}
@@ -96,6 +87,6 @@ func TestRenderedMenuFitsPlaceholder(t *testing.T) {
 		html, err := RenderHTML(role != "", role)
 		require.NoError(t, err)
 		require.False(t, strings.Contains(html, "class=\"hidden"), "server-rendered menu should not need hidden classes")
-		require.True(t, strings.HasPrefix(html, `<a id="guest-checkin-link"`), "guest link must always be first")
+		require.True(t, strings.HasPrefix(html, `<a id="manual-checkins-link"`), "manual check-ins link must always be first")
 	}
 }

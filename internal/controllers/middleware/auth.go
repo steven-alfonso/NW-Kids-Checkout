@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 
 	"kids-checkin/internal/controllers/session"
 	"kids-checkin/internal/web/static"
@@ -22,30 +23,38 @@ func AuthRequired(sessionStore session.Storer, allowedRoles ...string) fiber.Han
 		if sess.Get("authenticated") != true {
 			// For API/JSON clients, return JSON instead of redirecting to login page
 			// (which would cause fetch to receive HTML and hang on JSON parse).
-			// Note: Fiber's Accepts returns the first offered type when no Accept header is sent,
-			// so we only use it when the header is present; otherwise treat as HTML.
 			acceptHeader := c.Get("Accept")
-			isAPI := false
+
+			// An Accept header is a deliberate statement of what the client can
+			// read, so honor it in preference to the path heuristic below. A
+			// browser navigation asks for text/html, so it gets the login page;
+			// fetch sends */*, which Fiber resolves to the first offered type
+			// (JSON), so it gets a 401 it can act on.
+			//
+			// A client that accepts neither type tells us nothing, so fall
+			// through to the path heuristic rather than guessing JSON. Fiber
+			// also reports "" for media types carrying parameters the offer
+			// lacks (text/html;charset=utf-8) and compares types
+			// case-sensitively, both of which are ambiguous rather than
+			// evidence of an API client.
 			if acceptHeader != "" {
-				accepts := c.Accepts(fiber.MIMEApplicationJSON, fiber.MIMETextHTML)
-				isAPI = accepts == fiber.MIMEApplicationJSON
+				switch c.Accepts(fiber.MIMEApplicationJSON, fiber.MIMETextHTML) {
+				case fiber.MIMETextHTML:
+					return redirectToLogin(c)
+				case fiber.MIMEApplicationJSON:
+					return unauthorized(c)
+				}
 			}
-			// Also treat /v1/ and /api/ paths as API even if Accept is ambiguous
+
+			// Nothing to go on: either no Accept header, or one that accepts
+			// neither type. /v1/ is overwhelmingly JSON API, but checkouts.html
+			// is served from /v1/ too, so this is a heuristic and not a rule.
+			// /api/ has no guarded routes today and is kept for symmetry.
 			path := c.Path()
-			if !isAPI && len(path) >= 4 && path[:4] == "/v1/" {
-				isAPI = true
+			if strings.HasPrefix(path, "/v1/") || strings.HasPrefix(path, "/api/") {
+				return unauthorized(c)
 			}
-			if !isAPI && len(path) >= 5 && path[:5] == "/api/" {
-				isAPI = true
-			}
-			if isAPI {
-				return c.Status(http.StatusUnauthorized).JSON(fiber.Map{"error": "Unauthorized"})
-			}
-			requestedURL := c.OriginalURL()
-			if requestedURL == "" {
-				requestedURL = c.Path()
-			}
-			return c.Redirect(fmt.Sprintf("/login?next=%s", url.QueryEscape(requestedURL)))
+			return redirectToLogin(c)
 		}
 
 		userRole, ok := sess.Get("role").(string)
@@ -73,4 +82,27 @@ func AuthRequired(sessionStore session.Storer, allowedRoles ...string) fiber.Han
 
 		return c.Status(http.StatusForbidden).JSON(fiber.Map{"error": "Forbidden: Insufficient permissions"})
 	}
+}
+
+// unauthorized answers an unauthenticated API caller with JSON. A redirect
+// would hand the caller the login page's HTML and break its JSON parsing.
+func unauthorized(c *fiber.Ctx) error {
+	// This response is chosen by Accept, so a shared cache must not hand the
+	// JSON 401 to a browser that would have been redirected (or vice versa).
+	c.Vary(fiber.HeaderAccept)
+	return c.Status(http.StatusUnauthorized).JSON(fiber.Map{"error": "Unauthorized"})
+}
+
+// redirectToLogin sends an unauthenticated browser to the login page,
+// remembering where it was headed.
+func redirectToLogin(c *fiber.Ctx) error {
+	c.Vary(fiber.HeaderAccept)
+	// OriginalURL, not Path: the checkouts page is always reached with a
+	// query string carrying the user's location-group and time filters, and
+	// login.go hands this value back verbatim as the post-login destination.
+	requestedURL := c.OriginalURL()
+	if requestedURL == "" {
+		requestedURL = c.Path()
+	}
+	return c.Redirect(fmt.Sprintf("/login?next=%s", url.QueryEscape(requestedURL)))
 }

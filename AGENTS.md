@@ -13,13 +13,18 @@ This file guides coding agents working in this repo. Keep changes small, follow 
 - Run checkout fetcher worker: `make checkout-fetcher`
 
 ### Database tasks
-- Reset DB: `make db-reset`
+- Reset DB (empty schema): `make db-reset`
+- Build dev DB (schema + Planning Center reference topology): `make db-init`
 - Run migrations: `make db-migrate`
 - Create migration: `make db-new-migration NAME=<migration_name>`
 - Seed DB: `make db-seed`
+- Add random per-visit check-in data: `make random-data`
 
 ### Tests
-- Run all tests: `make test` (runs `godotenv go test ./...`)
+- Run all tests: `make test` (runs `go test ./...` + `-tags dev ./...` + `npm test` via godotenv)
+- CI runs `go test` directly rather than through `make test`: godotenv exits
+  non-zero when `.env` is absent, and it is gitignored. No test reads a real
+  `.env`; the ones that care about a variable set it with `t.Setenv`.
 - Run a single package: `godotenv go test ./internal/repo/checkin`
 - Run a single test: `godotenv go test ./internal/repo/checkin -run Test_sqliteRepo_ListCheckins`
 - Run a subtest: `godotenv go test ./internal/repo/checkin -run Test_sqliteRepo_ListCheckins/filter_by_location_ID`
@@ -33,10 +38,12 @@ This file guides coding agents working in this repo. Keep changes small, follow 
 ### Lint/format
 - Lint: no dedicated lint config found.
 - Format: use `gofmt` (Go standard). Use `go fmt ./...` before committing when editing Go code.
+- CI enforces `gofmt -l .` and `go vet ./...` (plus `-tags dev`), so an
+  unformatted file or a vet failure fails the build. `.github/workflows/ci.yml`.
 
 ## Repo structure and key tech
 
-- Language: Go 1.25 (see `go.mod`).
+- Language: Go 1.27 (see `go.mod`).
 - Web framework: Fiber (`github.com/gofiber/fiber/v2`).
 - CLI: `urfave/cli/v3`.
 - Database: SQLite with `squirrel` query builder.
@@ -47,9 +54,14 @@ This file guides coding agents working in this repo. Keep changes small, follow 
 
 - Entry point: `main.go` calls `internal/cmd` to build the CLI.
 - CLI commands: `internal/cmd/*` (e.g., `apiserver`, `checkout-fetcher`).
+- Standalone mains live in `cmd/` (`randomdata`, `assets`): directory names are
+  Go paths, so no hyphens even when the make target keeps one (`make random-data`).
 - HTTP controllers: `internal/controllers/*` (versioned packages like `checkinv1`).
 - Repos and DB access: `internal/repo/*` using `squirrel` and `context.Context`.
-- DB helpers: `internal/db/*` (test DB prep, DB init).
+- Two packages are named `db`: the Go package `internal/db/*` (DB init, the
+  shared `--db-file` flag, test DB prep) and the `kids-checkin/db` package,
+  which embeds `structure.sql` and holds the snapshot drift test. The `db/`
+  directory is otherwise data: migrations and `structure.sql`.
 - Static web assets: `internal/web/static` (embedded FS via `cmd/assets`).
 - Migrations: `db/migrations` and schema snapshots in `db/structure.sql`.
 - Domain helpers/constants: `internal/static`.
@@ -83,6 +95,10 @@ This file guides coding agents working in this repo. Keep changes small, follow 
 - Pass `context.Context` to repo methods and DB queries (pattern in `internal/repo/*`).
 - Use `t.Context()` in tests for DB operations.
 - Avoid `context.Background()` inside request handlers unless you explicitly need to decouple from the request.
+- Entrypoints (`main.go`, `cmd/*`) run under `signal.NotifyContext`, never bare
+  `Background`. `StartServer` takes that ctx and shuts Fiber down on cancel.
+  The checkout-fetcher manages SIGINT/SIGTERM itself for its two-stage
+  graceful drain — do not add a second signal handler around it.
 
 ### Time handling
 - Store timestamps in UTC when persisting to DB (`time.Now().UTC()`), as seen in repos.
@@ -131,8 +147,62 @@ This file guides coding agents working in this repo. Keep changes small, follow 
 - When adding assets, check the embedding pipeline in `cmd/assets`.
 - Tailwind output lives at `internal/web/static/css/tailwind.css`.
 
+### Database paths
+- The database file path is defined **once**, as `db.DefaultDBFile`, and must
+  match `KIDS_CHECKIN_DB_FILE` in the Makefile. Commands get it from
+  `db.DBFileFlag()`; never spell out a path or define your own `db-file` flag.
+- Precedence is `--db-file` > `$DB_FILE` > `db.DefaultDBFile`. Do not set
+  `DB_FILE` in `.env` — the default already matches the Makefile, and an extra
+  copy is what let the two drift apart before. The Dockerfile's
+  `DB_FILE=/data/kids-checkin.db` is a deliberate override for the container
+  volume.
+- Two tests in `internal/cmd/dbfile_test.go` guard this:
+  `TestDefaultDBFileMatchesMakefile` ties the constant to the Makefile, and
+  `TestEnvExampleDoesNotPinDBFile` keeps `.env.example` free of `DB_FILE`.
+  (An AST guard suite once policed every `InitDB` call site and flag
+  definition; it was removed as overbuilt — a cross-file const or a func-param
+  handoff walked through it, while legitimate refactors tripped it. The two
+  tests above plus review are the guard now.)
+- A command in a separate `main` package (today `cmd/randomdata`) is invisible
+  to any tree walk: mount `db.DBFileFlag()` there too, by hand.
+
+### Schema
+- Migrations are applied by the `migrate` CLI, **not** by the application
+  binary. `db/structure.sql` is the snapshot `make db-migrate` generates from
+  them; the test database and `make db-init` load that snapshot via the embedded
+  `db.Schema` (`db/db.go`).
+- `db/structure_test.go` fails if the snapshot drifts from the migrations.
+
+### Dev-only commands
+- `make db-init` builds a development database (schema + the real Planning
+  Center reference topology in `internal/cmd/dbinit/fixture.json`).
+- The `db-init` command is behind the `//go:build dev` tag, so it is absent from
+  production binaries, and it refuses to run unless `static.IsDev()`. A new
+  dev-only command should do both. `make db-init` applies `-tags dev` itself,
+  and sets `ENVIRONMENT=dev` so the target does not depend on `.env` carrying
+  the right value. It still requires a `.env` file to exist -- `godotenv` exits
+  non-zero without one -- so `cp .env.example .env` remains step one.
+  `make db-init FORCE=1` passes `--force` to rebuild: the file is removed and
+  recreated from the snapshot, so `fiber_storage` sessions go with it.
+- Its tests are behind the same tag, so `make test` runs `-tags dev ./...` as
+  well; without that, `internal/cmd/dbinit` is skipped entirely.
+- Every target touching the database file `mkdir -p`s its parent, and
+  `db.InitDB` does too for direct binary runs. `database/` is gitignored, so
+  it is absent on a fresh clone and sqlite3 creates a missing file but never
+  a missing directory.
+
 ### Dev-only assets (debug tooling)
 - Dev/debug tools live in `internal/web/dev-assets/` and are served at `/static/dev/*` **only when `ENVIRONMENT=dev`** (via `static.IsDev()`); in production they 404 and are not embedded into the binary. See `internal/web/dev-assets/README.md`.
+- `static.DevAssetsDir` resolves from `runtime.Caller`, which `-trimpath` rewrites
+  to a module-relative path, so the candidate is verified before it is trusted and
+  a walk up from the working directory backs it up.
+  `internal/web/static/static_test.go` covers the walk. Without both,
+  `TestReadDevAsset` fails under `go test -trimpath ./...` — a failure a plain
+  `go test ./...` cannot see, which is why CI runs that pass.
+- **Never put a non-`*.test.js` file under `internal/web/static/`.** That
+  directory is embedded wholesale by `//go:embed *`, so a shared test helper
+  placed there ships in the production binary. Shared test support goes in
+  `test-support/` at the repository root, which is also in `.dockerignore`.
 - Add a new tool by dropping the file in `internal/web/dev-assets/` and referencing it from a page handler (inject the `<script>` tag in the page's HTML handler when `static.IsDev()`, mirroring the `checkoutsWeb` preview.js pattern).
 - Helpers: `static.DevAssetsDir`, `static.ReadDevAsset(filename)`, `static.IsDev()`.
 

@@ -2,7 +2,10 @@ package checkinv1
 
 import (
 	"bytes"
+	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -28,9 +31,18 @@ import (
 
 	"github.com/gofiber/contrib/websocket"
 	"github.com/gofiber/fiber/v2"
+	"go.opentelemetry.io/otel/trace"
 )
 
 const defaultCheckedOutAfterDelta = -12 * time.Hour
+
+// Ceiling on an explicit ?limit=, well above the 100 the UI asks for. The repo
+// skips its LIMIT clause when filter.Limit is 0, so an unbounded caller gets
+// the whole table -- every child's name, security_code, and checkout time.
+//
+// Only an explicit limit is capped. Omitting ?limit= is still unbounded,
+// which is what manual-checkins.js relies on today.
+const maxCheckoutsLimit = 1000
 
 type Controller struct {
 	checkinRepo  checkin.Repo
@@ -175,10 +187,67 @@ func (controller *Controller) checkoutsWeb(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
 	}
 
-	return c.JSON(CheckoutsResponse{
+	return sendCheckoutsJSON(c, CheckoutsResponse{
 		Checkins:       repoCheckinSliceToOutput(checkins),
 		ManualCheckins: repoManualCheckinSliceToOutput(manualCheckins),
 	})
+}
+
+// sendCheckoutsJSON writes the poll payload with a validator so the client's 3s
+// poll can revalidate instead of re-downloading an unchanged list. The checkouts
+// page polls far more often than the data changes, so most responses collapse
+// to an empty 304.
+func sendCheckoutsJSON(c *fiber.Ctx, payload CheckoutsResponse) error {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "could not encode checkouts")
+	}
+
+	// Weak validator: the identity representation is hashed here, but gzip may
+	// content-code it on the way out, and a weak tag is the correct validator
+	// when a weak transformation like compression is applied (RFC 9110 8.8.1).
+	sum := sha256.Sum256(body)
+	etag := `W/"` + hex.EncodeToString(sum[:16]) + `"`
+
+	// no-cache (not no-store) so the browser keeps the body and revalidates it
+	// on the next poll instead of refetching every time.
+	c.Set(fiber.HeaderCacheControl, "no-cache")
+	// Vary on Accept-Encoding because compression re-encodes the body, and on
+	// Accept because this route content-negotiates: the same path serves HTML
+	// or this payload depending on the request's Accept header.
+	c.Vary(fiber.HeaderAcceptEncoding, fiber.HeaderAccept)
+	c.Set(fiber.HeaderETag, etag)
+
+	if etagMatches(c.Get(fiber.HeaderIfNoneMatch), etag) {
+		return c.SendStatus(fiber.StatusNotModified)
+	}
+
+	// Set the content type directly rather than via c.Type, which treats its
+	// argument as a file extension and would fall back to octet-stream.
+	c.Set(fiber.HeaderContentType, fiber.MIMEApplicationJSON)
+	return c.Send(body)
+}
+
+// etagMatches reports whether an If-None-Match header covers the current etag.
+// The header may carry a list and may use the weak W/ prefix on either side.
+func etagMatches(ifNoneMatch, etag string) bool {
+	if ifNoneMatch == "" {
+		return false
+	}
+	if strings.TrimSpace(ifNoneMatch) == "*" {
+		return true
+	}
+	candidate := strings.TrimPrefix(etag, "W/")
+	for _, part := range strings.Split(ifNoneMatch, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		if strings.TrimPrefix(part, "W/") == candidate {
+			return true
+		}
+	}
+	return false
 }
 
 func (controller *Controller) checkoutsWebsocket(c *fiber.Ctx) error {
@@ -189,9 +258,16 @@ func (controller *Controller) checkoutsWebsocket(c *fiber.Ctx) error {
 		controller.wsClients[webscocketConn] = &wsClient{
 			checkedOutAfterDelta: defaultCheckedOutAfterDelta,
 		}
+		// Span-aware but still request-cancelled: otelfiber keeps the span in
+		// UserContext (Background-derived, never cancels), while c.Context()
+		// (fasthttp ctx) stays valid until the socket closes and drives
+		// websocketQueryShouldBreak. Parenting the span onto the request
+		// context gives DB spans + trace-correlated logs without losing the
+		// fast teardown on disconnect.
+		wsCtx := trace.ContextWithSpan(c.Context(), trace.SpanFromContext(c.UserContext()))
 		// c.Locals is added to the *websocket.Conn
 		slog.InfoContext(
-			c.UserContext(),
+			wsCtx,
 			"client connected to websocket",
 			slog.String("allowed", fmt.Sprintf("%v", webscocketConn.Locals("allowed"))),
 			slog.String("id", webscocketConn.Params("id")),
@@ -208,34 +284,49 @@ func (controller *Controller) checkoutsWebsocket(c *fiber.Ctx) error {
 
 		for {
 			if mt, msg, err = webscocketConn.ReadMessage(); err != nil {
-				log.WarnContext(c.UserContext(), "error reading from websocket", slog.String("error", err.Error()), slog.Any("err", err))
+				log.WarnContext(wsCtx, "error reading from websocket", slog.String("error", err.Error()), slog.Any("err", err))
 				delete(controller.wsClients, webscocketConn)
 				break
 			}
 			filter := CheckinFilter{}
 			err = json.Unmarshal(msg, &filter)
 			if err != nil {
-				log.WarnContext(c.UserContext(), "cannot unmarshal filter", slog.String("error", err.Error()), slog.Any("err", err))
+				log.WarnContext(wsCtx, "cannot unmarshal filter", slog.String("error", err.Error()), slog.Any("err", err))
 				continue
 			}
 
-			log.InfoContext(c.UserContext(), "recv filter", slog.String("filter", fmt.Sprintf("%+v", filter)))
+			log.InfoContext(wsCtx, "recv filter", slog.String("filter", fmt.Sprintf("%+v", filter)))
 
-			checkins, err := controller.checkinRepo.ListCheckins(c.UserContext(), checkin.Filter{
+			// Tied to the request context, not Background: websocket.New runs
+			// synchronously within the request lifetime, so wsCtx (span
+			// parented onto c.Context()) stays valid until the socket closes
+			// and gives faster teardown than a decoupled context. A cancelled
+			// request aborts in-flight queries and breaks the loop (see
+			// websocketQueryShouldBreak) instead of idling until the next
+			// client message.
+			checkins, err := controller.checkinRepo.ListCheckins(wsCtx, checkin.Filter{
 				LocationName:      controller.wsClients[webscocketConn].location,
 				CheckedOutAtAfter: time.Now().Add(controller.wsClients[webscocketConn].checkedOutAfterDelta),
 			})
 			if err != nil {
-				log.ErrorContext(c.UserContext(), "cannot list checkins", slog.String("error", err.Error()), slog.Any("err", err))
+				log.ErrorContext(wsCtx, "cannot list checkins", slog.String("error", err.Error()), slog.Any("err", err))
+				if websocketQueryShouldBreak(wsCtx) {
+					delete(controller.wsClients, webscocketConn)
+					break
+				}
 				continue
 			}
 
-			manualCheckins, err := controller.manualRepo.ListManualCheckins(c.UserContext(), manualcheckin.Filter{
+			manualCheckins, err := controller.manualRepo.ListManualCheckins(wsCtx, manualcheckin.Filter{
 				CheckedOutAtAfter: time.Now().Add(controller.wsClients[webscocketConn].checkedOutAfterDelta),
 				Recent:            true,
 			})
 			if err != nil {
-				log.ErrorContext(c.UserContext(), "cannot list manual checkins", slog.String("error", err.Error()), slog.Any("err", err))
+				log.ErrorContext(wsCtx, "cannot list manual checkins", slog.String("error", err.Error()), slog.Any("err", err))
+				if websocketQueryShouldBreak(wsCtx) {
+					delete(controller.wsClients, webscocketConn)
+					break
+				}
 				continue
 			}
 
@@ -246,12 +337,12 @@ func (controller *Controller) checkoutsWebsocket(c *fiber.Ctx) error {
 				ManualCheckins: repoManualCheckinSliceToOutput(manualCheckins),
 			})
 			if err != nil {
-				log.ErrorContext(c.UserContext(), "cannot marshal checkins", slog.String("error", err.Error()), slog.Any("err", err))
+				log.ErrorContext(wsCtx, "cannot marshal checkins", slog.String("error", err.Error()), slog.Any("err", err))
 				continue
 			}
 
 			if err = webscocketConn.WriteMessage(mt, msg); err != nil {
-				log.WarnContext(c.UserContext(), "cannot write to websocket", slog.String("error", err.Error()))
+				log.WarnContext(wsCtx, "cannot write to websocket", slog.String("error", err.Error()))
 				webscocketConn.Close()
 
 				delete(controller.wsClients, webscocketConn)
@@ -333,8 +424,13 @@ func buildFilter(c *fiber.Ctx) (checkin.Filter, error) {
 		if err != nil {
 			return checkin.Filter{}, errors.New("cannot parse limit")
 		}
-		if limitInt < 0 {
+		// <= 0, not < 0: the repo treats Limit 0 as no limit at all, so
+		// accepting it returned the whole checkins table.
+		if limitInt <= 0 {
 			return checkin.Filter{}, errors.New("limit must be positive")
+		}
+		if limitInt > maxCheckoutsLimit {
+			return checkin.Filter{}, fmt.Errorf("limit must not exceed %d", maxCheckoutsLimit)
 		}
 		filter.Limit = limitInt
 	}
@@ -392,7 +488,7 @@ func parseLocationGroupIDs(c *fiber.Ctx) ([]int64, error) {
 		if parseErr != nil || string(key) != "location_group_id" {
 			return
 		}
-		for _, part := range strings.Split(string(value), ",") {
+		for part := range strings.SplitSeq(string(value), ",") {
 			part = strings.TrimSpace(part)
 			if part == "" {
 				continue
@@ -542,4 +638,11 @@ type CheckinFilter struct {
 	Location         string    `json:"location"`
 	CheckedOutBefore time.Time `json:"checked_out_before"`
 	CheckedOutAfter  time.Time `json:"checked_out_after"`
+}
+
+// websocketQueryShouldBreak reports whether a checkouts-websocket list error
+// should close the loop. A cancelled request context means every future query
+// fails the same way, so break instead of idling until the next message.
+func websocketQueryShouldBreak(ctx context.Context) bool {
+	return ctx.Err() != nil
 }

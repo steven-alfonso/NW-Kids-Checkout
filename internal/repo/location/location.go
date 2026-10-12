@@ -103,11 +103,18 @@ func (r *sqliteRepo) CreateLocationGroup(ctx context.Context, lg LocationGroup) 
 		Columns("name").
 		Values(lg.Name).
 		SuffixExpr(squirrel.Expr("ON CONFLICT(name) DO UPDATE SET name = ?", lg.Name))
-	res, err := builder.ExecContext(ctx)
-	if err != nil {
+	if _, err := builder.ExecContext(ctx); err != nil {
 		return LocationGroup{}, fmt.Errorf("inserting location group: %w", err)
 	}
-	lg.ID, _ = res.LastInsertId()
+	// LastInsertId is only valid on the insert path: on the conflict path the
+	// statement is an UPDATE and sqlite3_last_insert_rowid() is stale (the
+	// previous insert's rowid, or 0). Callers use the returned ID as the FK
+	// for every room in the group, so resolve it authoritatively.
+	var id int64
+	if err := squirrel.Select("id").From("location_groups").Where(squirrel.Eq{"name": lg.Name}).RunWith(r.db).QueryRowContext(ctx).Scan(&id); err != nil {
+		return LocationGroup{}, fmt.Errorf("reading new location group id: %w", err)
+	}
+	lg.ID = id
 	return lg, nil
 }
 
@@ -271,14 +278,16 @@ func (r *sqliteRepo) CreateLocation(ctx context.Context, location Location) (Loc
 		Values(values...).
 		SuffixExpr(squirrel.Expr("ON CONFLICT(planning_center_id) DO UPDATE SET name = excluded.name"))
 
-	result, err := builder.ExecContext(ctx)
-	if err != nil {
+	if _, err := builder.ExecContext(ctx); err != nil {
 		return Location{}, fmt.Errorf("inserting location: %w", err)
 	}
 
-	id, err := result.LastInsertId()
-	if err != nil {
-		return Location{}, err
+	// Same stale-rowid trap as CreateLocationGroup: on the conflict path the
+	// statement is an UPDATE, so LastInsertId is meaningless. Resolve by
+	// natural key instead.
+	var id int64
+	if err := squirrel.Select("id").From("locations").Where(squirrel.Eq{"planning_center_id": location.PlanningCenterID}).RunWith(r.db).QueryRowContext(ctx).Scan(&id); err != nil {
+		return Location{}, fmt.Errorf("reading new location id: %w", err)
 	}
 
 	location.ID = id
