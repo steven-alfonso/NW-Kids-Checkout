@@ -31,6 +31,7 @@ import (
 
 	"github.com/gofiber/contrib/websocket"
 	"github.com/gofiber/fiber/v2"
+	"go.opentelemetry.io/otel/trace"
 )
 
 const defaultCheckedOutAfterDelta = -12 * time.Hour
@@ -165,14 +166,14 @@ func (controller *Controller) checkoutsWeb(c *fiber.Ctx) error {
 	}
 	manualFilter.Recent = true
 
-	checkins, err := controller.checkinRepo.ListCheckins(c.Context(), filter)
+	checkins, err := controller.checkinRepo.ListCheckins(c.UserContext(), filter)
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
 	}
 
 	var manualCheckins []manualcheckin.ManualCheckin
 	if !isLocationGroupFilterEmpty(c, filter) {
-		manualCheckins, err = controller.manualRepo.ListManualCheckins(c.Context(), manualFilter)
+		manualCheckins, err = controller.manualRepo.ListManualCheckins(c.UserContext(), manualFilter)
 		if err != nil {
 			return fiber.NewError(fiber.StatusInternalServerError, err.Error())
 		}
@@ -181,7 +182,7 @@ func (controller *Controller) checkoutsWeb(c *fiber.Ctx) error {
 
 	checkins = sortCheckins(checkins)
 
-	_, err = controller.locationRepo.ListLocations(c.Context(), location.LocationFilter{})
+	_, err = controller.locationRepo.ListLocations(c.UserContext(), location.LocationFilter{})
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
 	}
@@ -257,9 +258,16 @@ func (controller *Controller) checkoutsWebsocket(c *fiber.Ctx) error {
 		controller.wsClients[webscocketConn] = &wsClient{
 			checkedOutAfterDelta: defaultCheckedOutAfterDelta,
 		}
+		// Span-aware but still request-cancelled: otelfiber keeps the span in
+		// UserContext (Background-derived, never cancels), while c.Context()
+		// (fasthttp ctx) stays valid until the socket closes and drives
+		// websocketQueryShouldBreak. Parenting the span onto the request
+		// context gives DB spans + trace-correlated logs without losing the
+		// fast teardown on disconnect.
+		wsCtx := trace.ContextWithSpan(c.Context(), trace.SpanFromContext(c.UserContext()))
 		// c.Locals is added to the *websocket.Conn
 		slog.InfoContext(
-			c.Context(),
+			wsCtx,
 			"client connected to websocket",
 			slog.String("allowed", fmt.Sprintf("%v", webscocketConn.Locals("allowed"))),
 			slog.String("id", webscocketConn.Params("id")),
@@ -276,45 +284,46 @@ func (controller *Controller) checkoutsWebsocket(c *fiber.Ctx) error {
 
 		for {
 			if mt, msg, err = webscocketConn.ReadMessage(); err != nil {
-				log.WarnContext(c.Context(), "error reading from websocket", slog.String("error", err.Error()), slog.Any("err", err))
+				log.WarnContext(wsCtx, "error reading from websocket", slog.String("error", err.Error()), slog.Any("err", err))
 				delete(controller.wsClients, webscocketConn)
 				break
 			}
 			filter := CheckinFilter{}
 			err = json.Unmarshal(msg, &filter)
 			if err != nil {
-				log.WarnContext(c.Context(), "cannot unmarshal filter", slog.String("error", err.Error()), slog.Any("err", err))
+				log.WarnContext(wsCtx, "cannot unmarshal filter", slog.String("error", err.Error()), slog.Any("err", err))
 				continue
 			}
 
-			log.InfoContext(c.Context(), "recv filter", slog.String("filter", fmt.Sprintf("%+v", filter)))
+			log.InfoContext(wsCtx, "recv filter", slog.String("filter", fmt.Sprintf("%+v", filter)))
 
 			// Tied to the request context, not Background: websocket.New runs
-			// synchronously within the request lifetime, so c.Context() stays
-			// valid until the socket closes and gives faster teardown than a
-			// decoupled context. A cancelled request aborts in-flight queries
-			// and breaks the loop (see websocketQueryShouldBreak) instead of
-			// idling until the next client message.
-			checkins, err := controller.checkinRepo.ListCheckins(c.Context(), checkin.Filter{
+			// synchronously within the request lifetime, so wsCtx (span
+			// parented onto c.Context()) stays valid until the socket closes
+			// and gives faster teardown than a decoupled context. A cancelled
+			// request aborts in-flight queries and breaks the loop (see
+			// websocketQueryShouldBreak) instead of idling until the next
+			// client message.
+			checkins, err := controller.checkinRepo.ListCheckins(wsCtx, checkin.Filter{
 				LocationName:      controller.wsClients[webscocketConn].location,
 				CheckedOutAtAfter: time.Now().Add(controller.wsClients[webscocketConn].checkedOutAfterDelta),
 			})
 			if err != nil {
-				log.ErrorContext(c.Context(), "cannot list checkins", slog.String("error", err.Error()), slog.Any("err", err))
-				if websocketQueryShouldBreak(c.Context()) {
+				log.ErrorContext(wsCtx, "cannot list checkins", slog.String("error", err.Error()), slog.Any("err", err))
+				if websocketQueryShouldBreak(wsCtx) {
 					delete(controller.wsClients, webscocketConn)
 					break
 				}
 				continue
 			}
 
-			manualCheckins, err := controller.manualRepo.ListManualCheckins(c.Context(), manualcheckin.Filter{
+			manualCheckins, err := controller.manualRepo.ListManualCheckins(wsCtx, manualcheckin.Filter{
 				CheckedOutAtAfter: time.Now().Add(controller.wsClients[webscocketConn].checkedOutAfterDelta),
 				Recent:            true,
 			})
 			if err != nil {
-				log.ErrorContext(c.Context(), "cannot list manual checkins", slog.String("error", err.Error()), slog.Any("err", err))
-				if websocketQueryShouldBreak(c.Context()) {
+				log.ErrorContext(wsCtx, "cannot list manual checkins", slog.String("error", err.Error()), slog.Any("err", err))
+				if websocketQueryShouldBreak(wsCtx) {
 					delete(controller.wsClients, webscocketConn)
 					break
 				}
@@ -328,12 +337,12 @@ func (controller *Controller) checkoutsWebsocket(c *fiber.Ctx) error {
 				ManualCheckins: repoManualCheckinSliceToOutput(manualCheckins),
 			})
 			if err != nil {
-				log.ErrorContext(c.Context(), "cannot marshal checkins", slog.String("error", err.Error()), slog.Any("err", err))
+				log.ErrorContext(wsCtx, "cannot marshal checkins", slog.String("error", err.Error()), slog.Any("err", err))
 				continue
 			}
 
 			if err = webscocketConn.WriteMessage(mt, msg); err != nil {
-				log.WarnContext(c.Context(), "cannot write to websocket", slog.String("error", err.Error()))
+				log.WarnContext(wsCtx, "cannot write to websocket", slog.String("error", err.Error()))
 				webscocketConn.Close()
 
 				delete(controller.wsClients, webscocketConn)
@@ -374,7 +383,7 @@ func (controller *Controller) PatchCheckedOutConfirmed(c *fiber.Ctx) error {
 	}
 	confirmed := *payload.Confirmed
 
-	updated, err := controller.checkinRepo.SetCheckedOutConfirmedAt(c.Context(), planningCenterID, confirmed)
+	updated, err := controller.checkinRepo.SetCheckedOutConfirmedAt(c.UserContext(), planningCenterID, confirmed)
 	if err != nil {
 		if errors.Is(err, repo.ErrNotFound) {
 			return fiber.NewError(fiber.StatusNotFound, "checkin not found")

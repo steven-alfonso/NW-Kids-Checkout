@@ -28,6 +28,13 @@ func (h *CaptureSlogHandler) Handle(_ context.Context, r slog.Record) error {
 func (h *CaptureSlogHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
 func (h *CaptureSlogHandler) WithGroup(string) slog.Handler      { return h }
 
+// Records returns a copy of the captured records.
+func (h *CaptureSlogHandler) Records() []slog.Record {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return append([]slog.Record(nil), h.records...)
+}
+
 // ContainsWarn reports whether any WARN record's message contains msgSubstr.
 func (h *CaptureSlogHandler) ContainsWarn(msgSubstr string) bool {
 	h.mu.Lock()
@@ -55,10 +62,20 @@ func (h *CaptureSlogHandler) ContainsError(msgSubstr string) bool {
 // ContainsErrorAttr reports whether any ERROR record has an attribute whose
 // key equals key and whose string value equals want.
 func (h *CaptureSlogHandler) ContainsErrorAttr(key, want string) bool {
+	return h.containsAttr(slog.LevelError, key, want)
+}
+
+// ContainsInfoAttr reports whether any INFO record has an attribute whose
+// key equals key and whose string value equals want.
+func (h *CaptureSlogHandler) ContainsInfoAttr(key, want string) bool {
+	return h.containsAttr(slog.LevelInfo, key, want)
+}
+
+func (h *CaptureSlogHandler) containsAttr(level slog.Level, key, want string) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	for _, r := range h.records {
-		if r.Level != slog.LevelError {
+		if r.Level != level {
 			continue
 		}
 		found := false

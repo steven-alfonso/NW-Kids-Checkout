@@ -8,8 +8,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
+	"github.com/XSAM/otelsql"
 	_ "github.com/mattn/go-sqlite3"
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/semconv/v1.37.0"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // DefaultDBFile is the path used when neither --db-file nor DB_FILE is set.
@@ -33,7 +38,46 @@ import (
 // path moves it once.
 const DefaultDBFile = "database/kids-checkin.db"
 
-// InitDB initializes the database connection.
+// RegisterOTelDriver registers the sqlite3 driver wrapped with OpenTelemetry
+// instrumentation exactly once per process, bound to the given providers.
+// Call it before the first InitDB when telemetry is enabled; InitDB falls back
+// to the raw driver otherwise. Registration is a no-op after the first call,
+// so the initial providers win regardless of later invocations.
+var (
+	driverOnce  sync.Once
+	driverName  string
+	registerErr error
+)
+
+func RegisterOTelDriver(tp trace.TracerProvider, mp metric.MeterProvider) error {
+	driverOnce.Do(func() {
+		driverName, registerErr = otelsql.Register(
+			"sqlite3",
+			otelsql.WithTracerProvider(tp),
+			otelsql.WithMeterProvider(mp),
+			otelsql.WithAttributes(semconv.DBSystemNameSQLite),
+		)
+		if registerErr != nil {
+			registerErr = fmt.Errorf("registering otel sqlite driver: %w", registerErr)
+			return
+		}
+		slog.Debug("registered otel-instrumented sqlite driver", slog.String("driver_name", driverName))
+	})
+	return registerErr
+}
+
+// InitDBInstrumented registers the OTel driver and opens an instrumented
+// database in one step, so callers cannot open the DB before registering and
+// silently run without instrumentation.
+func InitDBInstrumented(dataSourceName string, tp trace.TracerProvider, mp metric.MeterProvider) (*sql.DB, error) {
+	if err := RegisterOTelDriver(tp, mp); err != nil {
+		return nil, err
+	}
+	return InitDB(dataSourceName)
+}
+
+// InitDB initializes the database connection. It uses the OTel-instrumented
+// driver when RegisterOTelDriver has been called; the raw driver otherwise.
 func InitDB(dataSourceName string) (*sql.DB, error) {
 	dataSourceName = strings.TrimSpace(dataSourceName)
 	if dataSourceName == "" {
@@ -73,7 +117,12 @@ func InitDB(dataSourceName string) (*sql.DB, error) {
 		dsn = ensureDSNParam(dsn, kv[0], kv[1])
 	}
 
-	db, err := sql.Open("sqlite3", dsn)
+	name := "sqlite3"
+	if driverName != "" {
+		name = driverName
+	}
+
+	db, err := sql.Open(name, dsn)
 	if err != nil {
 		return nil, err
 	}
