@@ -21,10 +21,10 @@ The project is structured as a command-line application with commands:
 ```shell
 cp .env.example .env
 ```
-An empty `.env` works for local targets, but the file itself must exist:
-`godotenv` exits non-zero when `.env` is absent. Other targets read their
-configuration from it, so copying the example and filling it in remains
-step one.
+An empty `.env` works for `make db-init` (`ENVIRONMENT=dev` is set inline by the
+target), but the file itself must exist: `godotenv` exits non-zero when `.env`
+is absent. Other targets read their configuration from it, so copying the
+example and filling it in remains step one.
 
 `LOGIN_PASSWORD_ADMIN` and `LOGIN_PASSWORD_USER` take bcrypt hashes, not
 plaintext. Generate one with the same `golang.org/x/crypto/bcrypt` the login
@@ -58,12 +58,31 @@ inside an unquoted value and a bcrypt hash is mostly `$` signs, so unquoted the
 prefix is eaten and login fails with `?error=invalid` and nothing in the log to
 say why.
 
-2. Initialize and seed the database (schema plus the reference topology
-from the committed fixture):
+2. Build a development database with the Planning Center reference topology:
 ```shell
-make db-reset db-seed
+make db-init
 ```
-Add per-visit check-in data afterwards with `make random-data`.
+`db-init` applies the schema and seeds 2 events, 3 location groups, 33 rooms,
+and 2 check windows, using their real Planning Center ids. It only exists in
+builds made with the `dev` build tag and refuses to run unless
+`ENVIRONMENT=dev`, so it cannot touch a production database. Add per-visit
+check-in data afterwards with `make random-data`.
+
+Re-running it will not silently overwrite what is already there. If the database
+already has schema, `db-init` refuses and exits non-zero:
+
+```shell
+database/kids-checkin.db already has schema; re-run with --force to rebuild it
+```
+
+To rebuild one that already has schema, pass `FORCE=1`:
+```shell
+make db-init FORCE=1
+```
+`FORCE=1` removes the database file and rebuilds it from the snapshot,
+including any check-ins you have added since — and `fiber_storage` sessions
+go with the file, so developers are signed out. Only pass it when you intend to discard them -- otherwise use
+`make db-migrate` to apply new migrations to an existing database.
 3. In one terminal, start the checkout fetcher:
 ```shell
 make checkout-fetcher
@@ -158,21 +177,27 @@ npm run build:css
 To run the test suite, use the `test` target:
 
 ```sh
-make test
+make test       # go test, then -tags dev, then npm test
 ```
+
+CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs the Go suite
+(both tag sets) as required steps, along with `gofmt`, `go vet`, a build of the
+release entrypoint, and `npm test`, so it is the gate on a push. CI calls
+`go test` directly instead of through `make test` because `godotenv` exits
+non-zero when `.env` is absent, and `.env` is gitignored.
 
 ## Database
 
 The project uses SQLite for its database. Database migrations are managed with the `migrate` tool.
 
 - **Resetting the database (empty schema):** `make db-reset`
-- **Seeding the reference topology:** `make db-seed`
+- **Building a development database (schema + reference topology):** `make db-init`. Fails if the database already has schema; `make db-init FORCE=1` removes the file and rebuilds it.
 - **Running migrations:** `make db-migrate`
 - **Creating a new migration:** `make db-new-migration NAME=<migration_name>`
 
 Migrations are applied by the `migrate` CLI, not by the application binary.
 `db/structure.sql` is the snapshot `make db-migrate` generates from them, and
-it is what the test database loads. `db/structure_test.go` fails if
+it is what the test database and `db-init` load. `db/structure_test.go` fails if
 the snapshot drifts from the migrations.
 
 The database path is defined once, in `db.DefaultDBFile`, and every command
@@ -196,7 +221,8 @@ file. Move real data with `mkdir -p database && mv kids-checkin.db
 database/kids-checkin.db`, and pass `--db-file` explicitly (absolute path) in
 any service unit -- a relative default still resolves against the process CWD,
 so a wrong `WorkingDirectory` opens the wrong file. The binary logs the absolute
-path it opened.
+path it opened. `make db-seed` was replaced by `make db-init`; old runbooks calling it
+now get an explicit error pointing at the new target.
 
 ### Production Migrations
 Connect to a shell and run:

@@ -1,0 +1,95 @@
+package db
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
+	"runtime"
+	"strings"
+)
+
+// migrationsDir is the repository's db/migrations directory.
+//
+// Resolution prefers this source file's compile-time location (two directories
+// up from internal/db), verified before it is trusted, so a dev binary run
+// from an unrelated directory still stamps from this repository's tree rather
+// than the caller's. A -trimpath build rewrites runtime.Caller to a
+// module-relative path, so the preferred candidate may point at nothing; the
+// Getwd walk-up below backs it up (same pattern as static.DevAssetsDir).
+// It is only used by the dev-only db-init command and its tests, never in
+// production (the symbol still ships in prod builds -- it has no build tag --
+// but has no production caller).
+func migrationsDir() string {
+	if _, thisFile, _, ok := runtime.Caller(0); ok {
+		candidate := filepath.Join(filepath.Dir(thisFile), "..", "..", "db", "migrations")
+		if st, err := os.Stat(candidate); err == nil && st.IsDir() {
+			return candidate
+		}
+	}
+	if wd, err := os.Getwd(); err == nil {
+		for dir := wd; ; {
+			candidate := filepath.Join(dir, "db", "migrations")
+			if st, err := os.Stat(candidate); err == nil && st.IsDir() && isRepoRoot(dir) {
+				return candidate
+			}
+			parent := filepath.Dir(dir)
+			if parent == dir {
+				break
+			}
+			dir = parent
+		}
+		// No verified tree. Do not fall back to a CWD-relative guess: under
+		// -trimpath runtime.Caller is module-relative and unverifiable, so a
+		// relative guess would stamp from whatever db/migrations happens to
+		// sit near the working directory. Fail loudly instead.
+		return ""
+	}
+	return filepath.Join("db", "migrations")
+}
+
+// isRepoRoot reports whether dir is this module's root, so the Getwd walk-up
+// cannot mistake an unrelated directory's db/migrations for this repo's tree.
+func isRepoRoot(dir string) bool {
+	raw, err := os.ReadFile(filepath.Join(dir, "go.mod"))
+	if err != nil {
+		return false
+	}
+	return strings.HasPrefix(strings.TrimSpace(string(raw)), "module kids-checkin")
+}
+
+// migrationVersion matches the golang-migrate version prefix of a migration
+// filename, e.g. the 20260823160408 in 20260823160408_add_checkins.up.sqlite.
+var migrationVersion = regexp.MustCompile(`^(\d+)_`)
+
+// LatestMigrationVersion returns the version of the newest up-migration in
+// db/migrations, formatted the way the schema_migrations.version column
+// expects.
+//
+// This is only a version lookup, not a migration runner: migrations are applied
+// by the migrate CLI. What callers need is the stamp that keeps that CLI from
+// replaying every migration against a database already built from the current
+// schema snapshot.
+func LatestMigrationVersion() (string, error) {
+	dir := migrationsDir()
+	if dir == "" {
+		return "", fmt.Errorf("no verified db/migrations found: run db-init from the repository root")
+	}
+	names, err := filepath.Glob(filepath.Join(dir, "*.up.sqlite"))
+	if err != nil {
+		return "", fmt.Errorf("list migrations: %w", err)
+	}
+	if len(names) == 0 {
+		return "", fmt.Errorf("no migrations found in %s", dir)
+	}
+
+	// Glob sorts, and the fixed-width version prefix sorts the same way the
+	// filenames do -- the same assumption `make db-migrate` makes with
+	// `ls | sort | tail -1` -- so the last entry is the newest migration.
+	newest := names[len(names)-1]
+	match := migrationVersion.FindStringSubmatch(filepath.Base(newest))
+	if match == nil {
+		return "", fmt.Errorf("migration %q has no version prefix", filepath.Base(newest))
+	}
+	return match[1], nil
+}
