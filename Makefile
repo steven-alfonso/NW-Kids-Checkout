@@ -119,6 +119,9 @@ db-init:
 # Old entry point removed in favor of db-init. Fail loudly rather than
 # "No rule to make target" so runbooks referencing the old name learn the new one.
 .PHONY: db-seed
+# Seeds the reference topology from the committed fixture. The database path
+# is passed explicitly so this writes the same file the Makefile and the
+# binary default to; bin/db-seed takes it as $1 with $DB_FILE as fallback.
 db-seed:
 	$(error `make db-seed` was replaced by `make db-init` (schema + reference topology from fixture.json); run `make db-init` instead)
 

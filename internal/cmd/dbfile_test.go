@@ -22,8 +22,9 @@ func TestDefaultDBFileMatchesMakefile(t *testing.T) {
 	require.NoError(t, err)
 	// All assignments are checked: make uses last-wins, so checking only the
 	// first would stay green while `make db-reset` writes a second value.
-	// Target-specific assignments (`db-reset: VAR = ...`) are out of scope:
-	// the database path must stay a global.
+	// Target-specific assignments (`db-reset: VAR = ...`) do not match this
+	// regex; TestDefaultDBFileNoTargetSpecificOverride below asserts their
+	// absence, since the database path must stay a global.
 	m := regexp.MustCompile(`(?m)^\s*(?:export\s+)?KIDS_CHECKIN_DB_FILE\s*[:?+]?=\s*(\S+)`)
 	all := m.FindAllSubmatch(mk, -1)
 	require.NotEmpty(t, all, "KIDS_CHECKIN_DB_FILE not found in Makefile")
@@ -33,6 +34,31 @@ func TestDefaultDBFileMatchesMakefile(t *testing.T) {
 				db.DefaultDBFile, want)
 		}
 	}
+}
+
+// TestDefaultDBFileNoTargetSpecificOverride pins that the path stays a
+// global. A target-specific assignment (e.g. `db-reset:
+// KIDS_CHECKIN_DB_FILE = ...`) would not match the global regex above, so
+// the drift it reintroduces would stay green without this guard.
+func TestDefaultDBFileNoTargetSpecificOverride(t *testing.T) {
+	mk, err := os.ReadFile(filepath.Join("..", "..", "Makefile"))
+	require.NoError(t, err)
+	targetSpecific := regexp.MustCompile(`(?m)^[^:#\s][^:]*:\s*(?:export\s+)?KIDS_CHECKIN_DB_FILE\s*[:?+]?=`)
+	assert.NotRegexp(t, targetSpecific, string(mk),
+		"database path must stay a Makefile global; a target-specific override diverges silently")
+}
+
+// dbFileLinePattern matches a line that sets $DB_FILE. Case-sensitive: Unix
+// env vars are case-sensitive, so a lowercase db_file= line sets nothing.
+// Callers pass a TrimSpace'd line: godotenv trims leading whitespace, so an
+// indented line counts too.
+var dbFileLinePattern = regexp.MustCompile(`^(export\s+)?DB_FILE\s*=`)
+
+// dbFileLineSetsDBFile reports whether an .env.example line sets $DB_FILE.
+// Single definition of the guard so the case-sensitivity test below exercises
+// the same pattern the file scan uses, instead of a copy that could drift.
+func dbFileLineSetsDBFile(line string) bool {
+	return dbFileLinePattern.MatchString(strings.TrimSpace(line))
 }
 
 // .env is gitignored, so a DB_FILE line there is an invisible third copy of the
@@ -51,7 +77,19 @@ func TestEnvExampleDoesNotPinDBFile(t *testing.T) {
 			continue
 		}
 		// godotenv trims leading whitespace, so an indented line counts too.
-		assert.NotRegexp(t, `(?i)^(export\s+)?DB_FILE\s*=`, strings.TrimSpace(line),
+		// Case-sensitive: Unix env vars are case-sensitive, so a lowercase
+		// db_file= line would not set $DB_FILE and must not fail this test.
+		assert.False(t, dbFileLineSetsDBFile(line),
 			".env.example line %d must not set DB_FILE; the default already matches the Makefile", i+1)
 	}
+}
+
+func TestDBFileLineSetsDBFile(t *testing.T) {
+	assert.False(t, dbFileLineSetsDBFile("db_file=/tmp/other.db"))
+	assert.False(t, dbFileLineSetsDBFile("  db_file = /tmp/other.db"))
+	assert.True(t, dbFileLineSetsDBFile("DB_FILE=/tmp/other.db"))
+	assert.True(t, dbFileLineSetsDBFile("export DB_FILE=/tmp/other.db"))
+	assert.True(t, dbFileLineSetsDBFile("  DB_FILE = /tmp/other.db"),
+		"godotenv trims leading whitespace, so an indented line counts too")
+	assert.False(t, dbFileLineSetsDBFile("# DB_FILE=/tmp/other.db"))
 }

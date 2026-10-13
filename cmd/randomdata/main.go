@@ -34,6 +34,9 @@ func main() {
 				Name:  "count",
 				Usage: "number of records to create per type",
 				Value: 20,
+				// Deliberately flag-only: every sibling --db-file wires an env
+				// source, but a record count has no sensible environment
+				// default.
 			},
 		},
 		Action: run,
@@ -209,7 +212,10 @@ func seedCheckins(ctx context.Context, database *sql.DB, count int) error {
 	}
 
 	eventRepo := event.NewRepo(database)
-	events, _ := eventRepo.ListEvents(ctx, event.EventFilter{})
+	events, err := eventRepo.ListEvents(ctx, event.EventFilter{})
+	if err != nil {
+		return fmt.Errorf("listing events: %w", err)
+	}
 	var eventIDs []int64
 	for _, e := range events {
 		eventIDs = append(eventIDs, e.ID)

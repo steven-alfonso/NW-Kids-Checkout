@@ -159,3 +159,50 @@ func TestInitDB_createsParentDir(t *testing.T) {
 	_, err = os.Stat(filepath.Join(dir, "nested", "deep", "test.db"))
 	require.NoError(t, err, "InitDB must mkdir the parent; sqlite creates files, never directories")
 }
+
+func TestInitDB_logsStrippedPath(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	var logs bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	database, err := InitDB("relative.db?cache=shared")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = database.Close() })
+
+	want, err := filepath.Abs("relative.db")
+	require.NoError(t, err)
+	assert.Contains(t, logs.String(), want)
+	assert.NotContains(t, logs.String(), "cache=shared", "log must name the file, not the DSN query string")
+}
+
+func TestInitDB_logsFileURIVerbatim(t *testing.T) {
+	var logs bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	database, err := InitDB("file::memory:?cache=shared")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = database.Close() })
+
+	assert.Contains(t, logs.String(), "file::memory:?cache=shared")
+}
+
+func TestInitDB_logsMemoryVerbatim(t *testing.T) {
+	var logs bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	database, err := InitDB(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = database.Close() })
+
+	assert.Contains(t, logs.String(), ":memory:")
+	assert.NotContains(t, logs.String(), string(filepath.Separator)+":memory:",
+		"must not resolve :memory: against the working directory")
+}

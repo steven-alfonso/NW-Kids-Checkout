@@ -108,7 +108,7 @@ jobs:
       # classes the templates use.
       #
       # The Dockerfile's builder stage builds main.go directly rather than
-      # ./..., because ./... would also compile the dev-only cmd/random-data
+      # ./..., because ./... would also compile the dev-only cmd/randomdata
       # helper. This does the same, so a failure here is a failure in the
       # artifact that ships.
       - name: Build
