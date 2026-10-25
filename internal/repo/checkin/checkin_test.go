@@ -2,6 +2,7 @@ package checkin
 
 import (
 	"database/sql"
+	"fmt"
 	"log"
 	"os"
 	"testing"
@@ -831,4 +832,53 @@ func Test_sqliteRepo_CheckoutsVersion(t *testing.T) {
 		require.NoError(t, err)
 		assert.NotEqual(t, v1, v2)
 	})
+}
+
+func Benchmark_sqliteRepo_CheckoutsVersion(b *testing.B) {
+	_, err := squirrel.Delete("checkins").RunWith(testDB).ExecContext(b.Context())
+	require.NoError(b, err)
+	_, err = squirrel.Delete("manual_checkins").RunWith(testDB).ExecContext(b.Context())
+	require.NoError(b, err)
+	_, err = squirrel.Delete("locations").RunWith(testDB).ExecContext(b.Context())
+	require.NoError(b, err)
+
+	res, err := squirrel.Insert("locations").
+		RunWith(testDB).
+		Columns("name", "planning_center_id", "event_id").
+		Values("bench", "plloc_bench", 1).
+		ExecContext(b.Context())
+	require.NoError(b, err)
+	locID, _ := res.LastInsertId()
+
+	s := NewRepo(testDB)
+	for i := 0; i < 1000; i++ {
+		_, err := s.CreateCheckin(b.Context(), Checkin{
+			PlanningCenterID: fmt.Sprintf("plc_bench_%d", i),
+			LocationID:       locID,
+			FirstName:        "first",
+			LastName:         "last",
+			SecurityCode:     "ABC123",
+			CheckedOutAt:     time.Now().UTC().Add(-time.Minute),
+		})
+		require.NoError(b, err)
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, err := s.CheckoutsVersion(b.Context(), Filter{})
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func Benchmark_sqliteRepo_ListCheckins(b *testing.B) {
+	s := NewRepo(testDB)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, err := s.ListCheckins(b.Context(), Filter{})
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
 }
