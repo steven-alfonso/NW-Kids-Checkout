@@ -16,7 +16,7 @@ func Init(level slog.Leveler) {
 
 func replaceAttr(groups []string, a slog.Attr) slog.Attr {
 	if a.Key == slog.TimeKey {
-		a.Value = slog.StringValue(a.Value.Time().UTC().Format("2006-01-02T15:04:05.000Z07:00"))
+		a.Value = slog.StringValue(a.Value.Time().UTC().Format("2006-01-02T15:04:05.000Z"))
 	}
 	return a
 }
