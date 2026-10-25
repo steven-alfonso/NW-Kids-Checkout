@@ -784,3 +784,85 @@ func TestCheckouts_SessionStoreFailureDoesNotCrash(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, fiber.StatusInternalServerError, resp.StatusCode)
 }
+
+func TestController_Checkouts_hotPath(t *testing.T) {
+	app, store := setupAuthedApp()
+
+	testDB, cleanup, err := db.PrepareTestDB()
+	require.NoError(t, err)
+	t.Cleanup(cleanup)
+
+	NewController(testDB, store).RegisterRoutes(app)
+
+	_, err = testDB.Exec(`INSERT INTO location_groups (id, name) VALUES (7, 'grp7')`)
+	require.NoError(t, err)
+
+	locRes, err := squirrel.Insert("locations").
+		RunWith(testDB).
+		Columns("name", "planning_center_id", "event_id", "location_group_id").
+		Values("nursery", "plloc_hp", 1, 7).
+		ExecContext(t.Context())
+	require.NoError(t, err)
+	locationID, err := locRes.LastInsertId()
+	require.NoError(t, err)
+
+	checkinRepo := checkin.NewRepo(testDB)
+	_, err = checkinRepo.CreateCheckin(t.Context(), checkin.Checkin{
+		PlanningCenterID: "plc_hp",
+		LocationID:       locationID,
+		FirstName:        "hot",
+		LastName:         "path",
+		SecurityCode:     "ABC123",
+		CheckedOutAt:     time.Now().UTC().Add(-time.Minute),
+	})
+	require.NoError(t, err)
+
+	manualRepo := manualcheckin.NewRepo(testDB)
+	_, err = manualRepo.CreateManualCheckin(t.Context(), manualcheckin.ManualCheckin{
+		FirstName:    "manual",
+		LastName:     "hp",
+		CheckedOutAt: time.Now().UTC().Add(-time.Minute),
+	})
+	require.NoError(t, err)
+
+	poll := func(t *testing.T, ifNoneMatch string) *http.Response {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "/v1/checkins/checkouts?limit=100&checked_out_after=-20m", nil)
+		req.Header.Set("Accept", "application/json")
+		if ifNoneMatch != "" {
+			req.Header.Set("If-None-Match", ifNoneMatch)
+		}
+		resp, err := app.Test(req)
+		require.NoError(t, err)
+		return resp
+	}
+
+	t.Run("returns checkins and manual checkins with mapped group", func(t *testing.T) {
+		resp := poll(t, "")
+		defer resp.Body.Close()
+		require.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+		var payload CheckoutsResponse
+		require.NoError(t, json.NewDecoder(resp.Body).Decode(&payload))
+		require.Len(t, payload.Checkins, 1)
+		assert.Equal(t, "plc_hp", payload.Checkins[0].PlanningCenterID)
+		require.NotNil(t, payload.Checkins[0].LocationGroupID)
+		assert.Equal(t, int64(7), *payload.Checkins[0].LocationGroupID)
+		assert.Len(t, payload.ManualCheckins, 1)
+	})
+
+	t.Run("revalidates to 304 on unchanged poll", func(t *testing.T) {
+		first := poll(t, "")
+		etag := first.Header.Get("ETag")
+		require.NotEmpty(t, etag)
+		first.Body.Close()
+
+		second := poll(t, etag)
+		defer second.Body.Close()
+		assert.Equal(t, fiber.StatusNotModified, second.StatusCode)
+
+		body, err := io.ReadAll(second.Body)
+		require.NoError(t, err)
+		assert.Empty(t, body)
+	})
+}
