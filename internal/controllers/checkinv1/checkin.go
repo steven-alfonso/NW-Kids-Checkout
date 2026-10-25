@@ -181,11 +181,6 @@ func (controller *Controller) checkoutsWeb(c *fiber.Ctx) error {
 
 	checkins = sortCheckins(checkins)
 
-	_, err = controller.locationRepo.ListLocations(c.Context(), location.LocationFilter{})
-	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
-	}
-
 	return sendCheckoutsJSON(c, CheckoutsResponse{
 		Checkins:       repoCheckinSliceToOutput(checkins),
 		ManualCheckins: repoManualCheckinSliceToOutput(manualCheckins),
