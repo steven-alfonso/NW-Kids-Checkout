@@ -44,6 +44,7 @@ const defaultCheckedOutAfterDelta = -12 * time.Hour
 const maxCheckoutsLimit = 1000
 
 type Controller struct {
+	db           *sql.DB
 	checkinRepo  checkin.Repo
 	manualRepo   manualcheckin.Repo
 	locationRepo location.Repo
@@ -58,6 +59,7 @@ type wsClient struct {
 
 func NewController(db *sql.DB, sessionStore session.Storer) *Controller {
 	return &Controller{
+		db:           db,
 		checkinRepo:  checkin.NewRepo(db),
 		manualRepo:   manualcheckin.NewRepo(db),
 		locationRepo: location.NewRepo(db),
@@ -165,6 +167,22 @@ func (controller *Controller) checkoutsWeb(c *fiber.Ctx) error {
 	}
 	manualFilter.Recent = true
 
+	// Compute a cheap version token before touching the full result set. On
+	// an unchanged database (the common case for a 3s poll) this lets us
+	// answer with 304 without running the list queries or marshaling.
+	version, err := controller.checkoutsVersion(c.Context(), filter)
+	if err != nil {
+		// Fall back to the previous behavior if the version query fails.
+		version = ""
+	}
+
+	if version != "" && etagMatches(c.Get(fiber.HeaderIfNoneMatch), version) {
+		c.Set(fiber.HeaderCacheControl, "no-cache")
+		c.Vary(fiber.HeaderAcceptEncoding, fiber.HeaderAccept)
+		c.Set(fiber.HeaderETag, version)
+		return c.SendStatus(fiber.StatusNotModified)
+	}
+
 	checkins, err := controller.checkinRepo.ListCheckins(c.Context(), filter)
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
@@ -184,24 +202,116 @@ func (controller *Controller) checkoutsWeb(c *fiber.Ctx) error {
 	return sendCheckoutsJSON(c, CheckoutsResponse{
 		Checkins:       repoCheckinSliceToOutput(checkins),
 		ManualCheckins: repoManualCheckinSliceToOutput(manualCheckins),
-	})
+	}, version)
 }
 
 // sendCheckoutsJSON writes the poll payload with a validator so the client's 3s
 // poll can revalidate instead of re-downloading an unchanged list. The checkouts
 // page polls far more often than the data changes, so most responses collapse
 // to an empty 304.
-func sendCheckoutsJSON(c *fiber.Ctx, payload CheckoutsResponse) error {
+// checkoutsVersion returns a cheap weak validator for the checkouts poll. It
+// is derived from aggregate counts/maxima rather than the full result set, so
+// an unchanged database answers with 304 without running the list queries or
+// marshaling the payload. Checkout names are immutable and location groups
+// rarely change, so aggregate maxima are sufficient to detect the changes that
+// matter (new/deleted checkouts, confirmation updates).
+func (controller *Controller) checkoutsVersion(ctx context.Context, filter checkin.Filter) (string, error) {
+	var (
+		checkinCount        int64
+		maxCheckedOut       string
+		maxConfirmed        string
+		maxFetched          string
+		manualCount         int64
+		manualMaxCheckedOut string
+		manualMaxConfirmed  string
+		locationCount       int64
+		locationMaxID       int64
+		locationGroupSum    int64
+	)
+
+	err := controller.db.QueryRowContext(ctx, `
+		SELECT
+			(SELECT COUNT(*) FROM checkins),
+			COALESCE((SELECT MAX(checked_out_at) FROM checkins), ''),
+			COALESCE((SELECT MAX(checked_out_confirmed_at) FROM checkins), ''),
+			COALESCE((SELECT MAX(fetched_at) FROM checkins), ''),
+			(SELECT COUNT(*) FROM manual_checkins),
+			COALESCE((SELECT MAX(checked_out_at) FROM manual_checkins), ''),
+			COALESCE((SELECT MAX(checked_out_confirmed_at) FROM manual_checkins), ''),
+			(SELECT COUNT(*) FROM locations),
+			COALESCE((SELECT MAX(id) FROM locations), 0),
+			COALESCE((SELECT SUM(COALESCE(location_group_id, 0)) FROM locations), 0)
+	`).Scan(
+		&checkinCount, &maxCheckedOut, &maxConfirmed, &maxFetched,
+		&manualCount, &manualMaxCheckedOut, &manualMaxConfirmed,
+		&locationCount, &locationMaxID, &locationGroupSum,
+	)
+	if err != nil {
+		return "", err
+	}
+
+	// A time bucket ensures rows aging out of the checked_out_after window
+	// eventually invalidate the validator even without a database write. A
+	// short delay here is acceptable: correctness of new checkouts is preserved
+	// because any insert changes the aggregates above.
+	bucket := time.Now().Unix() / 300
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "%d|%s|%s|%s|%d|%s|%s|%d|%d|%d|%d|",
+		checkinCount, maxCheckedOut, maxConfirmed, maxFetched,
+		manualCount, manualMaxCheckedOut, manualMaxConfirmed,
+		locationCount, locationMaxID, locationGroupSum, bucket)
+	// Bucket the time bounds so a request a few seconds later does not change
+	// the validator and defeat 304s; the global time bucket above already
+	// refreshes the result set periodically.
+	checkedOutBeforeBucket := int64(0)
+	if !filter.CheckedOutAtBefore.IsZero() {
+		checkedOutBeforeBucket = filter.CheckedOutAtBefore.UTC().Unix() / 300
+	}
+	checkedOutAfterBucket := int64(0)
+	if !filter.CheckedOutAtAfter.IsZero() {
+		checkedOutAfterBucket = filter.CheckedOutAtAfter.UTC().Unix() / 300
+	}
+	fmt.Fprintf(&b, "%s|%s|%s|%s|%d|%v|%d|%d",
+		filter.LocationGroupName, filter.PlanningCenterID, filter.FirstName, filter.LastName,
+		filter.LocationGroupID, filter.LocationGroupIDs,
+		checkedOutBeforeBucket, checkedOutAfterBucket)
+	if filter.IncludeUnassigned {
+		b.WriteString("|1")
+	} else {
+		b.WriteString("|0")
+	}
+	if filter.LocationName != "" {
+		fmt.Fprintf(&b, "|%s", filter.LocationName)
+	}
+	if filter.ID > 0 {
+		fmt.Fprintf(&b, "|id=%d", filter.ID)
+	}
+	if filter.LocationID > 0 {
+		fmt.Fprintf(&b, "|loc=%d", filter.LocationID)
+	}
+	if filter.EventID > 0 {
+		fmt.Fprintf(&b, "|ev=%d", filter.EventID)
+	}
+	if filter.Limit > 0 {
+		fmt.Fprintf(&b, "|limit=%d", filter.Limit)
+	}
+
+	sum := sha256.Sum256([]byte(b.String()))
+	return `W/"` + hex.EncodeToString(sum[:16]) + `"`, nil
+}
+
+func sendCheckoutsJSON(c *fiber.Ctx, payload CheckoutsResponse, etag string) error {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "could not encode checkouts")
 	}
 
-	// Weak validator: the identity representation is hashed here, but gzip may
-	// content-code it on the way out, and a weak tag is the correct validator
-	// when a weak transformation like compression is applied (RFC 9110 8.8.1).
-	sum := sha256.Sum256(body)
-	etag := `W/"` + hex.EncodeToString(sum[:16]) + `"`
+	if etag == "" {
+		// Fallback validator when no version token is available.
+		sum := sha256.Sum256(body)
+		etag = `W/"` + hex.EncodeToString(sum[:16]) + `"`
+	}
 
 	// no-cache (not no-store) so the browser keeps the body and revalidates it
 	// on the next poll instead of refetching every time.
