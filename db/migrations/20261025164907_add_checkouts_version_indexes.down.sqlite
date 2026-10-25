@@ -1,0 +1,2 @@
+DROP INDEX IF EXISTS idx_checkins_checked_out_confirmed_at;
+DROP INDEX IF EXISTS idx_manual_checkins_checked_out_confirmed_at;

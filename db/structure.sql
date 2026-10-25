@@ -107,3 +107,5 @@ CREATE INDEX idx_manual_created_at ON manual_checkins (created_at);
 CREATE INDEX idx_manual_checkins_child_id ON manual_checkins(child_id);
 CREATE INDEX idx_guest_submissions_created_at ON guest_submissions(created_at);
 CREATE INDEX idx_guest_submissions_parent_id ON guest_submissions(parent_id);
+CREATE INDEX idx_checkins_checked_out_confirmed_at ON checkins (checked_out_confirmed_at);
+CREATE INDEX idx_manual_checkins_checked_out_confirmed_at ON manual_checkins (checked_out_confirmed_at);

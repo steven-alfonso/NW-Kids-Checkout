@@ -1,0 +1,2 @@
+CREATE INDEX IF NOT EXISTS idx_checkins_checked_out_confirmed_at ON checkins (checked_out_confirmed_at);
+CREATE INDEX IF NOT EXISTS idx_manual_checkins_checked_out_confirmed_at ON manual_checkins (checked_out_confirmed_at);
