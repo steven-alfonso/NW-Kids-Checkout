@@ -10,6 +10,7 @@ import (
 	dbschema "kids-checkin/db"
 	"kids-checkin/internal/db"
 	"kids-checkin/internal/repo"
+	"kids-checkin/internal/repo/manualcheckin"
 
 	"github.com/Masterminds/squirrel"
 	_ "github.com/mattn/go-sqlite3"
@@ -747,4 +748,87 @@ func execSchema(t *testing.T, tDB *sql.DB) {
 	t.Helper()
 	_, err := tDB.Exec(dbschema.Schema)
 	require.NoError(t, err)
+}
+
+func Test_sqliteRepo_CheckoutsVersion(t *testing.T) {
+	_, err := squirrel.Delete("checkins").RunWith(testDB).ExecContext(t.Context())
+	require.NoError(t, err)
+	_, err = squirrel.Delete("manual_checkins").RunWith(testDB).ExecContext(t.Context())
+	require.NoError(t, err)
+	_, err = squirrel.Delete("locations").RunWith(testDB).ExecContext(t.Context())
+	require.NoError(t, err)
+	_, err = squirrel.Delete("location_groups").RunWith(testDB).ExecContext(t.Context())
+	require.NoError(t, err)
+
+	s := NewRepo(testDB)
+
+	t.Run("empty database returns a validator", func(t *testing.T) {
+		v, err := s.CheckoutsVersion(t.Context(), Filter{})
+		require.NoError(t, err)
+		assert.NotEmpty(t, v)
+	})
+
+	t.Run("stable for unchanged state", func(t *testing.T) {
+		v1, err := s.CheckoutsVersion(t.Context(), Filter{})
+		require.NoError(t, err)
+		v2, err := s.CheckoutsVersion(t.Context(), Filter{})
+		require.NoError(t, err)
+		assert.Equal(t, v1, v2)
+	})
+
+	t.Run("changes when a checkin is inserted", func(t *testing.T) {
+		before, err := s.CheckoutsVersion(t.Context(), Filter{})
+		require.NoError(t, err)
+
+		_, err = s.CreateCheckin(t.Context(), Checkin{
+			PlanningCenterID: "plc_cv",
+			LocationID:       0,
+			FirstName:        "hot",
+			LastName:         "path",
+			SecurityCode:     "ABC123",
+			CheckedOutAt:     time.Now().UTC(),
+		})
+		require.NoError(t, err)
+
+		after, err := s.CheckoutsVersion(t.Context(), Filter{})
+		require.NoError(t, err)
+		assert.NotEqual(t, before, after)
+	})
+
+	t.Run("changes when a confirmation is updated", func(t *testing.T) {
+		before, err := s.CheckoutsVersion(t.Context(), Filter{})
+		require.NoError(t, err)
+
+		_, err = s.SetCheckedOutConfirmedAt(t.Context(), "plc_cv", true)
+		require.NoError(t, err)
+
+		after, err := s.CheckoutsVersion(t.Context(), Filter{})
+		require.NoError(t, err)
+		assert.NotEqual(t, before, after)
+	})
+
+	t.Run("changes when a manual checkin is inserted", func(t *testing.T) {
+		manualRepo := manualcheckin.NewRepo(testDB)
+		before, err := s.CheckoutsVersion(t.Context(), Filter{})
+		require.NoError(t, err)
+
+		_, err = manualRepo.CreateManualCheckin(t.Context(), manualcheckin.ManualCheckin{
+			FirstName:    "manual",
+			LastName:     "kid",
+			CheckedOutAt: time.Now().UTC(),
+		})
+		require.NoError(t, err)
+
+		after, err := s.CheckoutsVersion(t.Context(), Filter{})
+		require.NoError(t, err)
+		assert.NotEqual(t, before, after)
+	})
+
+	t.Run("filter affects the validator", func(t *testing.T) {
+		v1, err := s.CheckoutsVersion(t.Context(), Filter{Limit: 10})
+		require.NoError(t, err)
+		v2, err := s.CheckoutsVersion(t.Context(), Filter{Limit: 20})
+		require.NoError(t, err)
+		assert.NotEqual(t, v1, v2)
+	})
 }
