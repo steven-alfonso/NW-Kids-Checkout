@@ -493,6 +493,14 @@ function unlockBodyScroll() {
     }
 }
 
+function clampOverdueSheetHeight() {
+    if (!dom.overdueSheet) return;
+    const viewportHeight = (window.visualViewport && window.visualViewport.height) || window.innerHeight || 0;
+    if (viewportHeight > 0) {
+        dom.overdueSheet.style.maxHeight = `${Math.floor(viewportHeight * 0.8)}px`;
+    }
+}
+
 function openOverdueSheet() {
     if (!dom.overdueSheet || !dom.overdueSheetBackdrop) return;
     isOverdueSheetOpen = true;
@@ -506,6 +514,7 @@ function openOverdueSheet() {
     renderOverdueSheet(overdue);
     const countEl = document.getElementById('overdue-sheet-count');
     if (countEl) countEl.textContent = overdue.length > 0 ? `${overdue.length} overdue` : 'No overdue';
+    clampOverdueSheetHeight();
     dom.overdueSheet.classList.remove('translate-y-full');
     dom.overdueSheet.setAttribute('aria-hidden', 'false');
     // Must come before the focus() call below: an inert element cannot take
@@ -522,6 +531,7 @@ function closeOverdueSheet() {
     const wasOpen = !dom.overdueSheet.classList.contains('translate-y-full');
     dom.overdueSheet.classList.add('translate-y-full');
     dom.overdueSheet.setAttribute('aria-hidden', 'true');
+    if (dom.overdueSheet) dom.overdueSheet.style.maxHeight = '';
     dom.overdueSheetBackdrop.classList.add('hidden');
     unlockBodyScroll();
     if (wasOpen) {
@@ -1161,7 +1171,13 @@ document.addEventListener('DOMContentLoaded', function () {
 
     window.addEventListener('resize', () => {
         requestAnimationFrame(clampChildrenListScroll);
+        if (isOverdueSheetOpen) clampOverdueSheetHeight();
     });
+    if (window.visualViewport) {
+        window.visualViewport.addEventListener('resize', () => {
+            if (isOverdueSheetOpen) clampOverdueSheetHeight();
+        });
+    }
 
     const searchInput = document.getElementById('search-input');
     if (searchInput) searchInput.addEventListener('input', () => setSearchQuery(searchInput.value));
