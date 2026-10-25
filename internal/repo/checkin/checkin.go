@@ -218,6 +218,9 @@ func (s *sqliteRepo) CheckoutsVersion(ctx context.Context, filter Filter) (strin
 		locationGroupSum    int64
 	)
 
+	// Aggregate counts and maxima summarize the database state. MAX over
+	// checked_out_at/confirmed_at/fetched_at detects inserts, deletes, and
+	// confirmation updates without reading full rows.
 	err := s.db.QueryRowContext(ctx, `
 		SELECT
 			(SELECT COUNT(*) FROM checkins),
@@ -229,6 +232,7 @@ func (s *sqliteRepo) CheckoutsVersion(ctx context.Context, filter Filter) (strin
 			COALESCE((SELECT MAX(checked_out_confirmed_at) FROM manual_checkins), ''),
 			(SELECT COUNT(*) FROM locations),
 			COALESCE((SELECT MAX(id) FROM locations), 0),
+			-- Location count, max id, and group-id sum capture location/group changes.
 			COALESCE((SELECT SUM(COALESCE(location_group_id, 0)) FROM locations), 0)
 	`).Scan(
 		&checkinCount, &maxCheckedOut, &maxConfirmed, &maxFetched,
@@ -239,6 +243,8 @@ func (s *sqliteRepo) CheckoutsVersion(ctx context.Context, filter Filter) (strin
 		return "", err
 	}
 
+	// A five-minute time bucket refreshes the validator periodically so rows
+	// aging out of checked_out_after eventually invalidate it without writes.
 	bucket := time.Now().Unix() / 300
 
 	var b strings.Builder
@@ -247,6 +253,8 @@ func (s *sqliteRepo) CheckoutsVersion(ctx context.Context, filter Filter) (strin
 		manualCount, manualMaxCheckedOut, manualMaxConfirmed,
 		locationCount, locationMaxID, locationGroupSum, bucket)
 
+	// Request filters are included (bucketed for time bounds) so different views
+	// get distinct validators.
 	checkedOutBeforeBucket := int64(0)
 	if !filter.CheckedOutAtBefore.IsZero() {
 		checkedOutBeforeBucket = filter.CheckedOutAtBefore.UTC().Unix() / 300
@@ -280,6 +288,7 @@ func (s *sqliteRepo) CheckoutsVersion(ctx context.Context, filter Filter) (strin
 		fmt.Fprintf(&b, "|limit=%d", filter.Limit)
 	}
 
+	// SHA-256 of the combined signature yields the weak ETag returned to clients.
 	sum := sha256.Sum256([]byte(b.String()))
 	return `W/"` + hex.EncodeToString(sum[:16]) + `"`, nil
 }
