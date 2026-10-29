@@ -147,9 +147,13 @@ jobs:
       # utility classes that are simply absent from production. That exact bug
       # shipped. Rebuilding here fails the job when the two disagree.
       #
-      # Byte-for-byte, so an upstream Tailwind release that changes the output
-      # also fails this step -- the same exposure this job already accepts by
-      # running `npm install` with no lockfile (see above).
+      # Byte-for-byte, which is why package.json pins both Tailwind packages to
+      # exact versions: an unpinned `npm install` floats to the latest 4.x, and
+      # a release changes both the banner and the emitted rules (4.3.x turned
+      # calc(var(--spacing) * 0) into 0). Unpinned, this step fails on someone
+      # else's install instead of on real drift -- which is exactly how it
+      # failed on its first run. A committed lockfile is the proper fix for
+      # that, and is still the separate change noted above.
       - name: Verify Tailwind output is current
         run: |
           npm run build:css > /dev/null
