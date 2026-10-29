@@ -811,6 +811,147 @@ describe('checkoutsv1/checkouts', () => {
         expect(updatedMainPill.className).not.toContain('bg-red-500');
     });
 
+    describe('overdue drawer viewport sync', () => {
+        // jsdom has no layout engine, so documentElement.clientHeight is always
+        // 0. Model the layout viewport a real browser reports instead.
+        function stubLayoutViewport(w, height) {
+            Object.defineProperty(w.document.documentElement, 'clientHeight', {
+                configurable: true,
+                get: () => height
+            });
+        }
+
+        // loadWindow replaces requestAnimationFrame with a no-op, so resize
+        // handlers that schedule work would never run. Queue the callbacks and
+        // flush them the way the next paint would.
+        function flushableFrameQueue(w) {
+            const queued = [];
+            w.requestAnimationFrame = (cb) => { queued.push(cb); return 0; };
+            return () => { while (queued.length) queued.shift()(); };
+        }
+
+        // The visualViewport listener is only attached when the property exists
+        // at DOMContentLoaded, so the fixture installs an EventTarget before
+        // dispatching -- a bare object could not receive it.
+        async function drawerWithViewport(viewport = {}) {
+            const w = overdueBadgeWindow();
+            const visualViewport = new w.EventTarget();
+            Object.assign(visualViewport, { height: 0, offsetTop: 0, scale: 1 }, viewport);
+            w.visualViewport = visualViewport;
+            w.document.dispatchEvent(new w.Event('DOMContentLoaded'));
+            await new Promise(r => setTimeout(r, 10));
+            return w;
+        }
+
+        function sheetOf(w) {
+            return w.document.getElementById('overdue-sheet');
+        }
+
+        it('caps the drawer at 80% of the visual viewport when it opens', async () => {
+            const w = await drawerWithViewport({ height: 700, offsetTop: 0, scale: 1 });
+            stubLayoutViewport(w, 700);
+
+            w.openOverdueSheet();
+
+            expect(sheetOf(w).style.maxHeight).toBe('560px');
+        });
+
+        it('lifts the drawer above chrome overlapping the layout viewport', async () => {
+            const w = await drawerWithViewport({ height: 700, offsetTop: 0, scale: 1 });
+            // 800px of layout viewport behind 700px of visible area: the bottom
+            // 100px of the sheet would sit under the browser toolbar.
+            stubLayoutViewport(w, 800);
+
+            w.openOverdueSheet();
+
+            expect(sheetOf(w).style.bottom).toBe('100px');
+        });
+
+        it('drops the lift again once that chrome collapses', async () => {
+            const w = await drawerWithViewport({ height: 700, offsetTop: 0, scale: 1 });
+            stubLayoutViewport(w, 800);
+            const flushFrames = flushableFrameQueue(w);
+            w.openOverdueSheet();
+            expect(sheetOf(w).style.bottom).toBe('100px');
+
+            w.visualViewport.height = 800;
+            w.dispatchEvent(new w.Event('resize'));
+            flushFrames();
+
+            expect(sheetOf(w).style.bottom).toBe('');
+            expect(sheetOf(w).style.maxHeight).toBe('640px');
+        });
+
+        it('re-syncs on window resize while the drawer is open', async () => {
+            const w = await drawerWithViewport({ height: 700, offsetTop: 0, scale: 1 });
+            stubLayoutViewport(w, 800);
+            const flushFrames = flushableFrameQueue(w);
+            w.openOverdueSheet();
+
+            w.visualViewport.height = 500;
+            w.dispatchEvent(new w.Event('resize'));
+            flushFrames();
+
+            expect(sheetOf(w).style.maxHeight).toBe('400px');
+            expect(sheetOf(w).style.bottom).toBe('300px');
+        });
+
+        it('re-syncs when the visual viewport resizes', async () => {
+            const w = await drawerWithViewport({ height: 700, offsetTop: 0, scale: 1 });
+            stubLayoutViewport(w, 800);
+            const flushFrames = flushableFrameQueue(w);
+            w.openOverdueSheet();
+
+            w.visualViewport.height = 640;
+            w.visualViewport.dispatchEvent(new w.Event('resize'));
+            flushFrames();
+
+            expect(sheetOf(w).style.maxHeight).toBe('512px');
+            expect(sheetOf(w).style.bottom).toBe('160px');
+        });
+
+        it('holds the last sync while pinch-zoomed', async () => {
+            const w = await drawerWithViewport({ height: 700, offsetTop: 0, scale: 1 });
+            stubLayoutViewport(w, 800);
+            const flushFrames = flushableFrameQueue(w);
+            w.openOverdueSheet();
+
+            // Pinch to 2x: the visual viewport halves in CSS px while the layout
+            // viewport does not move, so re-syncing would both make the drawer
+            // smaller and lift it by half the screen.
+            w.visualViewport.height = 350;
+            w.visualViewport.scale = 2;
+            w.visualViewport.dispatchEvent(new w.Event('resize'));
+            flushFrames();
+
+            expect(sheetOf(w).style.maxHeight).toBe('560px');
+            expect(sheetOf(w).style.bottom).toBe('100px');
+        });
+
+        it('keeps the sync in place while the drawer slides out', async () => {
+            const w = await drawerWithViewport({ height: 700, offsetTop: 0, scale: 1 });
+            stubLayoutViewport(w, 800);
+            w.openOverdueSheet();
+
+            w.closeOverdueSheet();
+
+            expect(sheetOf(w).style.maxHeight).toBe('560px');
+            expect(sheetOf(w).style.bottom).toBe('100px');
+        });
+
+        it('re-syncs on the next open after the viewport changed', async () => {
+            const w = await drawerWithViewport({ height: 700, offsetTop: 0, scale: 1 });
+            stubLayoutViewport(w, 800);
+            w.openOverdueSheet();
+            w.closeOverdueSheet();
+
+            w.visualViewport.height = 500;
+            w.openOverdueSheet();
+
+            expect(sheetOf(w).style.maxHeight).toBe('400px');
+        });
+    });
+
     describe('overdue drawer rendering', () => {
         // Mirrors the real page: checkouts.html ships a placeholder child in
         // #overdue-sheet-list and a #location-group-checkboxes container.

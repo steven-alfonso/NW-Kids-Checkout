@@ -147,9 +147,16 @@
             transition: translate 300ms ease-out, transform 300ms ease-out;
             /* Dynamic viewport height keeps the drawer from covering the whole
                screen on mobile browsers (iOS Chrome) whose `vh` is the large
-               viewport; falls back to 80vh where dvh is unsupported. */
+               viewport; falls back to 80vh where dvh is unsupported. This rule
+               is the only source of the sheet's height: an arbitrary-value
+               height class would lose to the vh fallback in Tailwind's output
+               order anyway, and both lose to this ID selector. */
             height: 80vh;
             height: 80dvh;
+            /* The home indicator overlays the physical bottom edge once the
+               toolbar collapses, which would bury the last row of the list.
+               0 outside iOS-style notched viewports. */
+            padding-bottom: env(safe-area-inset-bottom, 0px);
         }
     </style>
 
@@ -261,7 +268,7 @@
     <!-- Overdue bottom sheet -->
     <div id="overdue-sheet-backdrop" class="hidden fixed inset-0 bg-black/40 z-40 cursor-pointer touch-manipulation" aria-hidden="true"></div>
     <div id="overdue-sheet"
-        class="fixed inset-x-0 bottom-0 z-40 h-[80vh] h-[80dvh] bg-slate-50 rounded-t-2xl shadow-2xl border-t border-slate-200 flex flex-col translate-y-full"
+        class="fixed inset-x-0 bottom-0 z-40 bg-slate-50 rounded-t-2xl shadow-2xl border-t border-slate-200 flex flex-col translate-y-full"
         aria-hidden="true" role="dialog" aria-label="Overdue checkouts" tabindex="-1" inert>
         <div class="flex items-center justify-between gap-2 px-4 pt-3 pb-2 shrink-0">
             <div class="flex items-center gap-2 min-w-0">

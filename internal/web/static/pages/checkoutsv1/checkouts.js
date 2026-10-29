@@ -493,12 +493,38 @@ function unlockBodyScroll() {
     }
 }
 
-function clampOverdueSheetHeight() {
+// Keep the drawer inside the *visual* viewport. On mobile browsers with
+// top/bottom chrome (Brave iOS, Safari) the layout viewport -- which the
+// sheet's `bottom: 0` and `height` resolve against -- is taller than the area
+// actually on screen, so a drawer sized against it runs off both edges:
+//
+//   max-height pulls the top edge, and with it the close button, back into
+//   view; the bottom offset lifts the base so the last row is not trapped
+//   behind the toolbar.
+//
+// Both collapse to a no-op wherever the two viewports agree -- desktop, and
+// iOS with the toolbar collapsed -- which is why nothing moves outside mobile.
+function syncOverdueSheetToViewport() {
     if (!dom.overdueSheet) return;
-    const viewportHeight = (window.visualViewport && window.visualViewport.height) || window.innerHeight || 0;
-    if (viewportHeight > 0) {
-        dom.overdueSheet.style.maxHeight = `${Math.floor(viewportHeight * 0.8)}px`;
-    }
+    const viewport = window.visualViewport;
+    // Pinch-zoom halves the visual viewport in CSS px while the layout
+    // viewport stays put; re-syncing on it would make the drawer smaller and
+    // lift it by half the screen mid-gesture. Hold the value until zoom ends.
+    if (viewport && viewport.scale !== 1) return;
+    const viewportHeight = (viewport && viewport.height) || window.innerHeight || 0;
+    if (viewportHeight <= 0) return;
+
+    const sheet = dom.overdueSheet;
+    sheet.style.maxHeight = `${Math.floor(viewportHeight * 0.8)}px`;
+
+    // Chrome overlapping the layout viewport shows up as the visual viewport
+    // ending short of it. A zero or negative value means there is nothing
+    // overlapping (or the visual viewport runs past the layout one), so hand
+    // control back to the `bottom-0` class rather than pinning an inline 0.
+    const overlap = document.documentElement.clientHeight
+        - (viewport ? viewport.offsetTop : 0)
+        - viewportHeight;
+    sheet.style.bottom = overlap > 0 ? `${Math.floor(overlap)}px` : '';
 }
 
 function openOverdueSheet() {
@@ -514,7 +540,7 @@ function openOverdueSheet() {
     renderOverdueSheet(overdue);
     const countEl = document.getElementById('overdue-sheet-count');
     if (countEl) countEl.textContent = overdue.length > 0 ? `${overdue.length} overdue` : 'No overdue';
-    clampOverdueSheetHeight();
+    syncOverdueSheetToViewport();
     dom.overdueSheet.classList.remove('translate-y-full');
     dom.overdueSheet.setAttribute('aria-hidden', 'false');
     // Must come before the focus() call below: an inert element cannot take
@@ -531,7 +557,10 @@ function closeOverdueSheet() {
     const wasOpen = !dom.overdueSheet.classList.contains('translate-y-full');
     dom.overdueSheet.classList.add('translate-y-full');
     dom.overdueSheet.setAttribute('aria-hidden', 'true');
-    if (dom.overdueSheet) dom.overdueSheet.style.maxHeight = '';
+    // The viewport sync is deliberately left in place rather than cleared here:
+    // the sheet is mid-transition for the next 300ms, and dropping max-height
+    // would snap it back to full height while it slides out. openOverdueSheet
+    // re-syncs against the current viewport before it is shown again.
     dom.overdueSheetBackdrop.classList.add('hidden');
     unlockBodyScroll();
     if (wasOpen) {
@@ -1171,11 +1200,14 @@ document.addEventListener('DOMContentLoaded', function () {
 
     window.addEventListener('resize', () => {
         requestAnimationFrame(clampChildrenListScroll);
-        if (isOverdueSheetOpen) clampOverdueSheetHeight();
+        if (isOverdueSheetOpen) requestAnimationFrame(syncOverdueSheetToViewport);
     });
     if (window.visualViewport) {
+        // The one that matters on iOS: the toolbar collapsing fires this, and
+        // not always window.resize. Throttled to a frame like its sibling above,
+        // because both fire continuously through the toolbar's animation.
         window.visualViewport.addEventListener('resize', () => {
-            if (isOverdueSheetOpen) clampOverdueSheetHeight();
+            if (isOverdueSheetOpen) requestAnimationFrame(syncOverdueSheetToViewport);
         });
     }
 
