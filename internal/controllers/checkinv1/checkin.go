@@ -24,7 +24,6 @@ import (
 	"kids-checkin/internal/controllers/session"
 	"kids-checkin/internal/repo"
 	"kids-checkin/internal/repo/checkin"
-	"kids-checkin/internal/repo/location"
 	"kids-checkin/internal/repo/manualcheckin"
 	"kids-checkin/internal/web/menu"
 	"kids-checkin/internal/web/static"
@@ -46,7 +45,6 @@ const maxCheckoutsLimit = 1000
 type Controller struct {
 	checkinRepo  checkin.Repo
 	manualRepo   manualcheckin.Repo
-	locationRepo location.Repo
 	sessionStore session.Storer
 	wsClients    map[*websocket.Conn]*wsClient
 }
@@ -60,7 +58,6 @@ func NewController(db *sql.DB, sessionStore session.Storer) *Controller {
 	return &Controller{
 		checkinRepo:  checkin.NewRepo(db),
 		manualRepo:   manualcheckin.NewRepo(db),
-		locationRepo: location.NewRepo(db),
 		sessionStore: sessionStore,
 		wsClients:    make(map[*websocket.Conn]*wsClient),
 	}
@@ -160,9 +157,6 @@ func (controller *Controller) checkoutsWeb(c *fiber.Ctx) error {
 
 	filter.Recent = true
 	manualFilter := manualFilterFromCheckinFilter(filter)
-	if manualFilter.CheckedOutAtAfter.IsZero() {
-		manualFilter.CheckedOutAtAfter = time.Now().Add(defaultCheckedOutAfterDelta)
-	}
 	manualFilter.Recent = true
 
 	checkins, err := controller.checkinRepo.ListCheckins(c.Context(), filter)
@@ -176,10 +170,14 @@ func (controller *Controller) checkoutsWeb(c *fiber.Ctx) error {
 		if err != nil {
 			return fiber.NewError(fiber.StatusInternalServerError, err.Error())
 		}
-		manualCheckins = sortManualCheckins(manualCheckins)
+		if len(manualCheckins) > 1 {
+			manualCheckins = sortManualCheckins(manualCheckins)
+		}
 	}
 
-	checkins = sortCheckins(checkins)
+	if len(checkins) > 1 {
+		checkins = sortCheckins(checkins)
+	}
 
 	return sendCheckoutsJSON(c, CheckoutsResponse{
 		Checkins:       repoCheckinSliceToOutput(checkins),
