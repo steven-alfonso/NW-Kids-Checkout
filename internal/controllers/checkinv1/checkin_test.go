@@ -876,6 +876,7 @@ func BenchmarkController_Checkouts_200(b *testing.B) {
 		}
 		resp.Body.Close()
 	}
+}
 func TestController_Checkouts_hotPath(t *testing.T) {
 	app, store := setupAuthedApp()
 
