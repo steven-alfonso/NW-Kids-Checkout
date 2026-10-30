@@ -107,12 +107,6 @@ CREATE INDEX idx_manual_created_at ON manual_checkins (created_at);
 CREATE INDEX idx_manual_checkins_child_id ON manual_checkins(child_id);
 CREATE INDEX idx_guest_submissions_created_at ON guest_submissions(created_at);
 CREATE INDEX idx_guest_submissions_parent_id ON guest_submissions(parent_id);
-CREATE TABLE fiber_storage (
-			k  VARCHAR(64) PRIMARY KEY NOT NULL DEFAULT '',
-			v  BLOB NOT NULL,
-			e  BIGINT NOT NULL DEFAULT '0'
-		);
-CREATE INDEX e ON fiber_storage (e);
 CREATE INDEX idx_checkins_checked_out_confirmed_at ON checkins (checked_out_confirmed_at);
-CREATE INDEX idx_manual_checkins_checked_out_confirmed_at ON manual_checkins (checked_out_confirmed_at);
 CREATE INDEX idx_checkins_fetched_at ON checkins (fetched_at);
+CREATE INDEX idx_manual_checkins_checked_out_confirmed_at ON manual_checkins (checked_out_confirmed_at);
