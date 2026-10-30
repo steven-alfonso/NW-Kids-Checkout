@@ -504,7 +504,7 @@ function unlockBodyScroll() {
 //
 // Both collapse to a no-op wherever the two viewports agree -- desktop, and
 // iOS with the toolbar collapsed -- which is why nothing moves outside mobile.
-function syncOverdueSheetToViewport() {
+function syncOverdueSheetToViewport({ lift = true } = {}) {
     if (!dom.overdueSheet) return;
     const viewport = window.visualViewport;
     // Pinch-zoom halves the visual viewport in CSS px while the layout
@@ -516,6 +516,13 @@ function syncOverdueSheetToViewport() {
 
     const sheet = dom.overdueSheet;
     sheet.style.maxHeight = `${Math.floor(viewportHeight * 0.8)}px`;
+
+    // The load-time seed passes lift: false. On a closed drawer, parked below
+    // the fold by translate-y-full, an inline `bottom` would strand exactly
+    // that many pixels *above* the bottom edge -- the very strand
+    // closeOverdueSheet drops. The cap is worth seeding; the position is only
+    // meaningful once the drawer is shown.
+    if (!lift) return;
 
     // Chrome overlapping the layout viewport shows up as the visual viewport
     // ending short of it. A zero or negative value means there is nothing
@@ -1185,6 +1192,12 @@ document.addEventListener('DOMContentLoaded', function () {
     dom.overdueSheet = document.getElementById('overdue-sheet');
     dom.overdueSheetList = document.getElementById('overdue-sheet-list');
     dom.overdueSheetBackdrop = document.getElementById('overdue-sheet-backdrop');
+    // Measure once, before anything can open the drawer: the first
+    // openOverdueSheet would otherwise write a max-height the sheet had never
+    // had, i.e. transition from `max-height: none`, which cannot interpolate
+    // with a length and so lands mid-slide rather than easing with it. Cap
+    // only -- the drawer is still parked below the fold (see the lift flag).
+    syncOverdueSheetToViewport({ lift: false });
 
     if (dom.overdueBadge) {
         dom.overdueBadge.addEventListener('click', openOverdueSheet);

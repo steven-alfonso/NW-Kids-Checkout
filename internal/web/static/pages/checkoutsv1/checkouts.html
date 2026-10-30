@@ -161,6 +161,14 @@
                order anyway, and both lose to this ID selector. */
             height: 80vh;
             height: 80dvh;
+            /* The same pair again, for the transition rather than for sizing:
+               the sync writes max-height inline, and a first write from
+               `none` cannot interpolate with a length, so the cap would land
+               mid-slide instead of easing with the slide. Equal to height
+               until the sync measures something else, and then overridden by
+               it -- the point is only that `none` is never in play. */
+            max-height: 80vh;
+            max-height: 80dvh;
             /* The home indicator overlays the physical bottom edge once the
                toolbar collapses, which would bury the last row of the list.
                0 outside iOS-style notched viewports. */

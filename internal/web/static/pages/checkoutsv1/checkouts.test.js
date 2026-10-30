@@ -847,6 +847,39 @@ describe('checkoutsv1/checkouts', () => {
             return w.document.getElementById('overdue-sheet');
         }
 
+        it('seeds the cap at load, before any open has run the sync', async () => {
+            const w = await drawerWithViewport({ height: 700, offsetTop: 0, scale: 1 });
+
+            // The first open has nothing written yet, so its sync would be a
+            // transition from `max-height: none` -- a value that cannot
+            // interpolate with a length, so the cap lands mid-slide instead of
+            // easing with it. Seeding here means the open's write starts from a
+            // length and changes it, or changes nothing at all.
+            expect(sheetOf(w).style.maxHeight).toBe('560px');
+        });
+
+        it('leaves a closed drawer on the bottom edge, never lifted', async () => {
+            const w = overdueBadgeWindow();
+            const visualViewport = new w.EventTarget();
+            Object.assign(visualViewport, { height: 700, offsetTop: 0, scale: 1 });
+            w.visualViewport = visualViewport;
+            stubLayoutViewport(w, 800);
+            // One overdue child so the load-time updateOverdueUI() does not take
+            // the zero-overdue auto-close path: that path calls
+            // closeOverdueSheet(), which drops any lift and would hide a seed
+            // that set one.
+            w.__test.setChildrenData([overdueChild('a', 6)]);
+            w.document.dispatchEvent(new w.Event('DOMContentLoaded'));
+
+            // 100px of overlap: a lift here would put the top 100px of a sheet
+            // parked below the fold *above* the bottom edge, because
+            // translate-y-full only covers the sheet's own height -- the strand
+            // closeOverdueSheet drops. The cap is the seed's job; the position
+            // belongs to the open.
+            expect(sheetOf(w).style.bottom).toBe('');
+            await new Promise(r => setTimeout(r, 10));
+        });
+
         it('caps the drawer at 80% of the visual viewport when it opens', async () => {
             const w = await drawerWithViewport({ height: 700, offsetTop: 0, scale: 1 });
             stubLayoutViewport(w, 700);
@@ -974,25 +1007,48 @@ describe('checkoutsv1/checkouts', () => {
             expect(sheetOf(w).style.bottom).toBe('');
         });
 
-        it('transitions the drawer geometry with the slide, not just the slide', () => {
-            // The fixture above is minimal markup; this contract lives in the
-            // real page's style block, so parse the shipped file itself.
+        // The two style-block contracts below read the shipped page itself:
+        // the fixture above is bare markup and has no <style>.
+        function shippedSheetRule() {
             const html = fs.readFileSync(
                 path.resolve(process.cwd(), 'internal/web/static/pages/checkoutsv1/checkouts.html'),
                 'utf8'
             );
             const dom = new JSDOM(html);
-            const sheetRule = [...dom.window.document.styleSheets]
+            return [...dom.window.document.styleSheets]
                 .flatMap(sheet => [...sheet.cssRules])
                 .find(rule => rule.selectorText === '#overdue-sheet');
+        }
+
+        it('declares a max-height in the shipped style, so the sync never starts from none', () => {
+            const sheetRule = shippedSheetRule();
+            expect(sheetRule).toBeTruthy();
+            // max-height: none is not a length, so the transition list cannot
+            // interpolate it: the first write of an inline cap would land
+            // mid-slide. A declared value gives the sync a length to move from
+            // even when it is skipped -- the load-time seed bails while
+            // pinch-zoomed -- so nothing can ever see `none` here.
+            expect(sheetRule.style.getPropertyValue('max-height')).not.toBe('');
+        });
+
+        it('transitions the drawer geometry with the slide, not just the slide', () => {
+            const sheetRule = shippedSheetRule();
             expect(sheetRule).toBeTruthy();
             const transition = sheetRule.style.transition;
             // height tracks 80dvh and max-height/bottom come from the sync, so
             // any of them changing while the drawer moves -- the toolbar
             // reappearing as the scroll lock releases is the case that shipped
             // -- has to ease over the same 300ms instead of snapping.
+            //
+            // Split into property tokens rather than substring-matching the
+            // declaration: `max-height` contains `height`, so a bare
+            // toContain('height') stays green with `height 300ms` deleted,
+            // which is the whole property this test exists to protect.
+            const transitioned = transition.split(',').map(
+                part => part.trim().split(/\s+/)[0]
+            );
             for (const property of ['translate', 'height', 'max-height', 'bottom']) {
-                expect(transition).toContain(property);
+                expect(transitioned).toContain(property);
             }
         });
     });
