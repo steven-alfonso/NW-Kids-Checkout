@@ -144,7 +144,15 @@
         }
 
         #overdue-sheet {
-            transition: translate 300ms ease-out, transform 300ms ease-out;
+            /* Every geometry source that can change while the drawer moves
+               shares the slide's 300ms, not just the slide itself: height
+               tracks the live 80dvh, and max-height/bottom come from the
+               viewport sync. When the scroll lock releases at close and the
+               toolbar reappears, an untransitioned height snapped the drawer
+               ~50-100px down in one frame before it slid away. */
+            transition: translate 300ms ease-out, transform 300ms ease-out,
+                height 300ms ease-out, max-height 300ms ease-out,
+                bottom 300ms ease-out;
             /* Dynamic viewport height keeps the drawer from covering the whole
                screen on mobile browsers (iOS Chrome) whose `vh` is the large
                viewport; falls back to 80vh where dvh is unsupported. This rule

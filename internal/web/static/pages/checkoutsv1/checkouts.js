@@ -557,10 +557,16 @@ function closeOverdueSheet() {
     const wasOpen = !dom.overdueSheet.classList.contains('translate-y-full');
     dom.overdueSheet.classList.add('translate-y-full');
     dom.overdueSheet.setAttribute('aria-hidden', 'true');
-    // The viewport sync is deliberately left in place rather than cleared here:
-    // the sheet is mid-transition for the next 300ms, and dropping max-height
-    // would snap it back to full height while it slides out. openOverdueSheet
+    // The lift is dropped as part of the close rather than left for the next
+    // open: translate-y-full only covers the sheet's own height, so a lifted
+    // base would strand that many pixels of the drawer above the bottom edge
+    // once the slide finishes. `bottom` is on the transition list, so this
+    // eases down alongside the slide instead of snapping.
+    //
+    // max-height is deliberately left in place rather than cleared: dropping
+    // it would snap the drawer back to full height mid-slide. openOverdueSheet
     // re-syncs against the current viewport before it is shown again.
+    dom.overdueSheet.style.bottom = '';
     dom.overdueSheetBackdrop.classList.add('hidden');
     unlockBodyScroll();
     if (wasOpen) {
@@ -1200,14 +1206,21 @@ document.addEventListener('DOMContentLoaded', function () {
 
     window.addEventListener('resize', () => {
         requestAnimationFrame(clampChildrenListScroll);
-        if (isOverdueSheetOpen) requestAnimationFrame(syncOverdueSheetToViewport);
+        requestAnimationFrame(() => {
+            // Gate read inside the frame, not when the event fired: a resize
+            // landing just before close queues this callback, and close must
+            // win -- writing viewport geometry mid-slide would snap the drawer.
+            if (isOverdueSheetOpen) syncOverdueSheetToViewport();
+        });
     });
     if (window.visualViewport) {
         // The one that matters on iOS: the toolbar collapsing fires this, and
         // not always window.resize. Throttled to a frame like its sibling above,
         // because both fire continuously through the toolbar's animation.
         window.visualViewport.addEventListener('resize', () => {
-            if (isOverdueSheetOpen) requestAnimationFrame(syncOverdueSheetToViewport);
+            requestAnimationFrame(() => {
+                if (isOverdueSheetOpen) syncOverdueSheetToViewport();
+            });
         });
     }
 

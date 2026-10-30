@@ -928,15 +928,18 @@ describe('checkoutsv1/checkouts', () => {
             expect(sheetOf(w).style.bottom).toBe('100px');
         });
 
-        it('keeps the sync in place while the drawer slides out', async () => {
+        it('keeps max-height through the slide but drops the lift', async () => {
             const w = await drawerWithViewport({ height: 700, offsetTop: 0, scale: 1 });
             stubLayoutViewport(w, 800);
             w.openOverdueSheet();
 
             w.closeOverdueSheet();
 
+            // max-height stays so the drawer cannot snap to full height
+            // mid-slide; the lift goes so translate-y-full can clear the
+            // viewport, easing down with the slide since bottom is transitioned.
             expect(sheetOf(w).style.maxHeight).toBe('560px');
-            expect(sheetOf(w).style.bottom).toBe('100px');
+            expect(sheetOf(w).style.bottom).toBe('');
         });
 
         it('re-syncs on the next open after the viewport changed', async () => {
@@ -949,6 +952,48 @@ describe('checkoutsv1/checkouts', () => {
             w.openOverdueSheet();
 
             expect(sheetOf(w).style.maxHeight).toBe('400px');
+        });
+
+        it('ignores a viewport resize that was queued before the close', async () => {
+            const w = await drawerWithViewport({ height: 800, offsetTop: 0, scale: 1 });
+            stubLayoutViewport(w, 800);
+            const flushFrames = flushableFrameQueue(w);
+            w.openOverdueSheet();
+            expect(sheetOf(w).style.maxHeight).toBe('640px');
+            expect(sheetOf(w).style.bottom).toBe('');
+
+            // A resize landing just before the tap queues the sync for the next
+            // frame; close then runs first. The sync must lose: applying it
+            // mid-slide would snap max-height and bottom while the drawer moves.
+            w.visualViewport.height = 700;
+            w.dispatchEvent(new w.Event('resize'));
+            w.closeOverdueSheet();
+            flushFrames();
+
+            expect(sheetOf(w).style.maxHeight).toBe('640px');
+            expect(sheetOf(w).style.bottom).toBe('');
+        });
+
+        it('transitions the drawer geometry with the slide, not just the slide', () => {
+            // The fixture above is minimal markup; this contract lives in the
+            // real page's style block, so parse the shipped file itself.
+            const html = fs.readFileSync(
+                path.resolve(process.cwd(), 'internal/web/static/pages/checkoutsv1/checkouts.html'),
+                'utf8'
+            );
+            const dom = new JSDOM(html);
+            const sheetRule = [...dom.window.document.styleSheets]
+                .flatMap(sheet => [...sheet.cssRules])
+                .find(rule => rule.selectorText === '#overdue-sheet');
+            expect(sheetRule).toBeTruthy();
+            const transition = sheetRule.style.transition;
+            // height tracks 80dvh and max-height/bottom come from the sync, so
+            // any of them changing while the drawer moves -- the toolbar
+            // reappearing as the scroll lock releases is the case that shipped
+            // -- has to ease over the same 300ms instead of snapping.
+            for (const property of ['translate', 'height', 'max-height', 'bottom']) {
+                expect(transition).toContain(property);
+            }
         });
     });
 
