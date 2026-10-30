@@ -161,6 +161,7 @@ func (controller *Controller) checkoutsWeb(c *fiber.Ctx) error {
 
 	version, err := controller.checkinRepo.CheckoutsVersion(c.Context(), filter)
 	if err != nil {
+		slog.Warn("checkouts version failed", slog.String("error", err.Error()))
 		version = ""
 	}
 
