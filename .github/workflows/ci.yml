@@ -147,12 +147,9 @@ jobs:
       # utility classes that are simply absent from production. That exact bug
       # shipped. Rebuilding here fails the job when the two disagree.
       #
-      # Sources are auto-detected from the working tree -- there is no config
-      # file, and the --config/--content pair these scripts used to pass was
-      # inert under v4 (it never read them) and has been removed. So the same
-      # scan decides both the committed file and this rebuild, and it excludes
-      # only what .gitignore excludes: an untracked file that is not ignored
-      # changes a local build without entering any commit.
+      # Sources are auto-detected from the working tree; only .gitignore'd
+      # files are excluded, so an untracked, non-ignored file changes this
+      # build without being in any commit.
       #
       # Byte-for-byte, which is why package.json pins both Tailwind packages to
       # exact versions: an unpinned `npm install` floats to the latest 4.x, and

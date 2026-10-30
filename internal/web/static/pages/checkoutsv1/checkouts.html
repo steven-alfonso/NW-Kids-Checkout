@@ -144,29 +144,18 @@
         }
 
         #overdue-sheet {
-            /* Every geometry source that can change while the drawer moves
-               shares the slide's 300ms, not just the slide itself: height
-               tracks the live 80dvh, and max-height/bottom come from the
-               viewport sync. When the scroll lock releases at close and the
-               toolbar reappears, an untransitioned height snapped the drawer
-               ~50-100px down in one frame before it slid away. */
+            /* Height (live 80dvh) and the sync's max-height/bottom must ease
+               with the slide too: at close the toolbar reappears and an
+               untransitioned height snapped the drawer ~50-100px in a frame. */
             transition: translate 300ms ease-out, transform 300ms ease-out,
                 height 300ms ease-out, max-height 300ms ease-out,
                 bottom 300ms ease-out;
-            /* Dynamic viewport height keeps the drawer from covering the whole
-               screen on mobile browsers (iOS Chrome) whose `vh` is the large
-               viewport; falls back to 80vh where dvh is unsupported. This rule
-               is the only source of the sheet's height: an arbitrary-value
-               height class would lose to the vh fallback in Tailwind's output
-               order anyway, and both lose to this ID selector. */
+            /* dvh keeps the drawer off the whole screen where `vh` is the
+               large viewport; 80vh fallback where dvh is unsupported. */
             height: 80vh;
             height: 80dvh;
-            /* The same pair again, for the transition rather than for sizing:
-               the sync writes max-height inline, and a first write from
-               `none` cannot interpolate with a length, so the cap would land
-               mid-slide instead of easing with the slide. Equal to height
-               until the sync measures something else, and then overridden by
-               it -- the point is only that `none` is never in play. */
+            /* Also for the transition: the sync writes max-height inline, and
+               a first write from `none` cannot interpolate with a length. */
             max-height: 80vh;
             max-height: 80dvh;
             /* The home indicator overlays the physical bottom edge once the
