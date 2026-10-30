@@ -2,8 +2,11 @@ package checkin
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
+	"strings"
 	"time"
 
 	"kids-checkin/internal/repo"
@@ -50,6 +53,8 @@ type Repo interface {
 	RemoveOldCheckins(ctx context.Context, olderThan time.Time) (deletedCount int64, err error)
 	DeleteCheckin(ctx context.Context, id int64) error
 	DeleteAllCheckins(ctx context.Context) (int64, error)
+	// CheckoutsVersion returns a cheap weak validator for the checkouts poll.
+	CheckoutsVersion(ctx context.Context, filter Filter) (string, error)
 }
 
 type sqliteRepo struct {
@@ -197,6 +202,95 @@ func (s *sqliteRepo) ListCheckins(ctx context.Context, filter Filter) ([]Checkin
 	}
 
 	return checkins, nil
+}
+
+func (s *sqliteRepo) CheckoutsVersion(ctx context.Context, filter Filter) (string, error) {
+	var (
+		checkinCount        int64
+		maxCheckedOut       string
+		maxConfirmed        string
+		maxFetched          string
+		manualCount         int64
+		manualMaxCheckedOut string
+		manualMaxConfirmed  string
+		locationCount       int64
+		locationMaxID       int64
+		locationGroupSum    int64
+	)
+
+	// Aggregate counts and maxima summarize the database state. MAX over
+	// checked_out_at/confirmed_at/fetched_at detects inserts, deletes, and
+	// confirmation updates without reading full rows.
+	err := s.db.QueryRowContext(ctx, `
+		SELECT
+			(SELECT COUNT(*) FROM checkins),
+			COALESCE((SELECT MAX(checked_out_at) FROM checkins), ''),
+			COALESCE((SELECT MAX(checked_out_confirmed_at) FROM checkins), ''),
+			COALESCE((SELECT MAX(fetched_at) FROM checkins), ''),
+			(SELECT COUNT(*) FROM manual_checkins),
+			COALESCE((SELECT MAX(checked_out_at) FROM manual_checkins), ''),
+			COALESCE((SELECT MAX(checked_out_confirmed_at) FROM manual_checkins), ''),
+			(SELECT COUNT(*) FROM locations),
+			COALESCE((SELECT MAX(id) FROM locations), 0),
+			-- Location count, max id, and group-id sum capture location/group changes.
+			COALESCE((SELECT SUM(COALESCE(location_group_id, 0)) FROM locations), 0)
+	`).Scan(
+		&checkinCount, &maxCheckedOut, &maxConfirmed, &maxFetched,
+		&manualCount, &manualMaxCheckedOut, &manualMaxConfirmed,
+		&locationCount, &locationMaxID, &locationGroupSum,
+	)
+	if err != nil {
+		return "", err
+	}
+
+	// A five-minute time bucket refreshes the validator periodically so rows
+	// aging out of checked_out_after eventually invalidate it without writes.
+	bucket := time.Now().Unix() / 300
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "%d|%s|%s|%s|%d|%s|%s|%d|%d|%d|%d|",
+		checkinCount, maxCheckedOut, maxConfirmed, maxFetched,
+		manualCount, manualMaxCheckedOut, manualMaxConfirmed,
+		locationCount, locationMaxID, locationGroupSum, bucket)
+
+	// Request filters are included (bucketed for time bounds) so different views
+	// get distinct validators.
+	checkedOutBeforeBucket := int64(0)
+	if !filter.CheckedOutAtBefore.IsZero() {
+		checkedOutBeforeBucket = filter.CheckedOutAtBefore.UTC().Unix() / 300
+	}
+	checkedOutAfterBucket := int64(0)
+	if !filter.CheckedOutAtAfter.IsZero() {
+		checkedOutAfterBucket = filter.CheckedOutAtAfter.UTC().Unix() / 300
+	}
+	fmt.Fprintf(&b, "%s|%s|%s|%s|%d|%v|%d|%d",
+		filter.LocationGroupName, filter.PlanningCenterID, filter.FirstName, filter.LastName,
+		filter.LocationGroupID, filter.LocationGroupIDs,
+		checkedOutBeforeBucket, checkedOutAfterBucket)
+	if filter.IncludeUnassigned {
+		b.WriteString("|1")
+	} else {
+		b.WriteString("|0")
+	}
+	if filter.LocationName != "" {
+		fmt.Fprintf(&b, "|%s", filter.LocationName)
+	}
+	if filter.ID > 0 {
+		fmt.Fprintf(&b, "|id=%d", filter.ID)
+	}
+	if filter.LocationID > 0 {
+		fmt.Fprintf(&b, "|loc=%d", filter.LocationID)
+	}
+	if filter.EventID > 0 {
+		fmt.Fprintf(&b, "|ev=%d", filter.EventID)
+	}
+	if filter.Limit > 0 {
+		fmt.Fprintf(&b, "|limit=%d", filter.Limit)
+	}
+
+	// SHA-256 of the combined signature yields the weak ETag returned to clients.
+	sum := sha256.Sum256([]byte(b.String()))
+	return `W/"` + hex.EncodeToString(sum[:16]) + `"`, nil
 }
 
 func (s *sqliteRepo) CreateCheckin(ctx context.Context, checkin Checkin) (Checkin, error) {

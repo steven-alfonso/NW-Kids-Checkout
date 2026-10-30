@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -785,6 +786,83 @@ func TestCheckouts_SessionStoreFailureDoesNotCrash(t *testing.T) {
 	assert.Equal(t, fiber.StatusInternalServerError, resp.StatusCode)
 }
 
+func setupCheckinTestData(b *testing.B, testDB *sql.DB) (checkinRepo checkin.Repo, locID int64) {
+	locRes, err := squirrel.Insert("locations").
+		RunWith(testDB).
+		Columns("name", "planning_center_id", "event_id").
+		Values("bench", "plloc_bench", 1).
+		ExecContext(b.Context())
+	require.NoError(b, err)
+	locID, _ = locRes.LastInsertId()
+
+	checkinRepo = checkin.NewRepo(testDB)
+	for i := 0; i < 1000; i++ {
+		_, err := checkinRepo.CreateCheckin(b.Context(), checkin.Checkin{
+			PlanningCenterID: fmt.Sprintf("plc_bench_%d", i),
+			LocationID:       locID,
+			FirstName:        "first",
+			LastName:         "last",
+			SecurityCode:     "ABC123",
+			CheckedOutAt:     time.Now().UTC().Add(-time.Minute),
+		})
+		require.NoError(b, err)
+	}
+	return checkinRepo, locID
+}
+
+func BenchmarkController_Checkouts_304(b *testing.B) {
+	app, store := setupAuthedApp()
+
+	testDB, cleanup, err := db.PrepareTestDB()
+	require.NoError(b, err)
+	b.Cleanup(cleanup)
+
+	NewController(testDB, store).RegisterRoutes(app)
+
+	setupCheckinTestData(b, testDB)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/checkins/checkouts?limit=100&checked_out_after=-20m", nil)
+	req.Header.Set("Accept", "application/json")
+	resp, err := app.Test(req)
+	require.NoError(b, err)
+	etag := resp.Header.Get("ETag")
+	resp.Body.Close()
+	require.NotEmpty(b, etag)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		r := httptest.NewRequest(http.MethodGet, "/v1/checkins/checkouts?limit=100&checked_out_after=-20m", nil)
+		r.Header.Set("Accept", "application/json")
+		r.Header.Set("If-None-Match", etag)
+		resp, err := app.Test(r)
+		if err != nil {
+			b.Fatal(err)
+		}
+		resp.Body.Close()
+	}
+}
+
+func BenchmarkController_Checkouts_200(b *testing.B) {
+	app, store := setupAuthedApp()
+
+	testDB, cleanup, err := db.PrepareTestDB()
+	require.NoError(b, err)
+	b.Cleanup(cleanup)
+
+	NewController(testDB, store).RegisterRoutes(app)
+
+	setupCheckinTestData(b, testDB)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		r := httptest.NewRequest(http.MethodGet, "/v1/checkins/checkouts?limit=100&checked_out_after=-20m", nil)
+		r.Header.Set("Accept", "application/json")
+		resp, err := app.Test(r)
+		if err != nil {
+			b.Fatal(err)
+		}
+		resp.Body.Close()
+	}
+}
 func TestController_Checkouts_hotPath(t *testing.T) {
 	app, store := setupAuthedApp()
 

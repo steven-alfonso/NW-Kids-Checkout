@@ -2,6 +2,7 @@ package checkin
 
 import (
 	"database/sql"
+	"fmt"
 	"log"
 	"os"
 	"testing"
@@ -10,6 +11,7 @@ import (
 	dbschema "kids-checkin/db"
 	"kids-checkin/internal/db"
 	"kids-checkin/internal/repo"
+	"kids-checkin/internal/repo/manualcheckin"
 
 	"github.com/Masterminds/squirrel"
 	_ "github.com/mattn/go-sqlite3"
@@ -747,4 +749,136 @@ func execSchema(t *testing.T, tDB *sql.DB) {
 	t.Helper()
 	_, err := tDB.Exec(dbschema.Schema)
 	require.NoError(t, err)
+}
+
+func Test_sqliteRepo_CheckoutsVersion(t *testing.T) {
+	_, err := squirrel.Delete("checkins").RunWith(testDB).ExecContext(t.Context())
+	require.NoError(t, err)
+	_, err = squirrel.Delete("manual_checkins").RunWith(testDB).ExecContext(t.Context())
+	require.NoError(t, err)
+	_, err = squirrel.Delete("locations").RunWith(testDB).ExecContext(t.Context())
+	require.NoError(t, err)
+	_, err = squirrel.Delete("location_groups").RunWith(testDB).ExecContext(t.Context())
+	require.NoError(t, err)
+
+	s := NewRepo(testDB)
+
+	t.Run("empty database returns a validator", func(t *testing.T) {
+		v, err := s.CheckoutsVersion(t.Context(), Filter{})
+		require.NoError(t, err)
+		assert.NotEmpty(t, v)
+	})
+
+	t.Run("stable for unchanged state", func(t *testing.T) {
+		v1, err := s.CheckoutsVersion(t.Context(), Filter{})
+		require.NoError(t, err)
+		v2, err := s.CheckoutsVersion(t.Context(), Filter{})
+		require.NoError(t, err)
+		assert.Equal(t, v1, v2)
+	})
+
+	t.Run("changes when a checkin is inserted", func(t *testing.T) {
+		before, err := s.CheckoutsVersion(t.Context(), Filter{})
+		require.NoError(t, err)
+
+		_, err = s.CreateCheckin(t.Context(), Checkin{
+			PlanningCenterID: "plc_cv",
+			LocationID:       0,
+			FirstName:        "hot",
+			LastName:         "path",
+			SecurityCode:     "ABC123",
+			CheckedOutAt:     time.Now().UTC(),
+		})
+		require.NoError(t, err)
+
+		after, err := s.CheckoutsVersion(t.Context(), Filter{})
+		require.NoError(t, err)
+		assert.NotEqual(t, before, after)
+	})
+
+	t.Run("changes when a confirmation is updated", func(t *testing.T) {
+		before, err := s.CheckoutsVersion(t.Context(), Filter{})
+		require.NoError(t, err)
+
+		_, err = s.SetCheckedOutConfirmedAt(t.Context(), "plc_cv", true)
+		require.NoError(t, err)
+
+		after, err := s.CheckoutsVersion(t.Context(), Filter{})
+		require.NoError(t, err)
+		assert.NotEqual(t, before, after)
+	})
+
+	t.Run("changes when a manual checkin is inserted", func(t *testing.T) {
+		manualRepo := manualcheckin.NewRepo(testDB)
+		before, err := s.CheckoutsVersion(t.Context(), Filter{})
+		require.NoError(t, err)
+
+		_, err = manualRepo.CreateManualCheckin(t.Context(), manualcheckin.ManualCheckin{
+			FirstName:    "manual",
+			LastName:     "kid",
+			CheckedOutAt: time.Now().UTC(),
+		})
+		require.NoError(t, err)
+
+		after, err := s.CheckoutsVersion(t.Context(), Filter{})
+		require.NoError(t, err)
+		assert.NotEqual(t, before, after)
+	})
+
+	t.Run("filter affects the validator", func(t *testing.T) {
+		v1, err := s.CheckoutsVersion(t.Context(), Filter{Limit: 10})
+		require.NoError(t, err)
+		v2, err := s.CheckoutsVersion(t.Context(), Filter{Limit: 20})
+		require.NoError(t, err)
+		assert.NotEqual(t, v1, v2)
+	})
+}
+
+func Benchmark_sqliteRepo_CheckoutsVersion(b *testing.B) {
+	_, err := squirrel.Delete("checkins").RunWith(testDB).ExecContext(b.Context())
+	require.NoError(b, err)
+	_, err = squirrel.Delete("manual_checkins").RunWith(testDB).ExecContext(b.Context())
+	require.NoError(b, err)
+	_, err = squirrel.Delete("locations").RunWith(testDB).ExecContext(b.Context())
+	require.NoError(b, err)
+
+	res, err := squirrel.Insert("locations").
+		RunWith(testDB).
+		Columns("name", "planning_center_id", "event_id").
+		Values("bench", "plloc_bench", 1).
+		ExecContext(b.Context())
+	require.NoError(b, err)
+	locID, _ := res.LastInsertId()
+
+	s := NewRepo(testDB)
+	for i := 0; i < 1000; i++ {
+		_, err := s.CreateCheckin(b.Context(), Checkin{
+			PlanningCenterID: fmt.Sprintf("plc_bench_%d", i),
+			LocationID:       locID,
+			FirstName:        "first",
+			LastName:         "last",
+			SecurityCode:     "ABC123",
+			CheckedOutAt:     time.Now().UTC().Add(-time.Minute),
+		})
+		require.NoError(b, err)
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, err := s.CheckoutsVersion(b.Context(), Filter{})
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func Benchmark_sqliteRepo_ListCheckins(b *testing.B) {
+	s := NewRepo(testDB)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, err := s.ListCheckins(b.Context(), Filter{})
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
 }

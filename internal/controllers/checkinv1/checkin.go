@@ -159,6 +159,19 @@ func (controller *Controller) checkoutsWeb(c *fiber.Ctx) error {
 	manualFilter := manualFilterFromCheckinFilter(filter)
 	manualFilter.Recent = true
 
+	version, err := controller.checkinRepo.CheckoutsVersion(c.Context(), filter)
+	if err != nil {
+		slog.Warn("checkouts version failed", slog.String("error", err.Error()))
+		version = ""
+	}
+
+	if version != "" && etagMatches(c.Get(fiber.HeaderIfNoneMatch), version) {
+		c.Set(fiber.HeaderCacheControl, "no-cache")
+		c.Vary(fiber.HeaderAcceptEncoding, fiber.HeaderAccept)
+		c.Set(fiber.HeaderETag, version)
+		return c.SendStatus(fiber.StatusNotModified)
+	}
+
 	checkins, err := controller.checkinRepo.ListCheckins(c.Context(), filter)
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
@@ -182,31 +195,25 @@ func (controller *Controller) checkoutsWeb(c *fiber.Ctx) error {
 	return sendCheckoutsJSON(c, CheckoutsResponse{
 		Checkins:       repoCheckinSliceToOutput(checkins),
 		ManualCheckins: repoManualCheckinSliceToOutput(manualCheckins),
-	})
+	}, version)
 }
 
 // sendCheckoutsJSON writes the poll payload with a validator so the client's 3s
 // poll can revalidate instead of re-downloading an unchanged list. The checkouts
 // page polls far more often than the data changes, so most responses collapse
 // to an empty 304.
-func sendCheckoutsJSON(c *fiber.Ctx, payload CheckoutsResponse) error {
+func sendCheckoutsJSON(c *fiber.Ctx, payload CheckoutsResponse, etag string) error {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "could not encode checkouts")
 	}
 
-	// Weak validator: the identity representation is hashed here, but gzip may
-	// content-code it on the way out, and a weak tag is the correct validator
-	// when a weak transformation like compression is applied (RFC 9110 8.8.1).
-	sum := sha256.Sum256(body)
-	etag := `W/"` + hex.EncodeToString(sum[:16]) + `"`
+	if etag == "" {
+		sum := sha256.Sum256(body)
+		etag = `W/"` + hex.EncodeToString(sum[:16]) + `"`
+	}
 
-	// no-cache (not no-store) so the browser keeps the body and revalidates it
-	// on the next poll instead of refetching every time.
 	c.Set(fiber.HeaderCacheControl, "no-cache")
-	// Vary on Accept-Encoding because compression re-encodes the body, and on
-	// Accept because this route content-negotiates: the same path serves HTML
-	// or this payload depending on the request's Accept header.
 	c.Vary(fiber.HeaderAcceptEncoding, fiber.HeaderAccept)
 	c.Set(fiber.HeaderETag, etag)
 
@@ -214,8 +221,6 @@ func sendCheckoutsJSON(c *fiber.Ctx, payload CheckoutsResponse) error {
 		return c.SendStatus(fiber.StatusNotModified)
 	}
 
-	// Set the content type directly rather than via c.Type, which treats its
-	// argument as a file extension and would fall back to octet-stream.
 	c.Set(fiber.HeaderContentType, fiber.MIMEApplicationJSON)
 	return c.Send(body)
 }
