@@ -142,5 +142,33 @@ jobs:
       - name: Install dependencies
         run: npm install
 
+      # The CSS that ships is the committed file: nothing in the Dockerfiles or
+      # cmd/assets regenerates it, and no test reads it, so a page can gain
+      # utility classes that are simply absent from production. That exact bug
+      # shipped. Rebuilding here fails the job when the two disagree.
+      #
+      # Sources are auto-detected from the working tree; only .gitignore'd
+      # files are excluded, so an untracked, non-ignored file changes this
+      # build without being in any commit.
+      #
+      # Byte-for-byte, which is why package.json pins both Tailwind packages to
+      # exact versions: an unpinned `npm install` floats to the latest 4.x, and
+      # a release changes both the banner and the emitted rules (4.3.x turned
+      # calc(var(--spacing) * 0) into 0). Unpinned, this step fails on someone
+      # else's install instead of on real drift -- which is exactly how it
+      # failed on its first run. A committed lockfile is the proper fix for
+      # that, and is still the separate change noted above.
+      - name: Verify Tailwind output is current
+        run: |
+          npm run build:css > /dev/null
+          if ! git diff --quiet -- internal/web/static/css/tailwind.css; then
+            echo "::error::internal/web/static/css/tailwind.css is stale"
+            echo "Run: npm run build:css from a clean tree -- sources are"
+            echo "auto-detected, so an untracked, non-ignored file changes the"
+            echo "output without being in any commit."
+            git diff --stat -- internal/web/static/css/tailwind.css
+            exit 1
+          fi
+
       - name: Test
         run: npm test

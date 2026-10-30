@@ -5,16 +5,16 @@
   "main": "app.js",
   "scripts": {
     "test": "vitest run",
-    "build:css": "tailwindcss --config tailwind.config.js -o internal/web/static/css/tailwind.css --minify --content \".\"",
-    "watch:css": "tailwindcss --config tailwind.config.js -o internal/web/static/css/tailwind.css --content \".\" --watch"
+    "build:css": "tailwindcss -o internal/web/static/css/tailwind.css --minify",
+    "watch:css": "tailwindcss -o internal/web/static/css/tailwind.css --watch"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "devDependencies": {
-    "@tailwindcss/cli": "^4.1.18",
+    "@tailwindcss/cli": "4.2.2",
     "jsdom": "^24.0.0",
-    "tailwindcss": "^4.1.18",
+    "tailwindcss": "4.2.2",
     "vitest": "^2.1.8"
   }
 }

@@ -144,7 +144,24 @@
         }
 
         #overdue-sheet {
-            transition: translate 300ms ease-out, transform 300ms ease-out;
+            /* Height (live 80dvh) and the sync's max-height/bottom must ease
+               with the slide too: at close the toolbar reappears and an
+               untransitioned height snapped the drawer ~50-100px in a frame. */
+            transition: translate 300ms ease-out, transform 300ms ease-out,
+                height 300ms ease-out, max-height 300ms ease-out,
+                bottom 300ms ease-out;
+            /* dvh keeps the drawer off the whole screen where `vh` is the
+               large viewport; 80vh fallback where dvh is unsupported. */
+            height: 80vh;
+            height: 80dvh;
+            /* Also for the transition: the sync writes max-height inline, and
+               a first write from `none` cannot interpolate with a length. */
+            max-height: 80vh;
+            max-height: 80dvh;
+            /* The home indicator overlays the physical bottom edge once the
+               toolbar collapses, which would bury the last row of the list.
+               0 outside iOS-style notched viewports. */
+            padding-bottom: env(safe-area-inset-bottom, 0px);
         }
     </style>
 
@@ -254,19 +271,19 @@
     </button>
 
     <!-- Overdue bottom sheet -->
-    <div id="overdue-sheet-backdrop" class="hidden fixed inset-0 bg-black/40 z-40" aria-hidden="true"></div>
+    <div id="overdue-sheet-backdrop" class="hidden fixed inset-0 bg-black/40 z-40 cursor-pointer touch-manipulation" aria-hidden="true"></div>
     <div id="overdue-sheet"
-        class="fixed inset-x-0 bottom-0 z-40 h-[80vh] bg-slate-50 rounded-t-2xl shadow-2xl border-t border-slate-200 flex flex-col translate-y-full"
+        class="fixed inset-x-0 bottom-0 z-40 bg-slate-50 rounded-t-2xl shadow-2xl border-t border-slate-200 flex flex-col translate-y-full"
         aria-hidden="true" role="dialog" aria-label="Overdue checkouts" tabindex="-1" inert>
-        <div class="flex items-center justify-between px-4 pt-3 pb-2 shrink-0">
-            <div class="flex items-center gap-2">
+        <div class="flex items-center justify-between gap-2 px-4 pt-3 pb-2 shrink-0">
+            <div class="flex items-center gap-2 min-w-0">
                 <span class="h-2 w-2 rounded-full bg-red-500 shrink-0"></span>
-                <h2 id="overdue-sheet-title" class="text-sm font-bold text-slate-800">Overdue &gt;5 min</h2>
+                <h2 id="overdue-sheet-title" class="text-sm font-bold text-slate-800 truncate">Overdue &gt;5 min</h2>
                 <span id="overdue-sheet-count"
-                    class="text-xs font-semibold bg-red-100 text-red-700 px-2 py-0.5 rounded-full">0 overdue</span>
+                    class="text-xs font-semibold bg-red-100 text-red-700 px-2 py-0.5 rounded-full shrink-0">0 overdue</span>
             </div>
             <button id="overdue-sheet-close" type="button" aria-label="Close overdue list"
-                class="h-8 w-8 inline-flex items-center justify-center rounded-full text-slate-500 hover:bg-slate-200 hover:text-slate-700 cursor-pointer">
+                class="h-8 w-8 shrink-0 inline-flex items-center justify-center rounded-full text-slate-500 hover:bg-slate-200 hover:text-slate-700 cursor-pointer touch-manipulation">
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="h-5 w-5">
                     <path
                         d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 0-1.06-1.06L10 8.94 6.28 5.22Z" />
