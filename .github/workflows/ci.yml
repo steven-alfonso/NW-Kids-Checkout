@@ -147,6 +147,13 @@ jobs:
       # utility classes that are simply absent from production. That exact bug
       # shipped. Rebuilding here fails the job when the two disagree.
       #
+      # Sources are auto-detected from the working tree -- there is no config
+      # file, and the --config/--content pair these scripts used to pass was
+      # inert under v4 (it never read them) and has been removed. So the same
+      # scan decides both the committed file and this rebuild, and it excludes
+      # only what .gitignore excludes: an untracked file that is not ignored
+      # changes a local build without entering any commit.
+      #
       # Byte-for-byte, which is why package.json pins both Tailwind packages to
       # exact versions: an unpinned `npm install` floats to the latest 4.x, and
       # a release changes both the banner and the emitted rules (4.3.x turned
@@ -159,7 +166,9 @@ jobs:
           npm run build:css > /dev/null
           if ! git diff --quiet -- internal/web/static/css/tailwind.css; then
             echo "::error::internal/web/static/css/tailwind.css is stale"
-            echo "Run: npm run build:css"
+            echo "Run: npm run build:css from a clean tree -- sources are"
+            echo "auto-detected, so an untracked, non-ignored file changes the"
+            echo "output without being in any commit."
             git diff --stat -- internal/web/static/css/tailwind.css
             exit 1
           fi
