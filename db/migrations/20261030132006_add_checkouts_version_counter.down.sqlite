@@ -11,6 +11,3 @@ DROP TRIGGER IF EXISTS location_groups_version_insert;
 DROP TRIGGER IF EXISTS location_groups_version_update;
 DROP TRIGGER IF EXISTS location_groups_version_delete;
 DROP TABLE IF EXISTS checkouts_version;
-DROP INDEX IF EXISTS idx_checkins_checked_out_confirmed_at;
-DROP INDEX IF EXISTS idx_checkins_fetched_at;
-DROP INDEX IF EXISTS idx_manual_checkins_checked_out_confirmed_at;

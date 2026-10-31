@@ -107,9 +107,6 @@ CREATE INDEX idx_manual_created_at ON manual_checkins (created_at);
 CREATE INDEX idx_manual_checkins_child_id ON manual_checkins(child_id);
 CREATE INDEX idx_guest_submissions_created_at ON guest_submissions(created_at);
 CREATE INDEX idx_guest_submissions_parent_id ON guest_submissions(parent_id);
-CREATE INDEX idx_checkins_checked_out_confirmed_at ON checkins (checked_out_confirmed_at);
-CREATE INDEX idx_checkins_fetched_at ON checkins (fetched_at);
-CREATE INDEX idx_manual_checkins_checked_out_confirmed_at ON manual_checkins (checked_out_confirmed_at);
 CREATE TABLE checkouts_version (
     id      INTEGER PRIMARY KEY CHECK (id = 1),
     version INTEGER NOT NULL DEFAULT 0
@@ -122,6 +119,15 @@ BEGIN
 END;
 CREATE TRIGGER checkins_version_update
 AFTER UPDATE ON checkins
+WHEN OLD.id IS NOT NEW.id
+    OR OLD.planning_center_id IS NOT NEW.planning_center_id
+    OR OLD.location_id IS NOT NEW.location_id
+    OR OLD.first_name IS NOT NEW.first_name
+    OR OLD.last_name IS NOT NEW.last_name
+    OR OLD.security_code IS NOT NEW.security_code
+    OR OLD.checked_out_at IS NOT NEW.checked_out_at
+    OR OLD.checked_out_confirmed_at IS NOT NEW.checked_out_confirmed_at
+    OR OLD.event_id IS NOT NEW.event_id
 BEGIN
     INSERT INTO checkouts_version (id, version) VALUES (1, 1)
     ON CONFLICT(id) DO UPDATE SET version = version + 1;
@@ -140,6 +146,12 @@ BEGIN
 END;
 CREATE TRIGGER manual_checkins_version_update
 AFTER UPDATE ON manual_checkins
+WHEN OLD.id IS NOT NEW.id
+    OR OLD.public_id IS NOT NEW.public_id
+    OR OLD.first_name IS NOT NEW.first_name
+    OR OLD.last_name IS NOT NEW.last_name
+    OR OLD.checked_out_at IS NOT NEW.checked_out_at
+    OR OLD.checked_out_confirmed_at IS NOT NEW.checked_out_confirmed_at
 BEGIN
     INSERT INTO checkouts_version (id, version) VALUES (1, 1)
     ON CONFLICT(id) DO UPDATE SET version = version + 1;
@@ -158,6 +170,9 @@ BEGIN
 END;
 CREATE TRIGGER locations_version_update
 AFTER UPDATE ON locations
+WHEN OLD.id IS NOT NEW.id
+    OR OLD.name IS NOT NEW.name
+    OR OLD.location_group_id IS NOT NEW.location_group_id
 BEGIN
     INSERT INTO checkouts_version (id, version) VALUES (1, 1)
     ON CONFLICT(id) DO UPDATE SET version = version + 1;
@@ -176,6 +191,8 @@ BEGIN
 END;
 CREATE TRIGGER location_groups_version_update
 AFTER UPDATE ON location_groups
+WHEN OLD.id IS NOT NEW.id
+    OR OLD.name IS NOT NEW.name
 BEGIN
     INSERT INTO checkouts_version (id, version) VALUES (1, 1)
     ON CONFLICT(id) DO UPDATE SET version = version + 1;

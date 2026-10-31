@@ -156,6 +156,8 @@ func (controller *Controller) checkoutsWeb(c *fiber.Ctx) error {
 	}
 
 	filter.Recent = true
+	manualCheckinsVisible := !isLocationGroupFilterEmpty(c, filter)
+	filter.ManualCheckinsVisible = manualCheckinsVisible
 	manualFilter := manualFilterFromCheckinFilter(filter)
 	manualFilter.Recent = true
 
@@ -183,7 +185,7 @@ func (controller *Controller) checkoutsWeb(c *fiber.Ctx) error {
 	}
 
 	var manualCheckins []manualcheckin.ManualCheckin
-	if !isLocationGroupFilterEmpty(c, filter) {
+	if manualCheckinsVisible {
 		manualCheckins, err = controller.manualRepo.ListManualCheckins(c.Context(), manualFilter)
 		if err != nil {
 			return fiber.NewError(fiber.StatusInternalServerError, err.Error())

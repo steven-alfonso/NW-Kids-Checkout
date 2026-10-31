@@ -457,13 +457,16 @@ func Test_sqliteRepo_RemoveOldCheckins(t *testing.T) {
 			beforeFn: func(t *testing.T) {
 				_, err := squirrel.Delete("checkins").RunWith(testDB).ExecContext(t.Context())
 				require.NoError(t, err)
+				// Use a margin wider than the gap between the table being
+				// built and this subtest running. A 1ms margin made this flaky
+				// when CI scheduling delayed the insert past olderThan.
 				_, err = s.CreateCheckin(t.Context(), Checkin{
 					PlanningCenterID: "plc_1234",
 					LocationID:       1,
 					FirstName:        "somefirstname1",
 					LastName:         "somelastname1",
 					SecurityCode:     "ABC123",
-					CheckedOutAt:     time.Now().Add(-24 * time.Hour).Add(-1 * time.Millisecond),
+					CheckedOutAt:     time.Now().Add(-25 * time.Hour),
 				})
 				require.NoError(t, err)
 				_, err = s.CreateCheckin(t.Context(), Checkin{
@@ -785,6 +788,15 @@ func Test_sqliteRepo_CheckoutsVersion(t *testing.T) {
 		return v
 	}
 
+	counter := func(t *testing.T) int64 {
+		t.Helper()
+		var v int64
+		err := testDB.QueryRowContext(t.Context(),
+			`SELECT COALESCE(MAX(version), 0) FROM checkouts_version`).Scan(&v)
+		require.NoError(t, err)
+		return v
+	}
+
 	t.Run("empty database returns an opaque validator", func(t *testing.T) {
 		resetCheckoutTables(t)
 		v := version(t)
@@ -810,6 +822,19 @@ func Test_sqliteRepo_CheckoutsVersion(t *testing.T) {
 		before := version(t)
 		createCheckin(t, "plc_upsert", now.Add(-5*time.Minute), time.Time{})
 		assert.NotEqual(t, before, version(t), "the fetcher's ON CONFLICT update must bump the counter")
+	})
+
+	t.Run("identical upsert does not advance the counter", func(t *testing.T) {
+		resetCheckoutTables(t)
+		createCheckin(t, "plc_noop", now, time.Time{})
+		before := counter(t)
+
+		// The fetcher retries a whole batch when one checkout is dropped, so
+		// re-upserting an unchanged row must not invalidate every client's ETag.
+		createCheckin(t, "plc_noop", now, time.Time{})
+
+		assert.Equal(t, before, counter(t),
+			"an upsert that changes no response-visible column must not bump the counter")
 	})
 
 	t.Run("rollback leaves the version unchanged", func(t *testing.T) {
@@ -999,6 +1024,71 @@ func Test_sqliteRepo_CheckoutsVersion(t *testing.T) {
 		v2, err := s.CheckoutsVersion(t.Context(), Filter{Recent: true})
 		require.NoError(t, err)
 		assert.NotEqual(t, v1, v2, "Recent changes the order and therefore which limited rows are returned")
+	})
+
+	t.Run("manual checkin visibility affects the validator", func(t *testing.T) {
+		resetCheckoutTables(t)
+		v1, err := s.CheckoutsVersion(t.Context(), Filter{ManualCheckinsVisible: false})
+		require.NoError(t, err)
+		v2, err := s.CheckoutsVersion(t.Context(), Filter{ManualCheckinsVisible: true})
+		require.NoError(t, err)
+		assert.NotEqual(t, v1, v2, "the response includes or omits manual checkins based on this decision")
+	})
+
+	t.Run("checked_out_before is exact within a bucket", func(t *testing.T) {
+		resetCheckoutTables(t)
+		bucketStart := time.Unix((time.Now().Unix()/300)*300, 0).UTC()
+
+		v1, err := s.CheckoutsVersion(t.Context(), Filter{CheckedOutAtBefore: bucketStart.Add(time.Minute)})
+		require.NoError(t, err)
+		v2, err := s.CheckoutsVersion(t.Context(), Filter{CheckedOutAtBefore: bucketStart.Add(2 * time.Minute)})
+		require.NoError(t, err)
+
+		assert.NotEqual(t, v1, v2,
+			"a relative upper bound admits new rows as it advances; it must not be bucketed")
+	})
+
+	t.Run("unordered limited after bound is exact within a bucket", func(t *testing.T) {
+		resetCheckoutTables(t)
+		bucketStart := time.Unix((time.Now().Unix()/300)*300, 0).UTC()
+
+		v1, err := s.CheckoutsVersion(t.Context(), Filter{
+			CheckedOutAtAfter: bucketStart.Add(time.Minute),
+			Limit:             10,
+		})
+		require.NoError(t, err)
+		v2, err := s.CheckoutsVersion(t.Context(), Filter{
+			CheckedOutAtAfter: bucketStart.Add(2 * time.Minute),
+			Limit:             10,
+		})
+		require.NoError(t, err)
+
+		assert.NotEqual(t, v1, v2,
+			"an unordered limited query can return a different subset as the cutoff moves")
+	})
+
+	t.Run("group ID order does not affect the validator", func(t *testing.T) {
+		resetCheckoutTables(t)
+		v1, err := s.CheckoutsVersion(t.Context(), Filter{LocationGroupIDs: []int64{2, 1}})
+		require.NoError(t, err)
+		v2, err := s.CheckoutsVersion(t.Context(), Filter{LocationGroupIDs: []int64{1, 2}})
+		require.NoError(t, err)
+		assert.Equal(t, v1, v2, "the query treats the group IDs as a set, so the token must too")
+	})
+
+	t.Run("separator characters do not collide with other filters", func(t *testing.T) {
+		resetCheckoutTables(t)
+		v1, err := s.CheckoutsVersion(t.Context(), Filter{FirstName: "a|b", LastName: "c"})
+		require.NoError(t, err)
+		v2, err := s.CheckoutsVersion(t.Context(), Filter{FirstName: "a", LastName: "b|c"})
+		require.NoError(t, err)
+		assert.NotEqual(t, v1, v2, "the old pipe-joined encoding collided on these filters")
+
+		v3, err := s.CheckoutsVersion(t.Context(), Filter{LocationName: "id=5"})
+		require.NoError(t, err)
+		v4, err := s.CheckoutsVersion(t.Context(), Filter{ID: 5})
+		require.NoError(t, err)
+		assert.NotEqual(t, v3, v4, "the old encoding collided on filter-name-shaped values")
 	})
 }
 

@@ -5,8 +5,9 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
-	"strings"
+	"slices"
 	"time"
 
 	"kids-checkin/internal/repo"
@@ -30,6 +31,10 @@ type Filter struct {
 	CheckedOutAtAfter  time.Time
 	Limit              int
 	Recent             bool
+	// ManualCheckinsVisible records the controller's decision to include
+	// manual checkins. It is part of the checkouts version token, not the SQL
+	// filter, because that decision depends on raw query-parameter presence.
+	ManualCheckinsVisible bool
 }
 
 type Checkin struct {
@@ -210,67 +215,99 @@ func (s *sqliteRepo) CheckoutsVersion(ctx context.Context, filter Filter) (strin
 	// per church/instance). A shared-schema deployment must scope this read and
 	// the triggers by tenant before relying on the token across tenants.
 	//
-	// A trigger on every write to the tables that feed the checkouts response
-	// increments this counter. Unlike COUNT/MAX aggregates it sees updates that
-	// do not move a maximum, delete/insert pairs that preserve a count, and
-	// changes to filter-only columns such as event_id and location names.
-	// Reading it is O(1) regardless of table size.
+	// Triggers on the tables that feed the checkouts response increment this
+	// counter, while ignoring updates that change no response-visible column.
+	// Unlike COUNT/MAX aggregates it sees updates that do not move a maximum,
+	// delete/insert pairs that preserve a count, and changes to filter-only
+	// columns such as event_id and location names. Reading it is O(1) regardless
+	// of table size.
 	var version int64
 	if err := s.db.QueryRowContext(ctx,
 		`SELECT COALESCE(MAX(version), 0) FROM checkouts_version`).Scan(&version); err != nil {
 		return "", fmt.Errorf("reading checkouts version: %w", err)
 	}
 
-	// A five-minute time bucket makes the token change even when no row is
-	// written, because rows can age out of a relative checked_out_after window.
-	bucket := time.Now().Unix() / 300
-
-	var b strings.Builder
-	fmt.Fprintf(&b, "%d|%d", version, bucket)
-
-	// Request filters are included (bucketed for time bounds) so different views
-	// get distinct tokens.
-	checkedOutBeforeBucket := int64(0)
+	// Bucketing checked_out_after is safe because aging only removes rows: the
+	// response may briefly keep a row that has left the window, but it cannot
+	// omit a row that has entered it. checked_out_before is different: a relative
+	// upper bound admits additional rows as time advances, so it is included
+	// exactly. Otherwise a 304 could hide newly eligible rows.
+	//
+	// An unordered read with a limit can also expose a different subset of the
+	// remaining rows as the window moves, so that case uses the exact cutoff too.
+	checkedOutBefore := ""
 	if !filter.CheckedOutAtBefore.IsZero() {
-		checkedOutBeforeBucket = filter.CheckedOutAtBefore.UTC().Unix() / 300
+		checkedOutBefore = filter.CheckedOutAtBefore.UTC().Format(time.RFC3339Nano)
 	}
+
 	checkedOutAfterBucket := int64(0)
+	checkedOutAfter := ""
 	if !filter.CheckedOutAtAfter.IsZero() {
-		checkedOutAfterBucket = filter.CheckedOutAtAfter.UTC().Unix() / 300
+		if filter.Recent || filter.Limit == 0 {
+			checkedOutAfterBucket = filter.CheckedOutAtAfter.UTC().Unix() / 300
+		} else {
+			checkedOutAfter = filter.CheckedOutAtAfter.UTC().Format(time.RFC3339Nano)
+		}
 	}
-	fmt.Fprintf(&b, "|%s|%s|%s|%s|%d|%v|%d|%d",
-		filter.LocationGroupName, filter.PlanningCenterID, filter.FirstName, filter.LastName,
-		filter.LocationGroupID, filter.LocationGroupIDs,
-		checkedOutBeforeBucket, checkedOutAfterBucket)
-	if filter.IncludeUnassigned {
-		b.WriteString("|1")
-	} else {
-		b.WriteString("|0")
+
+	// Canonicalize the group IDs so the set of requested groups, not its request
+	// order, determines the token.
+	locationGroupIDs := slices.Clone(filter.LocationGroupIDs)
+	slices.Sort(locationGroupIDs)
+	locationGroupIDs = slices.Compact(locationGroupIDs)
+	if locationGroupIDs == nil {
+		locationGroupIDs = []int64{}
 	}
-	if filter.Recent {
-		b.WriteString("|recent=1")
-	} else {
-		b.WriteString("|recent=0")
-	}
-	if filter.LocationName != "" {
-		fmt.Fprintf(&b, "|%s", filter.LocationName)
-	}
-	if filter.ID > 0 {
-		fmt.Fprintf(&b, "|id=%d", filter.ID)
-	}
-	if filter.LocationID > 0 {
-		fmt.Fprintf(&b, "|loc=%d", filter.LocationID)
-	}
-	if filter.EventID > 0 {
-		fmt.Fprintf(&b, "|ev=%d", filter.EventID)
-	}
-	if filter.Limit > 0 {
-		fmt.Fprintf(&b, "|limit=%d", filter.Limit)
+
+	// JSON gives every field a name and escapes string values, so two different
+	// filters cannot serialize to the same bytes (the previous "|"-joined form
+	// could, for example, collide on names containing "|").
+	signature, err := json.Marshal(struct {
+		Version                 int64   `json:"version"`
+		LocationGroupName       string  `json:"location_group_name"`
+		PlanningCenterID        string  `json:"planning_center_id"`
+		FirstName               string  `json:"first_name"`
+		LastName                string  `json:"last_name"`
+		LocationGroupID         int64   `json:"location_group_id"`
+		LocationGroupIDs        []int64 `json:"location_group_ids"`
+		IncludeUnassigned       bool    `json:"include_unassigned"`
+		Recent                  bool    `json:"recent"`
+		ManualCheckinsVisible   bool    `json:"manual_checkins_visible"`
+		LocationName            string  `json:"location_name"`
+		ID                      int64   `json:"id"`
+		LocationID              int64   `json:"location_id"`
+		EventID                 int64   `json:"event_id"`
+		Limit                   int     `json:"limit"`
+		CheckedOutAtBefore      string  `json:"checked_out_at_before"`
+		CheckedOutAtAfter       string  `json:"checked_out_at_after"`
+		CheckedOutAtAfterBucket int64   `json:"checked_out_at_after_bucket"`
+	}{
+		Version:                 version,
+		LocationGroupName:       filter.LocationGroupName,
+		PlanningCenterID:        filter.PlanningCenterID,
+		FirstName:               filter.FirstName,
+		LastName:                filter.LastName,
+		LocationGroupID:         filter.LocationGroupID,
+		LocationGroupIDs:        locationGroupIDs,
+		IncludeUnassigned:       filter.IncludeUnassigned,
+		Recent:                  filter.Recent,
+		ManualCheckinsVisible:   filter.ManualCheckinsVisible,
+		LocationName:            filter.LocationName,
+		ID:                      filter.ID,
+		LocationID:              filter.LocationID,
+		EventID:                 filter.EventID,
+		Limit:                   filter.Limit,
+		CheckedOutAtBefore:      checkedOutBefore,
+		CheckedOutAtAfter:       checkedOutAfter,
+		CheckedOutAtAfterBucket: checkedOutAfterBucket,
+	})
+	if err != nil {
+		return "", fmt.Errorf("encoding checkouts version: %w", err)
 	}
 
 	// The controller turns this opaque token into a weak ETag; keeping the HTTP
 	// formatting out of the repository makes the token reusable by other callers.
-	sum := sha256.Sum256([]byte(b.String()))
+	sum := sha256.Sum256(signature)
 	return hex.EncodeToString(sum[:16]), nil
 }
 

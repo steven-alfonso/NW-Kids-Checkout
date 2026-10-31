@@ -962,6 +962,24 @@ func TestController_Checkouts_location_group_filtering(t *testing.T) {
 		_, payload = idsFor(t, "/v1/checkins/checkouts?include_unassigned=1")
 		assert.Len(t, payload.ManualCheckins, 1)
 	})
+
+	t.Run("manual visibility is part of the validator", func(t *testing.T) {
+		etagFor := func(t *testing.T, url string) string {
+			t.Helper()
+			req := httptest.NewRequest(http.MethodGet, url, nil)
+			req.Header.Set("Accept", "application/json")
+			resp, err := app.Test(req)
+			require.NoError(t, err)
+			defer resp.Body.Close()
+			require.Equal(t, fiber.StatusOK, resp.StatusCode)
+			return resp.Header.Get("ETag")
+		}
+
+		withManual := etagFor(t, "/v1/checkins/checkouts?limit=100")
+		withoutManual := etagFor(t, "/v1/checkins/checkouts?limit=100&location_group_id=")
+		assert.NotEqual(t, withManual, withoutManual,
+			"an omitted group filter includes manual checkins while an empty one hides them")
+	})
 }
 
 // Test_websocketQueryShouldBreak pins the checkouts-websocket cancel path: a
