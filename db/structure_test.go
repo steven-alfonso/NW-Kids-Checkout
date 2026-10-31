@@ -18,7 +18,7 @@ func TestStructureSQLMatchesMigrations(t *testing.T) {
 
 	applyMigrationsUpTo(t, db, "")
 
-	rows, err := db.QueryContext(t.Context(), `SELECT sql || ';' FROM sqlite_master WHERE type IN ('table','index') AND name NOT IN ('schema_migrations','sqlite_sequence','version_unique') AND sql IS NOT NULL`)
+	rows, err := db.QueryContext(t.Context(), `SELECT sql || ';' FROM sqlite_master WHERE type IN ('table','index','trigger') AND name NOT IN ('schema_migrations','sqlite_sequence','version_unique') AND sql IS NOT NULL`)
 	require.NoError(t, err)
 	defer rows.Close()
 

@@ -1,3 +1,111 @@
 CREATE INDEX IF NOT EXISTS idx_checkins_checked_out_confirmed_at ON checkins (checked_out_confirmed_at);
 CREATE INDEX IF NOT EXISTS idx_checkins_fetched_at ON checkins (fetched_at);
 CREATE INDEX IF NOT EXISTS idx_manual_checkins_checked_out_confirmed_at ON manual_checkins (checked_out_confirmed_at);
+
+-- The poll validator must notice every write that can change the checkouts
+-- payload, including updates that do not move a MAX and delete/insert pairs
+-- that preserve a COUNT. A single counter maintained by triggers is both
+-- exact for writes and O(1) to read; the repository adds the time bucket for
+-- rows aging out of a relative checked_out_after window.
+--
+-- The counter row is created by the first trigger write rather than seeded
+-- here, because schema snapshots (db/structure.sql, used by tests and
+-- `make db-reset`) contain DDL only. Reading COALESCE(MAX(version), 0) keeps
+-- an empty table valid.
+--
+-- Tenancy: this counter is scoped to the database, which is the tenant
+-- boundary today (one DB per church/instance). The triggers use NEW/OLD rows,
+-- so a future shared-schema deployment can key them by tenant once tenant_id
+-- exists on these tables. That migration must also add tenant_id to every
+-- tenant-owned table and unique constraint, re-key this table by tenant,
+-- scope CheckoutsVersion by the authenticated tenant, include the tenant in
+-- the token, and make the poll response private. Until then the single-row
+-- CHECK (id = 1) is an intentional single-tenant constraint, not an oversight.
+CREATE TABLE IF NOT EXISTS checkouts_version (
+    id      INTEGER PRIMARY KEY CHECK (id = 1),
+    version INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TRIGGER IF NOT EXISTS checkins_version_insert
+AFTER INSERT ON checkins
+BEGIN
+    INSERT INTO checkouts_version (id, version) VALUES (1, 1)
+    ON CONFLICT(id) DO UPDATE SET version = version + 1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS checkins_version_update
+AFTER UPDATE ON checkins
+BEGIN
+    INSERT INTO checkouts_version (id, version) VALUES (1, 1)
+    ON CONFLICT(id) DO UPDATE SET version = version + 1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS checkins_version_delete
+AFTER DELETE ON checkins
+BEGIN
+    INSERT INTO checkouts_version (id, version) VALUES (1, 1)
+    ON CONFLICT(id) DO UPDATE SET version = version + 1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS manual_checkins_version_insert
+AFTER INSERT ON manual_checkins
+BEGIN
+    INSERT INTO checkouts_version (id, version) VALUES (1, 1)
+    ON CONFLICT(id) DO UPDATE SET version = version + 1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS manual_checkins_version_update
+AFTER UPDATE ON manual_checkins
+BEGIN
+    INSERT INTO checkouts_version (id, version) VALUES (1, 1)
+    ON CONFLICT(id) DO UPDATE SET version = version + 1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS manual_checkins_version_delete
+AFTER DELETE ON manual_checkins
+BEGIN
+    INSERT INTO checkouts_version (id, version) VALUES (1, 1)
+    ON CONFLICT(id) DO UPDATE SET version = version + 1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS locations_version_insert
+AFTER INSERT ON locations
+BEGIN
+    INSERT INTO checkouts_version (id, version) VALUES (1, 1)
+    ON CONFLICT(id) DO UPDATE SET version = version + 1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS locations_version_update
+AFTER UPDATE ON locations
+BEGIN
+    INSERT INTO checkouts_version (id, version) VALUES (1, 1)
+    ON CONFLICT(id) DO UPDATE SET version = version + 1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS locations_version_delete
+AFTER DELETE ON locations
+BEGIN
+    INSERT INTO checkouts_version (id, version) VALUES (1, 1)
+    ON CONFLICT(id) DO UPDATE SET version = version + 1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS location_groups_version_insert
+AFTER INSERT ON location_groups
+BEGIN
+    INSERT INTO checkouts_version (id, version) VALUES (1, 1)
+    ON CONFLICT(id) DO UPDATE SET version = version + 1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS location_groups_version_update
+AFTER UPDATE ON location_groups
+BEGIN
+    INSERT INTO checkouts_version (id, version) VALUES (1, 1)
+    ON CONFLICT(id) DO UPDATE SET version = version + 1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS location_groups_version_delete
+AFTER DELETE ON location_groups
+BEGIN
+    INSERT INTO checkouts_version (id, version) VALUES (1, 1)
+    ON CONFLICT(id) DO UPDATE SET version = version + 1;
+END;

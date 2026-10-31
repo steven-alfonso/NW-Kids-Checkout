@@ -110,3 +110,79 @@ CREATE INDEX idx_guest_submissions_parent_id ON guest_submissions(parent_id);
 CREATE INDEX idx_checkins_checked_out_confirmed_at ON checkins (checked_out_confirmed_at);
 CREATE INDEX idx_checkins_fetched_at ON checkins (fetched_at);
 CREATE INDEX idx_manual_checkins_checked_out_confirmed_at ON manual_checkins (checked_out_confirmed_at);
+CREATE TABLE checkouts_version (
+    id      INTEGER PRIMARY KEY CHECK (id = 1),
+    version INTEGER NOT NULL DEFAULT 0
+);
+CREATE TRIGGER checkins_version_insert
+AFTER INSERT ON checkins
+BEGIN
+    INSERT INTO checkouts_version (id, version) VALUES (1, 1)
+    ON CONFLICT(id) DO UPDATE SET version = version + 1;
+END;
+CREATE TRIGGER checkins_version_update
+AFTER UPDATE ON checkins
+BEGIN
+    INSERT INTO checkouts_version (id, version) VALUES (1, 1)
+    ON CONFLICT(id) DO UPDATE SET version = version + 1;
+END;
+CREATE TRIGGER checkins_version_delete
+AFTER DELETE ON checkins
+BEGIN
+    INSERT INTO checkouts_version (id, version) VALUES (1, 1)
+    ON CONFLICT(id) DO UPDATE SET version = version + 1;
+END;
+CREATE TRIGGER manual_checkins_version_insert
+AFTER INSERT ON manual_checkins
+BEGIN
+    INSERT INTO checkouts_version (id, version) VALUES (1, 1)
+    ON CONFLICT(id) DO UPDATE SET version = version + 1;
+END;
+CREATE TRIGGER manual_checkins_version_update
+AFTER UPDATE ON manual_checkins
+BEGIN
+    INSERT INTO checkouts_version (id, version) VALUES (1, 1)
+    ON CONFLICT(id) DO UPDATE SET version = version + 1;
+END;
+CREATE TRIGGER manual_checkins_version_delete
+AFTER DELETE ON manual_checkins
+BEGIN
+    INSERT INTO checkouts_version (id, version) VALUES (1, 1)
+    ON CONFLICT(id) DO UPDATE SET version = version + 1;
+END;
+CREATE TRIGGER locations_version_insert
+AFTER INSERT ON locations
+BEGIN
+    INSERT INTO checkouts_version (id, version) VALUES (1, 1)
+    ON CONFLICT(id) DO UPDATE SET version = version + 1;
+END;
+CREATE TRIGGER locations_version_update
+AFTER UPDATE ON locations
+BEGIN
+    INSERT INTO checkouts_version (id, version) VALUES (1, 1)
+    ON CONFLICT(id) DO UPDATE SET version = version + 1;
+END;
+CREATE TRIGGER locations_version_delete
+AFTER DELETE ON locations
+BEGIN
+    INSERT INTO checkouts_version (id, version) VALUES (1, 1)
+    ON CONFLICT(id) DO UPDATE SET version = version + 1;
+END;
+CREATE TRIGGER location_groups_version_insert
+AFTER INSERT ON location_groups
+BEGIN
+    INSERT INTO checkouts_version (id, version) VALUES (1, 1)
+    ON CONFLICT(id) DO UPDATE SET version = version + 1;
+END;
+CREATE TRIGGER location_groups_version_update
+AFTER UPDATE ON location_groups
+BEGIN
+    INSERT INTO checkouts_version (id, version) VALUES (1, 1)
+    ON CONFLICT(id) DO UPDATE SET version = version + 1;
+END;
+CREATE TRIGGER location_groups_version_delete
+AFTER DELETE ON location_groups
+BEGIN
+    INSERT INTO checkouts_version (id, version) VALUES (1, 1)
+    ON CONFLICT(id) DO UPDATE SET version = version + 1;
+END;

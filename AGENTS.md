@@ -172,6 +172,12 @@ This file guides coding agents working in this repo. Keep changes small, follow 
   them; the test database and `make db-init` load that snapshot via the embedded
   `db.Schema` (`db/db.go`).
 - `db/structure_test.go` fails if the snapshot drifts from the migrations.
+- Tenancy: the deployment model is one SQLite database per tenant. The
+  `checkouts_version` counter and its triggers are database-scoped by design.
+  For shared-schema multi-tenancy, re-key the counter by tenant, add
+  `tenant_id` to tenant-owned tables and unique constraints, scope
+  `CheckoutsVersion` by the authenticated tenant, include the tenant in the
+  ETag, and use private caching.
 
 ### Dev-only commands
 - `make db-init` builds a development database (schema + the real Planning

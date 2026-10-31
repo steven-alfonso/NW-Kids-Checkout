@@ -159,16 +159,21 @@ func (controller *Controller) checkoutsWeb(c *fiber.Ctx) error {
 	manualFilter := manualFilterFromCheckinFilter(filter)
 	manualFilter.Recent = true
 
+	log := middleware.GetLogger(c)
+
 	version, err := controller.checkinRepo.CheckoutsVersion(c.Context(), filter)
 	if err != nil {
-		slog.Warn("checkouts version failed", slog.String("error", err.Error()))
+		log.WarnContext(c.Context(), "checkouts version failed", slog.String("error", err.Error()))
 		version = ""
 	}
 
-	if version != "" && etagMatches(c.Get(fiber.HeaderIfNoneMatch), version) {
-		c.Set(fiber.HeaderCacheControl, "no-cache")
-		c.Vary(fiber.HeaderAcceptEncoding, fiber.HeaderAccept)
-		c.Set(fiber.HeaderETag, version)
+	etag := ""
+	if version != "" {
+		etag = weakETag(version)
+	}
+
+	if etag != "" && etagMatches(c.Get(fiber.HeaderIfNoneMatch), etag) {
+		setCheckoutsValidator(c, etag)
 		return c.SendStatus(fiber.StatusNotModified)
 	}
 
@@ -192,16 +197,53 @@ func (controller *Controller) checkoutsWeb(c *fiber.Ctx) error {
 		checkins = sortCheckins(checkins)
 	}
 
+	// The token was read before the two list queries. If it moved, the body may
+	// mix two states or be newer than the token, so hand the body hash to the
+	// response instead: a validator must describe the representation it is
+	// attached to. The same fallback covers a failed re-check.
+	if version != "" {
+		latest, versionErr := controller.checkinRepo.CheckoutsVersion(c.Context(), filter)
+		if versionErr != nil {
+			log.WarnContext(c.Context(), "checkouts version re-check failed", slog.String("error", versionErr.Error()))
+			etag = ""
+		} else if latest != version {
+			etag = ""
+		}
+	}
+
 	return sendCheckoutsJSON(c, CheckoutsResponse{
 		Checkins:       repoCheckinSliceToOutput(checkins),
 		ManualCheckins: repoManualCheckinSliceToOutput(manualCheckins),
-	}, version)
+	}, etag)
+}
+
+// weakETag wraps an opaque repo token in the HTTP weak-entity-tag syntax.
+func weakETag(token string) string {
+	return `W/"` + token + `"`
+}
+
+// setCheckoutsValidator writes the revalidation headers shared by the 200 and
+// 304 poll paths.
+func setCheckoutsValidator(c *fiber.Ctx, etag string) {
+	// no-cache (not no-store) so the browser keeps the body and revalidates it
+	// on the next poll instead of refetching every time.
+	//
+	// This is safe for the current one-tenant-per-deployment model: every
+	// authenticated user sees the same payload, so a shared cache cannot leak
+	// between tenants. A shared-tenant origin needs private caching, the tenant
+	// in the token, and Vary/auth-aware cache handling.
+	c.Set(fiber.HeaderCacheControl, "no-cache")
+	// Vary on Accept-Encoding because compression re-encodes the body, and on
+	// Accept because this route content-negotiates: the same path serves HTML
+	// or this payload depending on the request's Accept header.
+	c.Vary(fiber.HeaderAcceptEncoding, fiber.HeaderAccept)
+	c.Set(fiber.HeaderETag, etag)
 }
 
 // sendCheckoutsJSON writes the poll payload with a validator so the client's 3s
 // poll can revalidate instead of re-downloading an unchanged list. The checkouts
 // page polls far more often than the data changes, so most responses collapse
-// to an empty 304.
+// to an empty 304. An empty etag asks for the exact body hash.
 func sendCheckoutsJSON(c *fiber.Ctx, payload CheckoutsResponse, etag string) error {
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -210,12 +252,10 @@ func sendCheckoutsJSON(c *fiber.Ctx, payload CheckoutsResponse, etag string) err
 
 	if etag == "" {
 		sum := sha256.Sum256(body)
-		etag = `W/"` + hex.EncodeToString(sum[:16]) + `"`
+		etag = weakETag(hex.EncodeToString(sum[:16]))
 	}
 
-	c.Set(fiber.HeaderCacheControl, "no-cache")
-	c.Vary(fiber.HeaderAcceptEncoding, fiber.HeaderAccept)
-	c.Set(fiber.HeaderETag, etag)
+	setCheckoutsValidator(c, etag)
 
 	if etagMatches(c.Get(fiber.HeaderIfNoneMatch), etag) {
 		return c.SendStatus(fiber.StatusNotModified)

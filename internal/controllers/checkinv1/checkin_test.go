@@ -402,6 +402,244 @@ func TestController_Checkouts_conditionalPolling(t *testing.T) {
 	})
 }
 
+func TestController_Checkouts_versionFailureFallsBackToBodyHash(t *testing.T) {
+	app, store := setupAuthedApp()
+	controller := NewController(nil, store)
+	checkedOutAt := time.Now().UTC().Add(-time.Minute)
+	checkinMock := &checkin.MockRepo{
+		CheckoutsVersionFunc: func(context.Context, checkin.Filter) (string, error) {
+			return "", errors.New("version query failed")
+		},
+		ListCheckinsFunc: func(context.Context, checkin.Filter) ([]checkin.Checkin, error) {
+			return []checkin.Checkin{{
+				PlanningCenterID: "plc_fallback",
+				FirstName:        "fallback",
+				LastName:         "kid",
+				SecurityCode:     "ABC123",
+				CheckedOutAt:     checkedOutAt,
+			}}, nil
+		},
+	}
+	manualMock := &manualcheckin.MockRepo{
+		ListManualCheckinsFunc: func(context.Context, manualcheckin.Filter) ([]manualcheckin.ManualCheckin, error) {
+			return nil, nil
+		},
+	}
+	controller.checkinRepo = checkinMock
+	controller.manualRepo = manualMock
+	controller.RegisterRoutes(app)
+
+	poll := func(t *testing.T, ifNoneMatch string) *http.Response {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "/v1/checkins/checkouts?limit=100", nil)
+		req.Header.Set("Accept", "application/json")
+		if ifNoneMatch != "" {
+			req.Header.Set("If-None-Match", ifNoneMatch)
+		}
+		resp, err := app.Test(req)
+		require.NoError(t, err)
+		return resp
+	}
+
+	first := poll(t, "")
+	defer first.Body.Close()
+	require.Equal(t, fiber.StatusOK, first.StatusCode)
+	etag := first.Header.Get("ETag")
+	require.NotEmpty(t, etag)
+
+	second := poll(t, etag)
+	defer second.Body.Close()
+	assert.Equal(t, fiber.StatusNotModified, second.StatusCode,
+		"a version query failure must fall back to the body-hash validator")
+	body, err := io.ReadAll(second.Body)
+	require.NoError(t, err)
+	assert.Empty(t, body, "a 304 must not resend the payload")
+	assert.Equal(t, int64(2), checkinMock.ListCheckinsFuncCallCount.Load(),
+		"the fallback cannot skip the list on either request")
+	assert.Equal(t, int64(2), checkinMock.CheckoutsVersionFuncCallCount.Load(),
+		"the version is attempted once per request even when it fails")
+}
+
+func TestController_Checkouts_versionChangeDuringReadFallsBackToBodyHash(t *testing.T) {
+	app, store := setupAuthedApp()
+	controller := NewController(nil, store)
+	versionCalls := 0
+	checkedOutAt := time.Now().UTC().Add(-time.Minute)
+	checkinMock := &checkin.MockRepo{
+		CheckoutsVersionFunc: func(context.Context, checkin.Filter) (string, error) {
+			versionCalls++
+			return fmt.Sprintf("v%d", versionCalls), nil
+		},
+		ListCheckinsFunc: func(context.Context, checkin.Filter) ([]checkin.Checkin, error) {
+			return []checkin.Checkin{{
+				PlanningCenterID: "plc_race",
+				FirstName:        "race",
+				LastName:         "kid",
+				SecurityCode:     "ABC123",
+				CheckedOutAt:     checkedOutAt,
+			}}, nil
+		},
+	}
+	manualMock := &manualcheckin.MockRepo{
+		ListManualCheckinsFunc: func(context.Context, manualcheckin.Filter) ([]manualcheckin.ManualCheckin, error) {
+			return nil, nil
+		},
+	}
+	controller.checkinRepo = checkinMock
+	controller.manualRepo = manualMock
+	controller.RegisterRoutes(app)
+
+	poll := func(t *testing.T, ifNoneMatch string) *http.Response {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "/v1/checkins/checkouts?limit=100", nil)
+		req.Header.Set("Accept", "application/json")
+		if ifNoneMatch != "" {
+			req.Header.Set("If-None-Match", ifNoneMatch)
+		}
+		resp, err := app.Test(req)
+		require.NoError(t, err)
+		return resp
+	}
+
+	first := poll(t, "")
+	defer first.Body.Close()
+	require.Equal(t, fiber.StatusOK, first.StatusCode)
+	etag := first.Header.Get("ETag")
+	assert.Regexp(t, `^W/"[0-9a-f]{32}"$`, etag,
+		"the token moved during the read, so the response must carry the body hash, not either version")
+
+	second := poll(t, etag)
+	defer second.Body.Close()
+	assert.Equal(t, fiber.StatusNotModified, second.StatusCode,
+		"the body hash is stable when the payload itself did not change")
+	assert.Equal(t, 4, versionCalls, "the version is read before and after the lists on each 200 path")
+}
+
+func TestController_Checkouts_matchingVersionSkipsListQueries(t *testing.T) {
+	app, store := setupAuthedApp()
+	controller := NewController(nil, store)
+	checkedOutAt := time.Now().UTC().Add(-time.Minute)
+	checkinMock := &checkin.MockRepo{
+		CheckoutsVersionFunc: func(context.Context, checkin.Filter) (string, error) {
+			return "stable-token", nil
+		},
+		ListCheckinsFunc: func(context.Context, checkin.Filter) ([]checkin.Checkin, error) {
+			return []checkin.Checkin{{
+				PlanningCenterID: "plc_stable",
+				FirstName:        "stable",
+				LastName:         "kid",
+				SecurityCode:     "ABC123",
+				CheckedOutAt:     checkedOutAt,
+			}}, nil
+		},
+	}
+	manualMock := &manualcheckin.MockRepo{
+		ListManualCheckinsFunc: func(context.Context, manualcheckin.Filter) ([]manualcheckin.ManualCheckin, error) {
+			return nil, nil
+		},
+	}
+	controller.checkinRepo = checkinMock
+	controller.manualRepo = manualMock
+	controller.RegisterRoutes(app)
+
+	poll := func(t *testing.T, ifNoneMatch string) *http.Response {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "/v1/checkins/checkouts?limit=100", nil)
+		req.Header.Set("Accept", "application/json")
+		if ifNoneMatch != "" {
+			req.Header.Set("If-None-Match", ifNoneMatch)
+		}
+		resp, err := app.Test(req)
+		require.NoError(t, err)
+		return resp
+	}
+
+	first := poll(t, "")
+	defer first.Body.Close()
+	require.Equal(t, fiber.StatusOK, first.StatusCode)
+	etag := first.Header.Get("ETag")
+	require.NotEmpty(t, etag)
+	require.Equal(t, int64(1), checkinMock.ListCheckinsFuncCallCount.Load())
+
+	second := poll(t, etag)
+	defer second.Body.Close()
+	assert.Equal(t, fiber.StatusNotModified, second.StatusCode)
+	assert.Equal(t, int64(1), checkinMock.ListCheckinsFuncCallCount.Load(),
+		"the 304 fast path must not run ListCheckins")
+	assert.Equal(t, 1, manualMock.ListManualCheckinsFuncCallCount,
+		"the 304 fast path must not run ListManualCheckins")
+}
+
+func TestController_Checkouts_unconfirmingOlderCheckinInvalidates(t *testing.T) {
+	app, store := setupAuthedApp()
+	testDB, cleanup, err := db.PrepareTestDB()
+	require.NoError(t, err)
+	t.Cleanup(cleanup)
+	controller := NewController(testDB, store)
+	controller.RegisterRoutes(app)
+
+	_, err = squirrel.Delete("checkins").RunWith(testDB).ExecContext(t.Context())
+	require.NoError(t, err)
+
+	checkinRepo := checkin.NewRepo(testDB)
+	now := time.Now().UTC()
+	older, err := checkinRepo.CreateCheckin(t.Context(), checkin.Checkin{
+		PlanningCenterID:      "plc_unconfirm_older",
+		FirstName:             "older",
+		LastName:              "kid",
+		SecurityCode:          "ABC123",
+		CheckedOutAt:          now.Add(-10 * time.Minute),
+		CheckedOutConfirmedAt: now.Add(-9 * time.Minute),
+	})
+	require.NoError(t, err)
+	_, err = checkinRepo.CreateCheckin(t.Context(), checkin.Checkin{
+		PlanningCenterID:      "plc_unconfirm_newer",
+		FirstName:             "newer",
+		LastName:              "kid",
+		SecurityCode:          "ABC123",
+		CheckedOutAt:          now.Add(-5 * time.Minute),
+		CheckedOutConfirmedAt: now.Add(-4 * time.Minute),
+	})
+	require.NoError(t, err)
+
+	poll := func(t *testing.T, ifNoneMatch string) (*http.Response, CheckoutsResponse) {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "/v1/checkins/checkouts?limit=100", nil)
+		req.Header.Set("Accept", "application/json")
+		if ifNoneMatch != "" {
+			req.Header.Set("If-None-Match", ifNoneMatch)
+		}
+		resp, err := app.Test(req)
+		require.NoError(t, err)
+		var payload CheckoutsResponse
+		if resp.StatusCode == fiber.StatusOK {
+			require.NoError(t, json.NewDecoder(resp.Body).Decode(&payload))
+		}
+		return resp, payload
+	}
+
+	first, payload := poll(t, "")
+	first.Body.Close()
+	require.Equal(t, fiber.StatusOK, first.StatusCode)
+	etag := first.Header.Get("ETag")
+	require.NotEmpty(t, etag)
+	require.Len(t, payload.Checkins, 2)
+
+	_, err = checkinRepo.SetCheckedOutConfirmedAt(t.Context(), older.PlanningCenterID, false)
+	require.NoError(t, err)
+
+	second, payload := poll(t, etag)
+	defer second.Body.Close()
+	require.Equal(t, fiber.StatusOK, second.StatusCode,
+		"clearing a non-max confirmation must invalidate the cached poll")
+	require.Len(t, payload.Checkins, 2)
+	for _, got := range payload.Checkins {
+		if got.PlanningCenterID == older.PlanningCenterID {
+			assert.Nil(t, got.CheckedOutConfirmedAt, "the cleared confirmation must be visible immediately")
+		}
+	}
+}
+
 // TestController_Checkouts_compressionIntegration runs the real poll route
 // behind the real compress middleware. Both pieces set Vary and both touch the
 // response body, so they are worth exercising together rather than only in
@@ -828,6 +1066,16 @@ func BenchmarkController_Checkouts_304(b *testing.B) {
 	etag := resp.Header.Get("ETag")
 	resp.Body.Close()
 	require.NotEmpty(b, etag)
+
+	// The benchmark name promises the 304 path. Check it once outside the
+	// timer so a regression to 200 cannot silently invalidate the measurement.
+	ready := httptest.NewRequest(http.MethodGet, "/v1/checkins/checkouts?limit=100&checked_out_after=-20m", nil)
+	ready.Header.Set("Accept", "application/json")
+	ready.Header.Set("If-None-Match", etag)
+	readyResp, err := app.Test(ready)
+	require.NoError(b, err)
+	require.Equal(b, fiber.StatusNotModified, readyResp.StatusCode)
+	readyResp.Body.Close()
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
