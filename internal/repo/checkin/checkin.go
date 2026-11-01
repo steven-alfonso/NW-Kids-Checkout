@@ -15,6 +15,27 @@ import (
 	"github.com/Masterminds/squirrel"
 )
 
+// CheckoutsVersionBucket is the granularity of the time-window portion of the
+// checkouts validator. It buckets lower time bounds in the token and rounds
+// relative upper bounds up before querying so the token stays stable between
+// polls; see RoundCheckoutsVersionTimeUp.
+const CheckoutsVersionBucket = 5 * time.Minute
+
+const checkoutsVersionBucketSeconds = int64(CheckoutsVersionBucket / time.Second)
+
+// RoundCheckoutsVersionTimeUp rounds t up to the next CheckoutsVersionBucket
+// boundary. Relative upper time bounds must round up: the resulting cutoff can
+// only admit rows early, never hide one, and it keeps the validator stable
+// between bucket rollovers.
+func RoundCheckoutsVersionTimeUp(t time.Time) time.Time {
+	utc := t.UTC()
+	truncated := utc.Truncate(CheckoutsVersionBucket)
+	if truncated.Equal(utc) {
+		return truncated
+	}
+	return truncated.Add(CheckoutsVersionBucket)
+}
+
 type Filter struct {
 	ID                 int64
 	PlanningCenterID   string
@@ -28,9 +49,13 @@ type Filter struct {
 	FirstName          string
 	LastName           string
 	CheckedOutAtBefore time.Time
-	CheckedOutAtAfter  time.Time
-	Limit              int
-	Recent             bool
+	// CheckedOutAtBeforeKey identifies a relative upper bound before it is
+	// rounded to a bucket. It is part of the version token, not the SQL filter,
+	// because two different windows can round to the same cutoff.
+	CheckedOutAtBeforeKey string
+	CheckedOutAtAfter     time.Time
+	Limit                 int
+	Recent                bool
 	// ManualCheckinsVisible records the controller's decision to include
 	// manual checkins. It is part of the checkouts version token, not the SQL
 	// filter, because that decision depends on raw query-parameter presence.
@@ -227,11 +252,18 @@ func (s *sqliteRepo) CheckoutsVersion(ctx context.Context, filter Filter) (strin
 		return "", fmt.Errorf("reading checkouts version: %w", err)
 	}
 
-	// Bucketing checked_out_after is safe because aging only removes rows: the
-	// response may briefly keep a row that has left the window, but it cannot
-	// omit a row that has entered it. checked_out_before is different: a relative
-	// upper bound admits additional rows as time advances, so it is included
-	// exactly. Otherwise a 304 could hide newly eligible rows.
+	// Known tradeoff: for the checkouts poll (Recent is always true), a relative
+	// checked_out_after lower bound advances every poll but only its bucket is
+	// in the token. Between rollovers a 304 can serve a body whose cutoff is up
+	// to one bucket old, so rows that have aged out may linger that long. This
+	// cannot hide a new checkout: inserts and response-visible updates bump the
+	// counter, and moving a lower bound forward only removes rows. The tradeoff
+	// buys 304s on the three-second poll.
+	//
+	// checked_out_before is different: an upper bound admits additional rows as
+	// time advances, so the controller rounds relative bounds up to this same
+	// bucket before querying. The exact cutoff is then stable within a bucket and
+	// can only include rows early, never hide one.
 	//
 	// An unordered read with a limit can also expose a different subset of the
 	// remaining rows as the window moves, so that case uses the exact cutoff too.
@@ -244,7 +276,7 @@ func (s *sqliteRepo) CheckoutsVersion(ctx context.Context, filter Filter) (strin
 	checkedOutAfter := ""
 	if !filter.CheckedOutAtAfter.IsZero() {
 		if filter.Recent || filter.Limit == 0 {
-			checkedOutAfterBucket = filter.CheckedOutAtAfter.UTC().Unix() / 300
+			checkedOutAfterBucket = filter.CheckedOutAtAfter.UTC().Unix() / checkoutsVersionBucketSeconds
 		} else {
 			checkedOutAfter = filter.CheckedOutAtAfter.UTC().Format(time.RFC3339Nano)
 		}
@@ -279,6 +311,7 @@ func (s *sqliteRepo) CheckoutsVersion(ctx context.Context, filter Filter) (strin
 		EventID                 int64   `json:"event_id"`
 		Limit                   int     `json:"limit"`
 		CheckedOutAtBefore      string  `json:"checked_out_at_before"`
+		CheckedOutAtBeforeKey   string  `json:"checked_out_at_before_key"`
 		CheckedOutAtAfter       string  `json:"checked_out_at_after"`
 		CheckedOutAtAfterBucket int64   `json:"checked_out_at_after_bucket"`
 	}{
@@ -298,6 +331,7 @@ func (s *sqliteRepo) CheckoutsVersion(ctx context.Context, filter Filter) (strin
 		EventID:                 filter.EventID,
 		Limit:                   filter.Limit,
 		CheckedOutAtBefore:      checkedOutBefore,
+		CheckedOutAtBeforeKey:   filter.CheckedOutAtBeforeKey,
 		CheckedOutAtAfter:       checkedOutAfter,
 		CheckedOutAtAfterBucket: checkedOutAfterBucket,
 	})

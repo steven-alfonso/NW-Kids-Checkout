@@ -174,6 +174,8 @@ func (controller *Controller) checkoutsWeb(c *fiber.Ctx) error {
 		etag = weakETag(version)
 	}
 
+	// A matching token can describe a body whose checked_out_after cutoff is up
+	// to one version bucket old; see the tradeoff note in CheckoutsVersion.
 	if etag != "" && etagMatches(c.Get(fiber.HeaderIfNoneMatch), etag) {
 		setCheckoutsValidator(c, etag)
 		return c.SendStatus(fiber.StatusNotModified)
@@ -480,11 +482,14 @@ func buildFilter(c *fiber.Ctx) (checkin.Filter, error) {
 	}
 	filter.LocationGroupIDs = ids
 
+	checkedOutAtBeforeRelative := false
 	if cobStr := c.Query("checked_out_before"); cobStr != "" {
 		// try time.ParseDuration
 		ago, err := time.ParseDuration(cobStr)
 		if err == nil {
 			filter.CheckedOutAtBefore = time.Now().Add(ago)
+			filter.CheckedOutAtBeforeKey = "relative:" + ago.String()
+			checkedOutAtBeforeRelative = true
 		} else {
 			filter.CheckedOutAtBefore, err = time.ParseInLocation(time.RFC3339, cobStr, time.UTC)
 			if err != nil {
@@ -507,6 +512,16 @@ func buildFilter(c *fiber.Ctx) (checkin.Filter, error) {
 
 	if !filter.CheckedOutAtAfter.IsZero() && !filter.CheckedOutAtBefore.IsZero() && filter.CheckedOutAtAfter.After(filter.CheckedOutAtBefore) {
 		return checkin.Filter{}, errors.New("checked_out_after must be before checked_out_before")
+	}
+
+	// Round relative upper bounds up after validating the exact window. An upper
+	// bound admits more rows as time advances, so rounding down could hide a row
+	// that just became eligible. Rounding up can only include a row early, and it
+	// keeps the resolved cutoff, and therefore the ETag, stable within a bucket.
+	// CheckedOutAtBeforeKey keeps distinct windows from sharing a token when they
+	// round to the same cutoff.
+	if checkedOutAtBeforeRelative {
+		filter.CheckedOutAtBefore = checkin.RoundCheckoutsVersionTimeUp(filter.CheckedOutAtBefore)
 	}
 
 	return filter, nil

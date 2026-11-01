@@ -291,6 +291,52 @@ func Test_buildFilter_location_group_id(t *testing.T) {
 	}
 }
 
+func Test_buildFilter_time_bounds(t *testing.T) {
+	build := func(t *testing.T, url string) (checkin.Filter, error) {
+		t.Helper()
+		app := fiber.New()
+		var got checkin.Filter
+		var gotErr error
+		app.Get("/test", func(c *fiber.Ctx) error {
+			got, gotErr = buildFilter(c)
+			return c.SendStatus(fiber.StatusOK)
+		})
+		req := httptest.NewRequest(http.MethodGet, url, nil)
+		_, err := app.Test(req)
+		require.NoError(t, err)
+		return got, gotErr
+	}
+
+	t.Run("relative checked_out_before rounds up to a stable bucket", func(t *testing.T) {
+		cutoff := time.Now().Add(-5 * time.Minute)
+		got, err := build(t, "/test?checked_out_before=-5m")
+		require.NoError(t, err)
+
+		assert.Zero(t, got.CheckedOutAtBefore.UnixNano()%int64(checkin.CheckoutsVersionBucket),
+			"relative upper bounds must land on a bucket boundary so the ETag is stable between polls")
+		assert.False(t, got.CheckedOutAtBefore.Before(cutoff),
+			"rounding up must not move the cutoff earlier and hide rows")
+		assert.Equal(t, "relative:-5m0s", got.CheckedOutAtBeforeKey,
+			"the original window must stay in the token so distinct windows cannot collide")
+	})
+
+	t.Run("absolute checked_out_before is preserved", func(t *testing.T) {
+		want := time.Date(2026, 10, 31, 10, 0, 0, 0, time.UTC)
+		got, err := build(t, "/test?checked_out_before=2026-10-31T10:00:00Z")
+		require.NoError(t, err)
+		assert.True(t, got.CheckedOutAtBefore.Equal(want),
+			"absolute bounds are already fixed and must not be rounded")
+		assert.Empty(t, got.CheckedOutAtBeforeKey,
+			"absolute bounds are identified by their exact cutoff, not a relative key")
+	})
+
+	t.Run("validation uses the exact bounds before rounding", func(t *testing.T) {
+		_, err := build(t, "/test?checked_out_after=-10m&checked_out_before=-10m30s")
+		require.Error(t, err,
+			"rounding the upper bound must not make an invalid window pass validation")
+	})
+}
+
 func TestController_Checkouts_conditionalPolling(t *testing.T) {
 	app, store := setupAuthedApp()
 	testDB, cleanup, err := db.PrepareTestDB()
