@@ -493,6 +493,36 @@ function unlockBodyScroll() {
     }
 }
 
+// Keep the drawer inside the *visual* viewport: on mobile browsers with
+// top/bottom chrome the layout viewport (which `bottom`/`height` resolve
+// against) is taller than what is on screen, so a drawer sized against it
+// runs off both edges -- the cap pulls the close button back into view, the
+// bottom offset lifts the base clear of the toolbar. Both writes are no-ops
+// wherever the two viewports agree (desktop, collapsed toolbar).
+function syncOverdueSheetToViewport({ lift = true } = {}) {
+    if (!dom.overdueSheet) return;
+    const viewport = window.visualViewport;
+    // Pinch-zoom halves the visual viewport while the layout stays put; re-syncing
+    // would resize and lift the drawer mid-gesture. Hold values until zoom ends.
+    if (viewport && viewport.scale !== 1) return;
+    const viewportHeight = (viewport && viewport.height) || window.innerHeight || 0;
+    if (viewportHeight <= 0) return;
+
+    const sheet = dom.overdueSheet;
+    sheet.style.maxHeight = `${Math.floor(viewportHeight * 0.8)}px`;
+
+    // The load-time seed passes lift: false: an inline `bottom` on a drawer
+    // still parked below the fold would strand pixels above the bottom edge.
+    if (!lift) return;
+
+    // Overlap <= 0 means nothing is overlapping: hand control back to the
+    // `bottom-0` class rather than pinning an inline 0.
+    const overlap = document.documentElement.clientHeight
+        - (viewport ? viewport.offsetTop : 0)
+        - viewportHeight;
+    sheet.style.bottom = overlap > 0 ? `${Math.floor(overlap)}px` : '';
+}
+
 function openOverdueSheet() {
     if (!dom.overdueSheet || !dom.overdueSheetBackdrop) return;
     isOverdueSheetOpen = true;
@@ -506,6 +536,7 @@ function openOverdueSheet() {
     renderOverdueSheet(overdue);
     const countEl = document.getElementById('overdue-sheet-count');
     if (countEl) countEl.textContent = overdue.length > 0 ? `${overdue.length} overdue` : 'No overdue';
+    syncOverdueSheetToViewport();
     dom.overdueSheet.classList.remove('translate-y-full');
     dom.overdueSheet.setAttribute('aria-hidden', 'false');
     // Must come before the focus() call below: an inert element cannot take
@@ -522,6 +553,16 @@ function closeOverdueSheet() {
     const wasOpen = !dom.overdueSheet.classList.contains('translate-y-full');
     dom.overdueSheet.classList.add('translate-y-full');
     dom.overdueSheet.setAttribute('aria-hidden', 'true');
+    // The lift is dropped as part of the close rather than left for the next
+    // open: translate-y-full only covers the sheet's own height, so a lifted
+    // base would strand that many pixels of the drawer above the bottom edge
+    // once the slide finishes. `bottom` is on the transition list, so this
+    // eases down alongside the slide instead of snapping.
+    //
+    // max-height is deliberately left in place rather than cleared: dropping
+    // it would snap the drawer back to full height mid-slide. openOverdueSheet
+    // re-syncs against the current viewport before it is shown again.
+    dom.overdueSheet.style.bottom = '';
     dom.overdueSheetBackdrop.classList.add('hidden');
     unlockBodyScroll();
     if (wasOpen) {
@@ -1140,6 +1181,8 @@ document.addEventListener('DOMContentLoaded', function () {
     dom.overdueSheet = document.getElementById('overdue-sheet');
     dom.overdueSheetList = document.getElementById('overdue-sheet-list');
     dom.overdueSheetBackdrop = document.getElementById('overdue-sheet-backdrop');
+    // Seed the cap so the first open transitions from a length, not `none`.
+    syncOverdueSheetToViewport({ lift: false });
 
     if (dom.overdueBadge) {
         dom.overdueBadge.addEventListener('click', openOverdueSheet);
@@ -1161,7 +1204,23 @@ document.addEventListener('DOMContentLoaded', function () {
 
     window.addEventListener('resize', () => {
         requestAnimationFrame(clampChildrenListScroll);
+        requestAnimationFrame(() => {
+            // Gate read inside the frame, not when the event fired: a resize
+            // landing just before close queues this callback, and close must
+            // win -- writing viewport geometry mid-slide would snap the drawer.
+            if (isOverdueSheetOpen) syncOverdueSheetToViewport();
+        });
     });
+    if (window.visualViewport) {
+        // The one that matters on iOS: the toolbar collapsing fires this, and
+        // not always window.resize. Throttled to a frame like its sibling above,
+        // because both fire continuously through the toolbar's animation.
+        window.visualViewport.addEventListener('resize', () => {
+            requestAnimationFrame(() => {
+                if (isOverdueSheetOpen) syncOverdueSheetToViewport();
+            });
+        });
+    }
 
     const searchInput = document.getElementById('search-input');
     if (searchInput) searchInput.addEventListener('input', () => setSearchQuery(searchInput.value));
