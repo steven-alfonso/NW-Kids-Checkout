@@ -165,6 +165,16 @@
         }
     </style>
 
+    <noscript>
+        <style>
+            /* The bundle never runs without JavaScript; hide its boot placeholder
+               so only the intended no-JS message remains. */
+            #checkouts-loading {
+                display: none;
+            }
+        </style>
+    </noscript>
+
 </head>
 
 <body class="min-h-screen overflow-y-auto bg-white lg:h-screen lg:overflow-hidden">
@@ -224,7 +234,7 @@
                 This page requires JavaScript.
             </div>
         </noscript>
-        <div class="text-center text-gray-500 py-8">
+        <div id="checkouts-loading" class="text-center text-gray-500 py-8">
             Loading checkouts…
         </div>
     </div>

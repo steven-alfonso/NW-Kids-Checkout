@@ -9,6 +9,7 @@ module.exports = {
             '.worktrees/**',
             'test-support/conformance/**',
             'test-support/app-contract/**',
+            'test-support/preact-app/**',
             'test-results/**'
         ]
     }

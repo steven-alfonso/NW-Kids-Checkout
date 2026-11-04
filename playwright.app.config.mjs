@@ -4,7 +4,7 @@ const pagePath =
   process.env.CHECKOUTS_PAGE || '/static/pages/checkoutsv1/checkouts.html';
 
 export default defineConfig({
-  testDir: './test-support/app-contract',
+  testDir: './test-support',
   testMatch: '**/*.spec.mjs',
   timeout: 20_000,
   expect: { timeout: 5_000 },
@@ -27,6 +27,13 @@ export default defineConfig({
   projects: [
     {
       name: 'app',
+      testDir: './test-support/app-contract',
+      metadata: { pagePath },
+      use: { ...devices['Desktop Chrome'] }
+    },
+    {
+      name: 'preact',
+      testDir: './test-support/preact-app',
       metadata: { pagePath },
       use: { ...devices['Desktop Chrome'] }
     }

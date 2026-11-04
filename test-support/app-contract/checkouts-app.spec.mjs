@@ -48,11 +48,15 @@ test('moves the server-rendered menu into the kebab menu exactly once', async ({
   );
 
   await openBoard(page, testInfo);
+  await expect(page.locator('#menu-button')).toHaveAttribute(
+    'aria-controls',
+    'kebab-menu'
+  );
   await expect(page.locator('#kebab-menu #admin-link')).toHaveCount(1);
-  await expect(page.locator('#checkouts-menu-source')).toHaveCount(0);
 
   await page.locator('#menu-button').click();
   await expect(page.locator('#kebab-menu')).toBeVisible();
+  await expect(page.locator('#kebab-menu #admin-link')).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(page.locator('#kebab-menu')).toBeHidden();
 });

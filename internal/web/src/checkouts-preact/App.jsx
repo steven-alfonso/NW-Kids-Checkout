@@ -292,6 +292,7 @@ export function App() {
   const [drawerCount, setDrawerCount] = useState(0);
   const [overdueEpoch, setOverdueEpoch] = useState(0);
 
+  const boardRef = useRef(null);
   const listRef = useRef(null);
   const searchControlsRef = useRef(null);
   const searchInputRef = useRef(null);
@@ -381,10 +382,13 @@ export function App() {
     return newlyAppeared;
   }
 
-  async function fetchChildren() {
+  async function fetchChildren({ abortInFlight = false } = {}) {
     if (previewBlocked.current) return;
 
-    if (activeFetch.current) activeFetch.current.abort();
+    if (activeFetch.current) {
+      if (!abortInFlight) return;
+      activeFetch.current.abort();
+    }
     const controller = new AbortController();
     activeFetch.current = controller;
 
@@ -478,7 +482,7 @@ export function App() {
       : window.location.pathname;
     history.replaceState(null, '', newUrl);
     setSelection(getSelectedFromURL(window.location.search, groups));
-    fetchChildrenRef.current();
+    fetchChildrenRef.current({ abortInFlight: true });
   }
 
   function handleGroupChange(event) {
@@ -570,6 +574,25 @@ export function App() {
       inFlight.current.delete(flightKey);
     }
   }, [isConfirmed]);
+
+  function isVisibleFocusable(element) {
+    return Boolean(
+      element &&
+        element.isConnected &&
+        typeof element.focus === 'function' &&
+        !element.closest('[inert]') &&
+        element.getClientRects().length > 0
+    );
+  }
+
+  function getSheetFocusableElements(sheet) {
+    if (!sheet) return [];
+    return Array.from(
+      sheet.querySelectorAll(
+        'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      )
+    ).filter(isVisibleFocusable);
+  }
 
   function openOverdueSheet() {
     openerRef.current = document.activeElement;
@@ -721,6 +744,16 @@ export function App() {
     }
   }, [searchExpanded]);
 
+  // Location groups arrive after the panel may already be open. Their rows
+  // add height to the clipped panel, so re-measure instead of leaving the
+  // last groups cut off.
+  useLayoutEffect(() => {
+    if (!searchExpanded) return;
+    const controls = searchControlsRef.current;
+    if (!controls) return;
+    controls.style.height = `${controls.scrollHeight}px`;
+  }, [searchExpanded, groups, groupsLoaded]);
+
   useLayoutEffect(() => {
     const onResize = () => {
       requestAnimationFrame(() => {
@@ -755,9 +788,15 @@ export function App() {
   useLayoutEffect(() => {
     const sheet = sheetRef.current;
     if (!sheet) return;
+    const background = [
+      boardRef.current,
+      document.querySelector('header'),
+      badgeRef.current
+    ].filter(Boolean);
 
     if (overdueOpen) {
       sheet.removeAttribute('inert');
+      background.forEach((element) => element.setAttribute('inert', ''));
       syncSheetToViewport();
       lockBodyScroll();
       sheet.focus({ preventScroll: true });
@@ -765,24 +804,50 @@ export function App() {
     }
 
     sheet.setAttribute('inert', '');
+    background.forEach((element) => element.removeAttribute('inert'));
     sheet.style.bottom = '';
     unlockBodyScroll();
     const opener = openerRef.current;
     openerRef.current = null;
-    if (
-      opener &&
-      opener !== document.body &&
-      opener.isConnected &&
-      typeof opener.focus === 'function'
-    ) {
-      opener.focus({ preventScroll: true });
-    }
+    const fallback = document.getElementById('search-toggle-button');
+    const target = isVisibleFocusable(opener)
+      ? opener
+      : isVisibleFocusable(fallback)
+        ? fallback
+        : null;
+    if (target) target.focus({ preventScroll: true });
   }, [overdueOpen]);
 
   useLayoutEffect(() => {
     if (!overdueOpen) return undefined;
     const onKeyDown = (event) => {
-      if (event.key === 'Escape') closeOverdueSheet();
+      if (event.key === 'Escape') {
+        closeOverdueSheet();
+        return;
+      }
+      if (event.key !== 'Tab') return;
+
+      const sheet = sheetRef.current;
+      if (!sheet) return;
+      const focusable = getSheetFocusableElements(sheet);
+      if (focusable.length === 0) {
+        event.preventDefault();
+        return;
+      }
+
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const active = document.activeElement;
+      const outsideSheet = !sheet.contains(active);
+      if (event.shiftKey) {
+        if (active === first || active === sheet || outsideSheet) {
+          event.preventDefault();
+          last.focus();
+        }
+      } else if (active === last || active === sheet || outsideSheet) {
+        event.preventDefault();
+        first.focus();
+      }
     };
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
@@ -914,7 +979,10 @@ export function App() {
           searchToggleHost
         )}
 
-      <div class="relative z-10 min-h-screen flex flex-col box-border lg:h-screen lg:pt-28 pb-20">
+      <div
+        ref={boardRef}
+        class="relative z-10 min-h-screen flex flex-col box-border lg:h-screen lg:pt-28 pb-20"
+      >
         <div class="relative z-10 flex flex-col items-center gap-2 px-4 md:flex-row md:justify-center md:gap-3">
           <div
             id="search-controls"
@@ -1082,6 +1150,7 @@ export function App() {
         ref={sheetRef}
         class={`${sheetBaseClass}${overdueOpen ? '' : ' translate-y-full'}`}
         aria-hidden={overdueOpen ? 'false' : 'true'}
+        aria-modal="true"
         role="dialog"
         aria-label="Overdue checkouts"
         tabindex="-1"

@@ -198,7 +198,7 @@ To run the test suite, use the `test` target:
 make test       # go test, then -tags dev, then npm test
 ```
 
-Run the app-level checkouts contract (body scroll lock, menu handoff, failed-poll badge, groups failure, dev preview):
+Run the app-level checkouts contract (body scroll lock, menu handoff, failed-poll badge, groups failure, dev preview) plus the Preact-local regressions:
 
 ```sh
 npm run test:app
