@@ -37,6 +37,7 @@ export function getChildSignature(child) {
     child.public_id || '',
     child.checked_out_at || '',
     child.checked_out_at_ms ?? '',
+    child.checked_out_confirmed_at || '',
     child.first_name || '',
     child.last_name || '',
     child.security_code || '',
@@ -93,26 +94,63 @@ export function prepareChildren(data) {
   return sortChildren(addCheckedOutTimestamps(normalizeCheckoutsResponse(data)));
 }
 
-export function calculateMinutesAgoFromTimestamp(checkedOutAtMs, nowMs) {
-  if (!checkedOutAtMs) return '0 min ago';
+// Reuse row objects across polls when their display signature is unchanged.
+// Stable identities let memoized rows skip work and keep focus/DOM untouched.
+export function reconcileChildren(previous, next) {
+  if (previous.length === 0) return next;
+
+  const previousById = new Map();
+  previous.forEach((child) => {
+    const childId = getChildId(child);
+    if (childId) previousById.set(childId, child);
+  });
+
+  let changed = previous.length !== next.length;
+  const merged = next.map((child, index) => {
+    const old = previousById.get(getChildId(child));
+    const value =
+      old && getChildSignature(old) === getChildSignature(child) ? old : child;
+    if (value !== previous[index]) changed = true;
+    return value;
+  });
+  return changed ? merged : previous;
+}
+
+export function getMinutesAgoFromTimestamp(checkedOutAtMs, nowMs) {
+  if (!checkedOutAtMs) return 0;
   const now = typeof nowMs === 'number' ? nowMs : Date.now();
-  const diffInMinutes = Math.max(
+  return Math.max(
     0,
     Math.floor((now - checkedOutAtMs) / (1000 * 60))
   );
-  return `${diffInMinutes} min ago`;
+}
+
+export function formatMinutesAgo(minutes) {
+  return `${minutes} min ago`;
+}
+
+export function calculateMinutesAgoFromTimestamp(checkedOutAtMs, nowMs) {
+  return formatMinutesAgo(getMinutesAgoFromTimestamp(checkedOutAtMs, nowMs));
+}
+
+export function getTimePillClassFromMinutes(
+  checkedOutAtMs,
+  confirmed,
+  minutes
+) {
+  if (confirmed) return PILL_CLASSES[0];
+  if (!checkedOutAtMs) return PILL_CLASSES[1];
+  if (minutes >= 8) return 'bg-red-500';
+  if (minutes >= 4) return 'bg-yellow-500';
+  return 'bg-green-500';
 }
 
 export function getTimePillClass(checkedOutAtMs, confirmed, nowMs) {
-  if (confirmed) return PILL_CLASSES[0];
-  if (!checkedOutAtMs) return PILL_CLASSES[1];
-
-  const now = typeof nowMs === 'number' ? nowMs : Date.now();
-  const diffInMinutes = Math.max(0, (now - checkedOutAtMs) / (1000 * 60));
-
-  if (diffInMinutes >= 8) return 'bg-red-500';
-  if (diffInMinutes >= 4) return 'bg-yellow-500';
-  return 'bg-green-500';
+  return getTimePillClassFromMinutes(
+    checkedOutAtMs,
+    confirmed,
+    getMinutesAgoFromTimestamp(checkedOutAtMs, nowMs)
+  );
 }
 
 export function getLocationGroupColor(locationGroupId) {

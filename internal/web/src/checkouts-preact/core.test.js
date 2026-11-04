@@ -4,16 +4,20 @@ import {
   calculateMinutesAgoFromTimestamp,
   filterVisibleChildren,
   formatHeaderTime,
+  formatMinutesAgo,
   getChildId,
   getChildSignature,
+  getMinutesAgoFromTimestamp,
   getOverdueChildren,
   getOverdueGroupLabel,
   getSelectAllLabel,
   getSelectedFromURL,
   getTimePillClass,
+  getTimePillClassFromMinutes,
   isGroupSelected,
   normalizeCheckoutsResponse,
-  prepareChildren
+  prepareChildren,
+  reconcileChildren
 } from './core.js';
 
 function child(overrides = {}) {
@@ -64,6 +68,38 @@ describe('checkouts-preact core', () => {
     expect(getTimePillClass(base, false, base + 4 * 60_000)).toBe('bg-yellow-500');
     expect(getTimePillClass(base, false, base + 8 * 60_000)).toBe('bg-red-500');
     expect(getTimePillClass(base, true, base + 20 * 60_000)).toBe('bg-gray-400');
+  });
+
+  it('derives integer minutes and pill colors from the same value', () => {
+    const base = Date.parse('2026-01-15T12:00:00Z');
+    expect(getMinutesAgoFromTimestamp(base, base + 3 * 60_000 + 59_999)).toBe(3);
+    expect(getMinutesAgoFromTimestamp(base, base - 60_000)).toBe(0);
+    expect(formatMinutesAgo(3)).toBe('3 min ago');
+    expect(getTimePillClassFromMinutes(base, false, 3)).toBe('bg-green-500');
+    expect(getTimePillClassFromMinutes(base, false, 4)).toBe('bg-yellow-500');
+    expect(getTimePillClassFromMinutes(base, false, 8)).toBe('bg-red-500');
+    expect(getTimePillClassFromMinutes(base, true, 20)).toBe('bg-gray-400');
+  });
+
+  it('reuses unchanged child rows across polls', () => {
+    const children = prepareChildren([
+      child({ planning_center_id: 'one' }),
+      child({ planning_center_id: 'two', checked_out_at: '2026-01-15T11:59:00Z' })
+    ]);
+    const same = prepareChildren([
+      child({ planning_center_id: 'one' }),
+      child({ planning_center_id: 'two', checked_out_at: '2026-01-15T11:59:00Z' })
+    ]);
+
+    const reconciled = reconcileChildren(children, same);
+    expect(reconciled).toBe(children);
+    expect(reconciled[0]).toBe(children[0]);
+
+    same[0] = { ...same[0], first_name: 'Grace' };
+    const changed = reconcileChildren(children, same);
+    expect(changed).not.toBe(children);
+    expect(changed[0]).toBe(same[0]);
+    expect(changed[1]).toBe(children[1]);
   });
 
   it('parses group filters from the URL and resolves names', () => {

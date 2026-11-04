@@ -15,23 +15,23 @@
   },
   "bundle": {
     "path": "internal/web/static/dist/preact/checkouts.js",
-    "bytes": 37358,
-    "gzipBytes": 13610
+    "bytes": 38738,
+    "gzipBytes": 14132
   },
   "initial7": {
     "boardReady": {
       "count": 5,
-      "min": 117.82,
-      "median": 121.96,
-      "p95": 129.94,
-      "max": 129.94,
-      "mean": 122.43,
+      "min": 114.76,
+      "median": 119.2,
+      "p95": 121.3,
+      "max": 121.3,
+      "mean": 118.59,
       "samples": [
-        120.32,
-        129.94,
-        117.82,
-        121.96,
-        122.13
+        120.01,
+        117.7,
+        119.2,
+        114.76,
+        121.3
       ]
     },
     "firstPaint": {
@@ -40,13 +40,13 @@
       "median": 44,
       "p95": 84,
       "max": 84,
-      "mean": 52,
+      "mean": 60,
       "samples": [
         44,
         44,
-        84,
         44,
-        44
+        84,
+        84
       ]
     },
     "fcp": {
@@ -55,13 +55,13 @@
       "median": 44,
       "p95": 84,
       "max": 84,
-      "mean": 52,
+      "mean": 60,
       "samples": [
         44,
         44,
-        84,
         44,
-        44
+        84,
+        84
       ]
     },
     "lcp": {
@@ -75,273 +75,273 @@
     },
     "domContentLoaded": {
       "count": 5,
-      "min": 79.5,
-      "median": 82.9,
-      "p95": 84.9,
-      "max": 84.9,
-      "mean": 82.48,
+      "min": 77.7,
+      "median": 81.1,
+      "p95": 82.7,
+      "max": 82.7,
+      "mean": 80.8,
       "samples": [
-        83.5,
-        84.9,
-        79.5,
-        81.6,
-        82.9
+        82.7,
+        81.1,
+        81.5,
+        77.7,
+        81
       ]
     },
     "load": {
       "count": 5,
-      "min": 79.6,
-      "median": 82.9,
-      "p95": 85,
-      "max": 85,
-      "mean": 82.6,
+      "min": 78.4,
+      "median": 81.6,
+      "p95": 83.4,
+      "max": 83.4,
+      "mean": 81.32,
       "samples": [
-        83.5,
-        85,
-        79.6,
-        82,
-        82.9
+        83.4,
+        81.6,
+        82.2,
+        78.4,
+        81
       ]
     },
     "samples": [
       {
-        "boardReady": 120.319167,
+        "boardReady": 120.01362499999999,
         "firstPaint": 44,
         "fcp": 44,
         "lcp": null,
-        "domContentLoaded": 83.5,
-        "load": 83.5
+        "domContentLoaded": 82.69999998807907,
+        "load": 83.40000003576279
       },
       {
-        "boardReady": 129.936333,
+        "boardReady": 117.703416,
         "firstPaint": 44,
         "fcp": 44,
         "lcp": null,
-        "domContentLoaded": 84.90000003576279,
-        "load": 85
+        "domContentLoaded": 81.10000002384186,
+        "load": 81.60000002384186
       },
       {
-        "boardReady": 117.82333399999993,
+        "boardReady": 119.20112499999993,
+        "firstPaint": 44,
+        "fcp": 44,
+        "lcp": null,
+        "domContentLoaded": 81.5,
+        "load": 82.20000004768372
+      },
+      {
+        "boardReady": 114.75620900000001,
         "firstPaint": 84,
         "fcp": 84,
         "lcp": null,
-        "domContentLoaded": 79.5,
-        "load": 79.60000002384186
+        "domContentLoaded": 77.69999998807907,
+        "load": 78.39999997615814
       },
       {
-        "boardReady": 121.96141699999998,
-        "firstPaint": 44,
-        "fcp": 44,
-        "lcp": null,
-        "domContentLoaded": 81.59999996423721,
-        "load": 82
-      },
-      {
-        "boardReady": 122.12804200000005,
-        "firstPaint": 44,
-        "fcp": 44,
-        "lcp": null,
-        "domContentLoaded": 82.89999997615814,
-        "load": 82.89999997615814
-      }
-    ]
-  },
-  "initial100": {
-    "boardReady": {
-      "count": 3,
-      "min": 138.53,
-      "median": 140.84,
-      "p95": 140.84,
-      "max": 140.84,
-      "mean": 140.07,
-      "samples": [
-        138.53,
-        140.84,
-        140.84
-      ]
-    },
-    "firstPaint": {
-      "count": 3,
-      "min": 40,
-      "median": 44,
-      "p95": 44,
-      "max": 44,
-      "mean": 42.67,
-      "samples": [
-        40,
-        44,
-        44
-      ]
-    },
-    "fcp": {
-      "count": 3,
-      "min": 40,
-      "median": 44,
-      "p95": 44,
-      "max": 44,
-      "mean": 42.67,
-      "samples": [
-        40,
-        44,
-        44
-      ]
-    },
-    "lcp": {
-      "count": 0,
-      "min": null,
-      "median": null,
-      "p95": null,
-      "max": null,
-      "mean": null,
-      "samples": []
-    },
-    "domContentLoaded": {
-      "count": 3,
-      "min": 79.4,
-      "median": 80.2,
-      "p95": 81,
-      "max": 81,
-      "mean": 80.2,
-      "samples": [
-        79.4,
-        80.2,
-        81
-      ]
-    },
-    "load": {
-      "count": 3,
-      "min": 79.4,
-      "median": 80.4,
-      "p95": 81,
-      "max": 81,
-      "mean": 80.27,
-      "samples": [
-        79.4,
-        80.4,
-        81
-      ]
-    },
-    "samples": [
-      {
-        "boardReady": 138.5346669999999,
-        "firstPaint": 40,
-        "fcp": 40,
-        "lcp": null,
-        "domContentLoaded": 79.39999997615814,
-        "load": 79.39999997615814
-      },
-      {
-        "boardReady": 140.84116599999993,
-        "firstPaint": 44,
-        "fcp": 44,
-        "lcp": null,
-        "domContentLoaded": 80.19999998807907,
-        "load": 80.40000003576279
-      },
-      {
-        "boardReady": 140.836,
-        "firstPaint": 44,
-        "fcp": 44,
+        "boardReady": 121.29591700000003,
+        "firstPaint": 84,
+        "fcp": 84,
         "lcp": null,
         "domContentLoaded": 81,
         "load": 81
       }
     ]
   },
+  "initial100": {
+    "boardReady": {
+      "count": 3,
+      "min": 138.33,
+      "median": 139.94,
+      "p95": 142.86,
+      "max": 142.86,
+      "mean": 140.38,
+      "samples": [
+        139.94,
+        138.33,
+        142.86
+      ]
+    },
+    "firstPaint": {
+      "count": 3,
+      "min": 40,
+      "median": 40,
+      "p95": 44,
+      "max": 44,
+      "mean": 41.33,
+      "samples": [
+        44,
+        40,
+        40
+      ]
+    },
+    "fcp": {
+      "count": 3,
+      "min": 40,
+      "median": 40,
+      "p95": 44,
+      "max": 44,
+      "mean": 41.33,
+      "samples": [
+        44,
+        40,
+        40
+      ]
+    },
+    "lcp": {
+      "count": 0,
+      "min": null,
+      "median": null,
+      "p95": null,
+      "max": null,
+      "mean": null,
+      "samples": []
+    },
+    "domContentLoaded": {
+      "count": 3,
+      "min": 81.5,
+      "median": 81.6,
+      "p95": 81.7,
+      "max": 81.7,
+      "mean": 81.6,
+      "samples": [
+        81.7,
+        81.5,
+        81.6
+      ]
+    },
+    "load": {
+      "count": 3,
+      "min": 81.6,
+      "median": 81.8,
+      "p95": 82,
+      "max": 82,
+      "mean": 81.8,
+      "samples": [
+        81.8,
+        82,
+        81.6
+      ]
+    },
+    "samples": [
+      {
+        "boardReady": 139.93520799999988,
+        "firstPaint": 44,
+        "fcp": 44,
+        "lcp": null,
+        "domContentLoaded": 81.69999998807907,
+        "load": 81.80000001192093
+      },
+      {
+        "boardReady": 138.33220900000015,
+        "firstPaint": 40,
+        "fcp": 40,
+        "lcp": null,
+        "domContentLoaded": 81.5,
+        "load": 82
+      },
+      {
+        "boardReady": 142.86245800000006,
+        "firstPaint": 40,
+        "fcp": 40,
+        "lcp": null,
+        "domContentLoaded": 81.60000002384186,
+        "load": 81.60000002384186
+      }
+    ]
+  },
   "poll7": {
     "count": 5,
-    "min": 9.57,
-    "median": 15.36,
-    "p95": 17.82,
-    "max": 17.82,
-    "mean": 14.08,
+    "min": 8.06,
+    "median": 16.74,
+    "p95": 17.02,
+    "max": 17.02,
+    "mean": 14.89,
     "samples": [
-      10.73,
-      9.57,
-      16.9,
-      15.36,
-      17.82
+      8.06,
+      15.67,
+      17.02,
+      16.96,
+      16.74
     ]
   },
   "poll100": {
     "count": 3,
-    "min": 12.78,
-    "median": 15.68,
-    "p95": 16.59,
-    "max": 16.59,
-    "mean": 15.02,
+    "min": 16.17,
+    "median": 16.65,
+    "p95": 18.3,
+    "max": 18.3,
+    "mean": 17.04,
     "samples": [
-      12.78,
-      15.68,
-      16.59
+      18.3,
+      16.17,
+      16.65
     ]
   },
   "tick100": {
     "count": 5,
-    "min": 3.8,
-    "median": 4.15,
-    "p95": 7.5,
-    "max": 7.5,
-    "mean": 4.87,
+    "min": 1.22,
+    "median": 1.89,
+    "p95": 4.96,
+    "max": 4.96,
+    "mean": 2.4,
     "samples": [
-      3.86,
-      5.03,
-      3.8,
-      4.15,
-      7.5
+      2.02,
+      1.22,
+      1.89,
+      4.96,
+      1.89
     ]
   },
   "interactions": {
     "openSheet": {
       "count": 3,
-      "min": 32.23,
-      "median": 33.61,
-      "p95": 34.23,
-      "max": 34.23,
-      "mean": 33.36,
+      "min": 34.59,
+      "median": 34.96,
+      "p95": 34.96,
+      "max": 34.96,
+      "mean": 34.84,
       "samples": [
-        33.61,
-        32.23,
-        34.23
+        34.59,
+        34.96,
+        34.96
       ]
     },
     "closeSheet": {
       "count": 3,
-      "min": 63.96,
-      "median": 64.99,
-      "p95": 67.45,
-      "max": 67.45,
-      "mean": 65.47,
+      "min": 62.92,
+      "median": 64.54,
+      "p95": 65.8,
+      "max": 65.8,
+      "mean": 64.42,
       "samples": [
-        64.99,
-        67.45,
-        63.96
+        62.92,
+        64.54,
+        65.8
       ]
     },
     "search": {
       "count": 3,
-      "min": 59.07,
-      "median": 59.23,
-      "p95": 61.17,
-      "max": 61.17,
-      "mean": 59.82,
+      "min": 57.06,
+      "median": 60.3,
+      "p95": 61.3,
+      "max": 61.3,
+      "mean": 59.55,
       "samples": [
-        61.17,
-        59.07,
-        59.23
+        61.3,
+        60.3,
+        57.06
       ]
     },
     "confirm": {
       "count": 3,
-      "min": 29.02,
-      "median": 30.3,
-      "p95": 81.12,
-      "max": 81.12,
-      "mean": 46.81,
+      "min": 30.92,
+      "median": 31.01,
+      "p95": 66.28,
+      "max": 66.28,
+      "mean": 42.74,
       "samples": [
-        81.12,
-        29.02,
-        30.3
+        66.28,
+        31.01,
+        30.92
       ]
     }
   }

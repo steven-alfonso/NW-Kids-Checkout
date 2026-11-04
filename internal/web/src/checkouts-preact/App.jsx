@@ -1,23 +1,32 @@
-import { createPortal } from 'preact';
-import { useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { Component, createPortal } from 'preact';
+import {
+  useCallback,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState
+} from 'preact/hooks';
+import { subscribeClock } from './clock.js';
 import {
   CONFIRM_OVERRIDE_TTL_MS,
   FLASH_RESET_DELAY_MS,
   buildLocationGroupSearch,
-  calculateMinutesAgoFromTimestamp,
   compareByCheckoutId,
   filterVisibleChildren,
   formatHeaderTime,
+  formatMinutesAgo,
   getChildId,
   getChildSignature,
   getLocationGroupColor,
+  getMinutesAgoFromTimestamp,
   getOverdueChildren,
   getOverdueGroupLabel,
   getSelectAllLabel,
   getSelectedFromURL,
-  getTimePillClass,
+  getTimePillClassFromMinutes,
   isGroupSelected,
-  prepareChildren
+  prepareChildren,
+  reconcileChildren
 } from './core.js';
 
 const CONFIRMED_ICON_SRC = '/static/img/confirmed-checkbox.svg';
@@ -79,118 +88,187 @@ function ConfirmControl({ child, confirmed, onChange }) {
   );
 }
 
-function ChildRow({ child, now, confirmed, flash, onConfirm }) {
-  const checkedOutAtMs = child.checked_out_at_ms;
-  const name = childLabelName(child);
-  const pillClass = getTimePillClass(checkedOutAtMs, confirmed, now);
+function TimeLabel({ baseClass, childId, checkedOutAtMs, confirmed }) {
+  const [minutes, setMinutes] = useState(() =>
+    getMinutesAgoFromTimestamp(checkedOutAtMs, Date.now())
+  );
+
+  useLayoutEffect(() => {
+    const update = () =>
+      setMinutes(getMinutesAgoFromTimestamp(checkedOutAtMs, Date.now()));
+    update();
+    return subscribeClock(update);
+  }, [checkedOutAtMs]);
+
+  const pillClass = getTimePillClassFromMinutes(
+    checkedOutAtMs,
+    confirmed,
+    minutes
+  );
 
   return (
-    <div
-      class={`bg-white rounded-lg shadow-[0_0_10px_rgba(0,0,0,0.25)] flex${flash ? ' child-card-flash' : ''}`}
-    >
-      <div
-        class="rounded-l-lg"
-        style={{ ...locationGroupStyle(child), width: '6px', flexShrink: 0 }}
-        aria-hidden="true"
-      ></div>
-      <div class="flex-1 py-2.5 px-4 flex flex-col justify-center">
-        <div class="font-bold text-gray-800 text-2xl mb-0">
-          {name}
-          {child.source === 'manual' && (
-            <img
-              src={MANUAL_STAR_ICON_SRC}
-              alt="Manual checkin"
-              class="inline-block h-5 w-5 ml-2 relative -top-0.5"
-            />
-          )}
-        </div>
-        <div class="flex justify-between items-center">
-          <div class="text-black text-xl">{childCode(child)}</div>
-          <div class="flex items-center gap-3">
-            <div
-              class={`text-white transition-colors duration-1000 px-1.5 py-0 rounded-md text-base child-time ${pillClass}`}
-              data-child-id={getChildId(child)}
-            >
-              {calculateMinutesAgoFromTimestamp(checkedOutAtMs, now)}
-            </div>
-            <ConfirmControl
-              child={child}
-              confirmed={confirmed}
-              onChange={(checkbox) => onConfirm(child, checkbox.checked, checkbox)}
-            />
-          </div>
-        </div>
-      </div>
+    <div class={`${baseClass} ${pillClass}`} data-child-id={childId}>
+      {formatMinutesAgo(minutes)}
     </div>
   );
 }
 
-function OverdueRow({ child, now, confirmed, groups, onConfirm }) {
-  const checkedOutAtMs = child.checked_out_at_ms;
-  const name = childLabelName(child);
-  const pillClass = getTimePillClass(checkedOutAtMs, confirmed, now);
-  const barColor = getLocationGroupColor(child.location_group_id);
-  const groupLabel = getOverdueGroupLabel(child, groups);
+function HeaderTime() {
+  const [text, setText] = useState(() => formatHeaderTime(Date.now()));
 
-  return (
-    <div class="bg-white rounded-lg shadow flex overflow-hidden">
+  useLayoutEffect(() => {
+    const update = () => {
+      const next = formatHeaderTime(Date.now());
+      setText((previous) => (previous === next ? previous : next));
+    };
+    update();
+    return subscribeClock(update);
+  }, []);
+
+  return text;
+}
+
+class ChildRow extends Component {
+  shouldComponentUpdate(nextProps) {
+    const props = this.props;
+    return (
+      nextProps.child !== props.child ||
+      nextProps.confirmed !== props.confirmed ||
+      nextProps.flash !== props.flash ||
+      nextProps.onConfirm !== props.onConfirm
+    );
+  }
+
+  render({ child, confirmed, flash, onConfirm }) {
+    const name = childLabelName(child);
+
+    return (
       <div
-        style={{ backgroundColor: barColor, width: '6px', flexShrink: 0 }}
-        aria-hidden="true"
-      ></div>
-      <div class="flex-1 py-2 px-3 flex flex-col gap-1">
-        <div class="flex items-center gap-2">
-          <span
-            class="inline-block h-2.5 w-2.5 rounded-sm border border-black/10 shrink-0"
-            style={{ backgroundColor: barColor }}
-          ></span>
-          <span class="text-xs font-medium text-slate-600">{groupLabel}</span>
-          <span
-            class={`ml-auto text-white text-xs px-2.5 py-1 rounded-md child-time ${pillClass}`}
-            data-child-id={getChildId(child)}
-          >
-            {calculateMinutesAgoFromTimestamp(checkedOutAtMs, now)}
-          </span>
-        </div>
-        <div class="font-bold text-gray-800 text-lg leading-tight">
-          {name}
-          {child.source === 'manual' && (
-            <img
-              src={MANUAL_STAR_ICON_SRC}
-              alt="Manual checkin"
-              class="inline-block h-5 w-5 ml-2 relative -top-0.5"
-            />
-          )}
-        </div>
-        <div class="flex justify-between items-center">
-          <div class="text-black text-base">{childCode(child)}</div>
-          <label
-            class="relative flex items-center cursor-pointer leading-none"
-            data-confirmed-label
-            data-confirmed-state={confirmed ? 'confirmed' : 'unconfirmed'}
-          >
-            <input
-              type="checkbox"
-              class="sr-only child-confirmed-checkbox"
-              aria-label={`Mark ${name} as confirmed`}
-              data-child-id={getChildId(child)}
-              data-planning-center-id={child.planning_center_id || ''}
-              data-public-id={child.public_id || ''}
-              data-source={child.source || ''}
-              checked={confirmed}
-              onChange={(event) => onConfirm(child, event.currentTarget.checked, event.currentTarget)}
-            />
-            <img
-              src={CONFIRMED_ICON_SRC}
-              alt=""
-              class="h-9 w-9 block"
-              data-confirmed-icon
-            />
-          </label>
+        class={`bg-white rounded-lg shadow-[0_0_10px_rgba(0,0,0,0.25)] flex${flash ? ' child-card-flash' : ''}`}
+      >
+        <div
+          class="rounded-l-lg"
+          style={{ ...locationGroupStyle(child), width: '6px', flexShrink: 0 }}
+          aria-hidden="true"
+        ></div>
+        <div class="flex-1 py-2.5 px-4 flex flex-col justify-center">
+          <div class="font-bold text-gray-800 text-2xl mb-0">
+            {name}
+            {child.source === 'manual' && (
+              <img
+                src={MANUAL_STAR_ICON_SRC}
+                alt="Manual checkin"
+                class="inline-block h-5 w-5 ml-2 relative -top-0.5"
+              />
+            )}
+          </div>
+          <div class="flex justify-between items-center">
+            <div class="text-black text-xl">{childCode(child)}</div>
+            <div class="flex items-center gap-3">
+              <TimeLabel
+                baseClass="text-white transition-colors duration-1000 px-1.5 py-0 rounded-md text-base child-time"
+                childId={getChildId(child)}
+                checkedOutAtMs={child.checked_out_at_ms}
+                confirmed={confirmed}
+              />
+              <ConfirmControl
+                child={child}
+                confirmed={confirmed}
+                onChange={(checkbox) =>
+                  onConfirm(child, checkbox.checked, checkbox)
+                }
+              />
+            </div>
+          </div>
         </div>
       </div>
-    </div>
-  );
+    );
+  }
+}
+
+class OverdueRow extends Component {
+  shouldComponentUpdate(nextProps) {
+    const props = this.props;
+    return (
+      nextProps.child !== props.child ||
+      nextProps.confirmed !== props.confirmed ||
+      nextProps.groups !== props.groups ||
+      nextProps.onConfirm !== props.onConfirm
+    );
+  }
+
+  render({ child, confirmed, groups, onConfirm }) {
+    const checkedOutAtMs = child.checked_out_at_ms;
+    const name = childLabelName(child);
+    const barColor = getLocationGroupColor(child.location_group_id);
+    const groupLabel = getOverdueGroupLabel(child, groups);
+
+    return (
+      <div class="bg-white rounded-lg shadow flex overflow-hidden">
+        <div
+          style={{ backgroundColor: barColor, width: '6px', flexShrink: 0 }}
+          aria-hidden="true"
+        ></div>
+        <div class="flex-1 py-2 px-3 flex flex-col gap-1">
+          <div class="flex items-center gap-2">
+            <span
+              class="inline-block h-2.5 w-2.5 rounded-sm border border-black/10 shrink-0"
+              style={{ backgroundColor: barColor }}
+            ></span>
+            <span class="text-xs font-medium text-slate-600">{groupLabel}</span>
+            <TimeLabel
+              baseClass="ml-auto text-white text-xs px-2.5 py-1 rounded-md child-time"
+              childId={getChildId(child)}
+              checkedOutAtMs={checkedOutAtMs}
+              confirmed={confirmed}
+            />
+          </div>
+          <div class="font-bold text-gray-800 text-lg leading-tight">
+            {name}
+            {child.source === 'manual' && (
+              <img
+                src={MANUAL_STAR_ICON_SRC}
+                alt="Manual checkin"
+                class="inline-block h-5 w-5 ml-2 relative -top-0.5"
+              />
+            )}
+          </div>
+          <div class="flex justify-between items-center">
+            <div class="text-black text-base">{childCode(child)}</div>
+            <label
+              class="relative flex items-center cursor-pointer leading-none"
+              data-confirmed-label
+              data-confirmed-state={confirmed ? 'confirmed' : 'unconfirmed'}
+            >
+              <input
+                type="checkbox"
+                class="sr-only child-confirmed-checkbox"
+                aria-label={`Mark ${name} as confirmed`}
+                data-child-id={getChildId(child)}
+                data-planning-center-id={child.planning_center_id || ''}
+                data-public-id={child.public_id || ''}
+                data-source={child.source || ''}
+                checked={confirmed}
+                onChange={(event) =>
+                  onConfirm(
+                    child,
+                    event.currentTarget.checked,
+                    event.currentTarget
+                  )
+                }
+              />
+              <img
+                src={CONFIRMED_ICON_SRC}
+                alt=""
+                class="h-9 w-9 block"
+                data-confirmed-icon
+              />
+            </label>
+          </div>
+        </div>
+      </div>
+    );
+  }
 }
 
 export function App() {
@@ -203,7 +281,6 @@ export function App() {
   const [searchText, setSearchText] = useState('');
   const [hideConfirmed, setHideConfirmed] = useState(false);
   const [searchExpanded, setSearchExpanded] = useState(false);
-  const [now, setNow] = useState(() => Date.now());
   const [loading, setLoading] = useState(true);
   const [listError, setListError] = useState(false);
   const [pollFailed, setPollFailed] = useState(false);
@@ -212,6 +289,7 @@ export function App() {
   const [overdueOpen, setOverdueOpen] = useState(false);
   const [drawerRows, setDrawerRows] = useState([]);
   const [drawerCount, setDrawerCount] = useState(0);
+  const [overdueEpoch, setOverdueEpoch] = useState(0);
 
   const listRef = useRef(null);
   const searchControlsRef = useRef(null);
@@ -236,7 +314,7 @@ export function App() {
   expandedRef.current = searchExpanded;
   overdueOpenRef.current = overdueOpen;
 
-  function isConfirmed(child) {
+  const isConfirmed = useCallback((child) => {
     const childId = getChildId(child);
     if (!childId) return Boolean(child.checked_out_confirmed_at);
     const override = overridesRef.current.get(childId);
@@ -247,7 +325,7 @@ export function App() {
       return override.confirmed;
     }
     return Boolean(child.checked_out_confirmed_at);
-  }
+  }, []);
 
   const visibleChildren = useMemo(
     () =>
@@ -261,10 +339,25 @@ export function App() {
 
   const displayChildren = visibleChildren.slice(0, 100);
   const liveOverdue = useMemo(
-    () => getOverdueChildren(children, isConfirmed, now),
-    [children, overrides, now]
+    () => getOverdueChildren(children, isConfirmed, Date.now()),
+    [children, overrides, overdueEpoch, isConfirmed]
   );
   const overdueCount = liveOverdue.length;
+  const overdueKeyRef = useRef('');
+
+  useLayoutEffect(() => {
+    overdueKeyRef.current = liveOverdue.map(getChildId).join('|');
+    const update = () => {
+      const rows = getOverdueChildren(children, isConfirmed, Date.now());
+      const key = rows.map(getChildId).join('|');
+      if (key !== overdueKeyRef.current) {
+        overdueKeyRef.current = key;
+        setOverdueEpoch((value) => value + 1);
+      }
+    };
+    return subscribeClock(update);
+  }, [children, overrides, isConfirmed]);
+
   const selectAllLabel = getSelectAllLabel(selection, groups, groupsLoaded);
 
   function clearFlashStyles() {
@@ -272,7 +365,7 @@ export function App() {
       clearTimeout(flashTimeout.current);
       flashTimeout.current = null;
     }
-    setFlashIds(new Set());
+    setFlashIds((previous) => (previous.size === 0 ? previous : new Set()));
   }
 
   function computeNewChildIds(nextChildren) {
@@ -313,7 +406,7 @@ export function App() {
       }
 
       const sorted = prepareChildren(await response.json());
-      setChildren(sorted);
+      setChildren((previous) => reconcileChildren(previous, sorted));
       setListError(false);
       setLoading(false);
       setPollFailed(false);
@@ -421,7 +514,7 @@ export function App() {
     replaceSelection([], false);
   }
 
-  async function handleConfirm(child, confirmed, checkbox) {
+  const handleConfirm = useCallback(async (child, confirmed, checkbox) => {
     const childId = getChildId(child);
     const flightKey = childId || getChildSignature(child);
     if (inFlight.current.has(flightKey)) {
@@ -475,7 +568,7 @@ export function App() {
     } finally {
       inFlight.current.delete(flightKey);
     }
-  }
+  }, [isConfirmed]);
 
   function openOverdueSheet() {
     openerRef.current = document.activeElement;
@@ -543,9 +636,24 @@ export function App() {
   }
 
   useLayoutEffect(() => {
-    const interval = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(interval);
-  }, []);
+    if (overrides.size === 0) return undefined;
+    const prune = () => {
+      const now = Date.now();
+      let changed = false;
+      const next = new Map(overridesRef.current);
+      next.forEach((override, childId) => {
+        if (now - override.timestamp > CONFIRM_OVERRIDE_TTL_MS) {
+          next.delete(childId);
+          changed = true;
+        }
+      });
+      if (changed) {
+        overridesRef.current = next;
+        setOverrides(next);
+      }
+    };
+    return subscribeClock(prune);
+  }, [overrides]);
 
   useLayoutEffect(() => {
     fetchChildrenRef.current();
@@ -744,7 +852,7 @@ export function App() {
       knownChildIds.current = new Set(
         prepared.map(getChildId).filter(Boolean)
       );
-      setChildren(prepared);
+      setChildren((previous) => reconcileChildren(previous, prepared));
       setListError(false);
       setLoading(false);
       setPollFailed(false);
@@ -769,8 +877,7 @@ export function App() {
 
   return (
     <>
-      {currentTimeHost &&
-        createPortal(formatHeaderTime(now), currentTimeHost)}
+      {currentTimeHost && createPortal(<HeaderTime />, currentTimeHost)}
       {searchToggleHost &&
         createPortal(
           <button
@@ -937,7 +1044,6 @@ export function App() {
               <ChildRow
                 key={stableRowKey(child, index)}
                 child={child}
-                now={now}
                 confirmed={isConfirmed(child)}
                 flash={flashIds.has(getChildId(child))}
                 onConfirm={handleConfirm}
@@ -1028,7 +1134,6 @@ export function App() {
               <OverdueRow
                 key={stableRowKey(child, index)}
                 child={child}
-                now={now}
                 confirmed={isConfirmed(child)}
                 groups={groups}
                 onConfirm={handleConfirm}
