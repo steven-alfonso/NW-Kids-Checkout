@@ -1,5 +1,5 @@
 <script setup>
-import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { getLocationGroupColor } from '../lib/checkouts.js';
 
 const props = defineProps({
@@ -57,13 +57,7 @@ function animate(expanded) {
   }
 }
 
-watch(
-  () => props.open,
-  async (open) => {
-    await nextTick();
-    animate(open);
-  }
-);
+watch(() => props.open, animate, { flush: 'post' });
 
 function onResize() {
   if (!props.open || !controlsEl.value) return;

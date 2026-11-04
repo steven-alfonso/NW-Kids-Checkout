@@ -723,7 +723,7 @@ export function useCheckouts() {
   }
 
   watch(
-    () => badgeCount.value,
+    badgeCount,
     (count) => {
       if (count > lastOverdueCount && count > 0) {
         badgeJiggling.value = false;
@@ -742,30 +742,31 @@ export function useCheckouts() {
     }
   );
 
-  watch(sheetOpen, async (open) => {
-    await nextTick();
-    const sheet = sheetEl.value;
-    if (!sheet) return;
+  watch(
+    sheetOpen,
+    (open) => {
+      const sheet = sheetEl.value;
+      if (!sheet) return;
 
-    if (open) {
-      syncSheetViewport();
-      sheet.removeAttribute('inert');
-      sheet.focus({ preventScroll: true });
-    } else {
-      sheet.style.bottom = '';
-      const returnFocus = sheetReturnFocus;
-      sheetReturnFocus = null;
-      if (
-        returnFocus &&
-        returnFocus !== document.body &&
-        returnFocus.isConnected &&
-        typeof returnFocus.focus === 'function'
-      ) {
-        returnFocus.focus({ preventScroll: true });
+      if (open) {
+        syncSheetViewport();
+        sheet.focus({ preventScroll: true });
+      } else {
+        sheet.style.bottom = '';
+        const returnFocus = sheetReturnFocus;
+        sheetReturnFocus = null;
+        if (
+          returnFocus &&
+          returnFocus !== document.body &&
+          returnFocus.isConnected &&
+          typeof returnFocus.focus === 'function'
+        ) {
+          returnFocus.focus({ preventScroll: true });
+        }
       }
-      sheet.setAttribute('inert', '');
-    }
-  });
+    },
+    { flush: 'post' }
+  );
 
   onMounted(() => {
     fetchLocationGroups();
@@ -786,7 +787,6 @@ export function useCheckouts() {
     window.addEventListener('checkouts-preview', previewHandler);
 
     callKebabMenuInitializer();
-    sheetEl.value?.setAttribute('inert', '');
     nextTick(() => syncSheetViewport({ lift: false }));
   });
 

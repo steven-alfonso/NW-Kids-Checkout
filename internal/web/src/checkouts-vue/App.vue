@@ -165,7 +165,7 @@ function childIdFor(child) {
     role="dialog"
     aria-label="Overdue checkouts"
     tabindex="-1"
-    inert
+    :inert="!sheetOpen"
   >
     <div
       class="flex items-center justify-between gap-2 px-4 pt-3 pb-2 shrink-0"
