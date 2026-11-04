@@ -3,20 +3,18 @@ import {
   nextTick,
   onBeforeUnmount,
   onMounted,
-  reactive,
   ref,
+  shallowReactive,
+  shallowRef,
   watch
 } from 'vue';
 import {
   CONFIRM_OVERRIDE_TTL_MS,
   FLASH_RESET_DELAY_MS,
   OVERDUE_MINUTES,
-  calculateMinutesAgoFromTimestamp,
   compareByCheckoutId,
-  formatHeaderTime,
   getCheckedOutTimestamp,
   getChildId,
-  getTimePillClass,
   normalizeCheckoutsResponse,
   sortCheckouts
 } from '../lib/checkouts.js';
@@ -28,6 +26,35 @@ import {
 } from '../lib/urlFilters.js';
 
 const OVERDUE_CUTOFF_MS = OVERDUE_MINUTES * 60 * 1000;
+
+function sameChildFields(a, b) {
+  const keys = Object.keys(a);
+  if (keys.length !== Object.keys(b).length) return false;
+  for (const key of keys) {
+    if (a[key] !== b[key]) return false;
+  }
+  return true;
+}
+
+// A poll rebuilds every row object even when only one child changed. Reusing
+// the previous object for unchanged rows lets Vue skip those child components.
+function reuseUnchangedChildren(previous, next) {
+  if (previous.length === 0) return next;
+  const byId = new Map();
+  for (const child of previous) {
+    const id = getChildId(child);
+    if (id) byId.set(id, child);
+  }
+  let reused = false;
+  const merged = next.map((child) => {
+    const id = getChildId(child);
+    const before = id ? byId.get(id) : undefined;
+    if (!before || !sameChildFields(before, child)) return child;
+    reused = true;
+    return before;
+  });
+  return reused ? merged : next;
+}
 
 function callKebabMenuInitializer() {
   if (typeof window === 'undefined') return;
@@ -42,8 +69,8 @@ function callKebabMenuInitializer() {
 }
 
 export function useCheckouts() {
-  const children = ref([]);
-  const locationGroups = ref([]);
+  const children = shallowRef([]);
+  const locationGroups = shallowRef([]);
   const groupsLoaded = ref(false);
   const nowMs = ref(Date.now());
   const rawSearch = ref('');
@@ -54,16 +81,16 @@ export function useCheckouts() {
     typeof window === 'undefined' ? '' : window.location.search
   );
 
-  const overrides = reactive(new Map());
-  const confirming = reactive(new Set());
-  const flashIds = reactive(new Set());
+  const overrides = shallowReactive(new Map());
+  const confirming = shallowReactive(new Set());
+  const flashIds = shallowReactive(new Set());
 
-  const childrenList = ref(null);
-  const badgeEl = ref(null);
-  const sheetEl = ref(null);
+  const childrenList = shallowRef(null);
+  const badgeEl = shallowRef(null);
+  const sheetEl = shallowRef(null);
 
   const sheetOpen = ref(false);
-  const sheetRows = ref([]);
+  const sheetRows = shallowRef([]);
   const sheetCount = ref(0);
   const badgeCount = ref(0);
   const badgeJiggling = ref(false);
@@ -82,7 +109,6 @@ export function useCheckouts() {
   let bodyScrollLock = null;
 
   const searchQuery = computed(() => rawSearch.value.trim());
-  const currentTime = computed(() => formatHeaderTime(nowMs.value));
   const selection = computed(() =>
     getSelectedFromURL(urlSearch.value, locationGroups.value)
   );
@@ -176,14 +202,16 @@ export function useCheckouts() {
     return list.slice(0, 100);
   });
 
+  function isOverdue(child, now) {
+    if (!child.checked_out_at_ms) return false;
+    if (isConfirmed(child)) return false;
+    return now - child.checked_out_at_ms >= OVERDUE_CUTOFF_MS;
+  }
+
   const overdueChildren = computed(() => {
     const now = nowMs.value;
     return children.value
-      .filter((child) => {
-        if (!child.checked_out_at_ms) return false;
-        if (isConfirmed(child)) return false;
-        return now - child.checked_out_at_ms >= OVERDUE_CUTOFF_MS;
-      })
+      .filter((child) => isOverdue(child, now))
       .sort(
         (a, b) =>
           b.checked_out_at_ms - a.checked_out_at_ms ||
@@ -191,7 +219,16 @@ export function useCheckouts() {
       );
   });
 
-  const overdueCount = computed(() => overdueChildren.value.length);
+  // The badge only needs a count. Counting avoids materialising and sorting the
+  // rows once a second just to read their length.
+  const overdueCount = computed(() => {
+    const now = nowMs.value;
+    let count = 0;
+    for (const child of children.value) {
+      if (isOverdue(child, now)) count += 1;
+    }
+    return count;
+  });
   const badgeHidden = computed(() => badgeCount.value === 0);
   const badgeText = computed(() =>
     badgeCount.value > 0
@@ -395,7 +432,7 @@ export function useCheckouts() {
     const previousScrollTop = list ? list.scrollTop : 0;
 
     children.value = sortedChildren;
-    badgeCount.value = overdueChildren.value.length;
+    badgeCount.value = overdueCount.value;
     refreshSheet();
 
     await nextTick();
@@ -442,7 +479,7 @@ export function useCheckouts() {
       pollFailed.value = false;
       trackArrivals(sorted, filterChanged, fetchSignature);
       reconcileOverrides(sorted);
-      await applyChildren(sorted);
+      await applyChildren(reuseUnchangedChildren(children.value, sorted));
     } catch (error) {
       if (error?.name === 'AbortError') return;
       console.error('Error fetching children data:', error);
@@ -502,7 +539,7 @@ export function useCheckouts() {
     }
 
     setOverride(childId, nextConfirmed);
-    badgeCount.value = overdueChildren.value.length;
+    badgeCount.value = overdueCount.value;
     refreshSheet();
     if (childId) confirming.add(childId);
 
@@ -523,7 +560,7 @@ export function useCheckouts() {
       console.error('Error confirming checkout:', error);
       checkbox.checked = Boolean(previousConfirmed);
       clearOverride(childId);
-      badgeCount.value = overdueChildren.value.length;
+      badgeCount.value = overdueCount.value;
       refreshSheet();
     } finally {
       if (childId) confirming.delete(childId);
@@ -585,7 +622,7 @@ export function useCheckouts() {
     if (sheetOpen.value) return;
     sheetReturnFocus = document.activeElement;
     sheetRows.value = overdueChildren.value.slice();
-    sheetCount.value = overdueChildren.value.length;
+    sheetCount.value = overdueCount.value;
     sheetOpen.value = true;
     lockBodyScroll();
   }
@@ -646,7 +683,7 @@ export function useCheckouts() {
     });
     expired.forEach((id) => overrides.delete(id));
     if (!pollFailed.value) {
-      badgeCount.value = overdueChildren.value.length;
+      badgeCount.value = overdueCount.value;
     }
   }
 
@@ -678,7 +715,7 @@ export function useCheckouts() {
     }));
     children.value = sortCheckouts(prepared);
     pollFailed.value = false;
-    badgeCount.value = overdueChildren.value.length;
+    badgeCount.value = overdueCount.value;
     knownChildIds = new Set(
       children.value.map(getChildId).filter(Boolean)
     );
@@ -779,7 +816,6 @@ export function useCheckouts() {
     badgeEl,
     sheetEl,
     nowMs,
-    currentTime,
     rawSearch,
     hideConfirmed,
     pollFailed,
@@ -812,8 +848,6 @@ export function useCheckouts() {
     closeSheet,
     isConfirmed,
     flashIds,
-    calculateMinutesAgo: calculateMinutesAgoFromTimestamp,
-    getTimePillClass,
     confirmCheckedOut
   };
 }

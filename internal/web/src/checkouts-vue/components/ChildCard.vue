@@ -1,17 +1,15 @@
 <script setup>
 import { computed } from 'vue';
+import TimePill from './TimePill.vue';
 import {
-  calculateMinutesAgoFromTimestamp,
   getCheckedOutTimestamp,
-  getLocationGroupColor,
-  getTimePillClass
+  getLocationGroupColor
 } from '../lib/checkouts.js';
 
 const props = defineProps({
   child: { type: Object, required: true },
   childId: { type: String, required: true },
   confirmed: { type: Boolean, required: true },
-  nowMs: { type: Number, required: true },
   flashing: { type: Boolean, default: false }
 });
 
@@ -29,12 +27,6 @@ const checkedOutAtMs = computed(
   () =>
     props.child.checked_out_at_ms ??
     getCheckedOutTimestamp(props.child.checked_out_at)
-);
-const minutesLabel = computed(() =>
-  calculateMinutesAgoFromTimestamp(checkedOutAtMs.value, props.nowMs)
-);
-const pillClass = computed(() =>
-  getTimePillClass(checkedOutAtMs.value, props.confirmed, props.nowMs)
 );
 const barColor = computed(() =>
   getLocationGroupColor(props.child.location_group_id)
@@ -64,13 +56,12 @@ const barColor = computed(() =>
       <div class="flex justify-between items-center">
         <div class="text-black text-xl">{{ code }}</div>
         <div class="flex items-center gap-3">
-          <div
+          <TimePill
             class="text-white transition-colors duration-1000 px-1.5 py-0 rounded-md text-base child-time"
-            :class="pillClass"
-            :data-child-id="childId"
-          >
-            {{ minutesLabel }}
-          </div>
+            :checked-out-at-ms="checkedOutAtMs"
+            :confirmed="confirmed"
+            :child-id="childId"
+          />
           <label
             class="relative flex items-center text-xs text-gray-600 cursor-pointer leading-none"
             data-confirmed-label

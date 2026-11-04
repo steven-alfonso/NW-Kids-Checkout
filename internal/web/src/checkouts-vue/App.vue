@@ -1,7 +1,10 @@
 <script setup>
+import { provide } from 'vue';
 import ChildCard from './components/ChildCard.vue';
+import ClockTime from './components/ClockTime.vue';
 import OverdueRow from './components/OverdueRow.vue';
 import SearchPanel from './components/SearchPanel.vue';
+import { CLOCK_KEY } from './composables/useClock.js';
 import { useCheckouts } from './composables/useCheckouts.js';
 import { getChildId } from './lib/checkouts.js';
 
@@ -10,7 +13,6 @@ const {
   badgeEl,
   sheetEl,
   nowMs,
-  currentTime,
   rawSearch,
   hideConfirmed,
   pollFailed,
@@ -41,13 +43,15 @@ const {
   confirmCheckedOut
 } = useCheckouts();
 
+provide(CLOCK_KEY, nowMs);
+
 function childIdFor(child) {
   return getChildId(child);
 }
 </script>
 
 <template>
-  <Teleport to="#current-time">{{ currentTime }}</Teleport>
+  <Teleport to="#current-time"><ClockTime /></Teleport>
 
   <Teleport to="#search-toggle-slot">
     <button
@@ -125,7 +129,6 @@ function childIdFor(child) {
           :child="child"
           :child-id="childIdFor(child)"
           :confirmed="isConfirmed(child)"
-          :now-ms="nowMs"
           :flashing="flashIds.has(childIdFor(child))"
           @confirm="confirmCheckedOut(child, $event)"
         />
@@ -221,7 +224,6 @@ function childIdFor(child) {
           :child="child"
           :child-id="childIdFor(child)"
           :confirmed="isConfirmed(child)"
-          :now-ms="nowMs"
           :location-groups="locationGroups"
           @confirm="confirmCheckedOut(child, $event)"
         />

@@ -1,10 +1,9 @@
 <script setup>
 import { computed } from 'vue';
+import TimePill from './TimePill.vue';
 import {
-  calculateMinutesAgoFromTimestamp,
   getCheckedOutTimestamp,
   getLocationGroupColor,
-  getTimePillClass,
   overdueGroupLabel
 } from '../lib/checkouts.js';
 
@@ -12,7 +11,6 @@ const props = defineProps({
   child: { type: Object, required: true },
   childId: { type: String, required: true },
   confirmed: { type: Boolean, required: true },
-  nowMs: { type: Number, required: true },
   locationGroups: { type: Array, default: () => [] }
 });
 
@@ -30,12 +28,6 @@ const checkedOutAtMs = computed(
   () =>
     props.child.checked_out_at_ms ??
     getCheckedOutTimestamp(props.child.checked_out_at)
-);
-const minutesLabel = computed(() =>
-  calculateMinutesAgoFromTimestamp(checkedOutAtMs.value, props.nowMs)
-);
-const pillClass = computed(() =>
-  getTimePillClass(checkedOutAtMs.value, props.confirmed, props.nowMs)
 );
 const barColor = computed(() =>
   getLocationGroupColor(props.child.location_group_id)
@@ -58,13 +50,12 @@ const groupLabel = computed(() =>
           :style="{ backgroundColor: barColor }"
         ></span>
         <span class="text-xs font-medium text-slate-600">{{ groupLabel }}</span>
-        <span
+        <TimePill
           class="ml-auto text-white text-xs px-2.5 py-1 rounded-md child-time"
-          :class="pillClass"
-          :data-child-id="childId"
-        >
-          {{ minutesLabel }}
-        </span>
+          :checked-out-at-ms="checkedOutAtMs"
+          :confirmed="confirmed"
+          :child-id="childId"
+        />
       </div>
       <div class="font-bold text-gray-800 text-lg leading-tight">
         {{ fullName }}
