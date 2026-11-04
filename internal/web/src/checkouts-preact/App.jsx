@@ -734,23 +734,26 @@ export function App() {
 
   useLayoutEffect(() => {
     window.__checkoutsInitialized = true;
-    window.__checkoutsPreview = {
-      loadPreviewData(data) {
-        previewBlocked.current = true;
-        if (activeFetch.current) activeFetch.current.abort();
-        const prepared = prepareChildren(data);
-        knownChildIds.current = new Set(
-          prepared.map(getChildId).filter(Boolean)
-        );
-        setChildren(prepared);
-        setListError(false);
-        setLoading(false);
-        setPollFailed(false);
-        setFlashIds(new Set());
-      }
+
+    // The dev preview helper is a classic script served only in dev. It
+    // dispatches the demo rows instead of using a production window handle.
+    const onPreview = (event) => {
+      previewBlocked.current = true;
+      if (activeFetch.current) activeFetch.current.abort();
+      const prepared = prepareChildren(event.detail);
+      knownChildIds.current = new Set(
+        prepared.map(getChildId).filter(Boolean)
+      );
+      setChildren(prepared);
+      setListError(false);
+      setLoading(false);
+      setPollFailed(false);
+      setFlashIds(new Set());
     };
+    window.addEventListener('checkouts-preview', onPreview);
+
     return () => {
-      delete window.__checkoutsPreview;
+      window.removeEventListener('checkouts-preview', onPreview);
       if (activeFetch.current) activeFetch.current.abort();
       unlockBodyScroll();
     };

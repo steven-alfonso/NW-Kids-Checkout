@@ -15,6 +15,7 @@ export default defineConfig({
     copyPublicDir: false,
     cssCodeSplit: false,
     modulePreload: false,
+    license: { fileName: 'THIRD_PARTY_NOTICES.md' },
     rollupOptions: {
       input: resolve(root, 'internal/web/src/checkouts-preact/main.jsx'),
       output: {

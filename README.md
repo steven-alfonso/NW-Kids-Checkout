@@ -13,7 +13,7 @@ The project is structured as a command-line application with commands:
 - [Golang](https://go.dev/) 1.27.3+
 - [SQLite](https://www.sqlite.org/) 3.37+ (should be on macOS by default). If not, install via Brew.
 - [GNU make](https://www.gnu.org/software/make/) (should be on macOS by default)
-- [Node.js](https://nodejs.org/) 20+ (required for frontend assets and JS tests; CI uses 22)
+- [Node.js](https://nodejs.org/) 20.19+ or 22.12+ (required for frontend assets and JS tests; CI uses 22)
 - [godotenv](https://github.com/joho/godotenv). Install via `go install github.com/joho/godotenv/cmd/godotenv@latest` once Golang is installed.
 
 ## Quick Start
@@ -174,6 +174,21 @@ Build the tailwind.css file:
 ```shell
 npm run build:css
 ```
+
+### Checkouts Preact bundle
+
+The checkouts page is a Preact 11 app built by Vite. Build the committed bundle:
+```shell
+npm run build:checkouts-preact
+```
+
+Watch it while developing:
+```shell
+npm run watch:checkouts-preact
+```
+
+The production bundle lives at `internal/web/static/dist/preact/checkouts.js`
+and is committed so the Docker build does not need Node.
 
 ### Running tests
 

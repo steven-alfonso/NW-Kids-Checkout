@@ -1,11 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildLocationGroupSearch,
   calculateMinutesAgoFromTimestamp,
   filterVisibleChildren,
+  formatHeaderTime,
   getChildId,
+  getChildSignature,
   getOverdueChildren,
+  getOverdueGroupLabel,
+  getSelectAllLabel,
   getSelectedFromURL,
   getTimePillClass,
+  isGroupSelected,
+  normalizeCheckoutsResponse,
   prepareChildren
 } from './core.js';
 
@@ -99,5 +106,63 @@ describe('checkouts-preact core', () => {
     ]);
 
     expect(getOverdueChildren(children, () => false, now).map(getChildId)).toEqual(['pc:five']);
+  });
+
+  it('normalizes missing/invalid payloads to an empty list', () => {
+    expect(normalizeCheckoutsResponse(null)).toEqual([]);
+    expect(normalizeCheckoutsResponse({ checkins: null, manual_checkins: 1 })).toEqual([]);
+  });
+
+  it('changes the signature when identity or display fields change', () => {
+    const base = child();
+    expect(getChildSignature(base)).toBe(getChildSignature({ ...base }));
+    expect(getChildSignature(base)).not.toBe(
+      getChildSignature({ ...base, first_name: 'Grace' })
+    );
+    expect(getChildSignature(base)).not.toBe(
+      getChildSignature({ ...base, planning_center_id: 'pc-2' })
+    );
+  });
+
+  it('builds group-filter query strings without dropping other params', () => {
+    expect(
+      buildLocationGroupSearch('?checked_out_after=-31m', {
+        ids: [1, 2],
+        includeUnassigned: true
+      })
+    ).toBe('checked_out_after=-31m&location_group_id=1&location_group_id=2&include_unassigned=1');
+    expect(buildLocationGroupSearch('?location_group_id=1', { empty: true })).toBe(
+      'location_group_id='
+    );
+  });
+
+  it('derives select-all state and group checkbox state', () => {
+    const groups = [{ id: 1, name: 'Nursery' }, { id: 2, name: 'Elementary' }];
+    const none = getSelectedFromURL('', groups);
+    expect(getSelectAllLabel(none, groups, false)).toBe('Select all');
+    expect(getSelectAllLabel(none, groups, true)).toBe('Deselect all');
+    expect(isGroupSelected(none, 1)).toBe(true);
+    expect(isGroupSelected(none, 'unassigned')).toBe(true);
+
+    const empty = getSelectedFromURL('?location_group_id=', groups);
+    expect(getSelectAllLabel(empty, groups, true)).toBe('Select all');
+    expect(isGroupSelected(empty, 1)).toBe(false);
+
+    const partial = getSelectedFromURL('?location_group_id=1', groups);
+    expect(getSelectAllLabel(partial, groups, true)).toBe('Select all');
+    expect(isGroupSelected(partial, 1)).toBe(true);
+    expect(isGroupSelected(partial, 2)).toBe(false);
+
+    const all = getSelectedFromURL('?location_group_id=1&location_group_id=2&include_unassigned=1', groups);
+    expect(getSelectAllLabel(all, groups, true)).toBe('Deselect all');
+    expect(isGroupSelected(all, 'unassigned')).toBe(true);
+  });
+
+  it('labels overdue groups and formats the header time', () => {
+    const groups = [{ id: 1, name: 'Nursery' }];
+    expect(getOverdueGroupLabel({ location_group_id: 1 }, groups)).toBe('Nursery');
+    expect(getOverdueGroupLabel({ location_group_id: 2 }, groups)).toBe('Group 2');
+    expect(getOverdueGroupLabel({ location_group_id: null }, groups)).toBe('Unassigned');
+    expect(formatHeaderTime(Date.parse('2026-01-15T12:00:00Z'))).toMatch(/^\d{2}:\d{2}$/);
   });
 });

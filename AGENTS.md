@@ -148,7 +148,9 @@ This file guides coding agents working in this repo. Keep changes small, follow 
 
 ### Frontend conventions
 - HTML templates live under `internal/web/static/pages`.
-- Page JS lives alongside the HTML in `internal/web/static/pages`.
+- Most page JS lives alongside the HTML in `internal/web/static/pages`.
+- The checkouts page is built by Vite from `internal/web/src/checkouts-preact`;
+  its committed bundle is `internal/web/static/dist/preact/checkouts.js`.
 - Shared JS libraries live in `internal/web/static/js`.
 - Images and icons live in `internal/web/static/img`.
 - Regenerate Tailwind output when UI changes touch utility classes.

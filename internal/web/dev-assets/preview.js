@@ -3,17 +3,10 @@
 //
 // Dev helper: loadPreviewData() seeds demo checkouts so you can visually
 // validate pill colors and the confirm checkbox without waiting for real time.
-// Call from the browser console on the checkouts page: loadPreviewData()
-// Use the ?debug param for extra console logging while previewing.
+// Call from the browser console on the checkouts page: loadPreviewData().
 function loadPreviewData() {
-    const preview = window.__checkoutsPreview;
-    if (!preview || typeof preview.loadPreviewData !== 'function') {
-        console.warn('Checkouts preview handle is not available.');
-        return;
-    }
-
     const ago = (minutes) => Date.now() - minutes * 60 * 1000;
-    preview.loadPreviewData([
+    const data = [
         { first_name: 'Fresh', last_name: 'Kid', security_code: '1111', source: 'planning_center', planning_center_id: 'demo-0', location_group_id: 1, checked_out_at_ms: ago(0), checked_out_at: new Date(ago(0)).toISOString(), checked_out_confirmed_at: null },
         { first_name: 'Edge', last_name: 'Kid', security_code: '2222', source: 'planning_center', planning_center_id: 'demo-4', location_group_id: 2, checked_out_at_ms: ago(3.9), checked_out_at: new Date(ago(3.9)).toISOString(), checked_out_confirmed_at: null },
         { first_name: 'Overdue', last_name: 'Kid', security_code: '5555', source: 'planning_center', planning_center_id: 'demo-5', location_group_id: 2, checked_out_at_ms: ago(6), checked_out_at: new Date(ago(6)).toISOString(), checked_out_confirmed_at: null },
@@ -24,5 +17,6 @@ function loadPreviewData() {
         { first_name: 'Manual', last_name: 'Overdue', source: 'manual', public_id: 'demo-m5', location_group_id: null, checked_out_at_ms: ago(6), checked_out_at: new Date(ago(6)).toISOString(), checked_out_confirmed_at: null },
         { first_name: 'Manual', last_name: 'Late', source: 'manual', public_id: 'demo-m8', location_group_id: null, checked_out_at_ms: ago(7.9), checked_out_at: new Date(ago(7.9)).toISOString(), checked_out_confirmed_at: null },
         { first_name: 'Manual', last_name: 'Done', source: 'manual', public_id: 'demo-mc', location_group_id: null, checked_out_at_ms: ago(2), checked_out_at: new Date(ago(2)).toISOString(), checked_out_confirmed_at: '2024-01-01T00:00:00Z' }
-    ]);
+    ];
+    window.dispatchEvent(new CustomEvent('checkouts-preview', { detail: data }));
 }

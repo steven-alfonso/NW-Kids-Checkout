@@ -13,23 +13,21 @@ function loadWindow() {
   const dom = new JSDOM('<!doctype html><html><body></body></html>', {
     runScripts: 'dangerously'
   });
-  const calls = [];
-  dom.window.__checkoutsPreview = {
-    loadPreviewData(data) {
-      calls.push(data);
-    }
-  };
+  const events = [];
+  dom.window.addEventListener('checkouts-preview', (event) => {
+    events.push(event.detail);
+  });
   dom.window.eval(previewScript);
-  return { window: dom.window, calls };
+  return { window: dom.window, events };
 }
 
 describe('checkoutsv1/preview', () => {
-  it('passes demo checkouts to the Preact preview handle', () => {
-    const { window, calls } = loadWindow();
+  it('dispatches demo checkouts for the Preact page', () => {
+    const { window, events } = loadWindow();
     window.loadPreviewData();
 
-    expect(calls).toHaveLength(1);
-    const data = calls[0];
+    expect(events).toHaveLength(1);
+    const data = events[0];
     expect(data).toHaveLength(10);
     expect(data.map((child) => child.source)).toEqual([
       'planning_center',
@@ -61,10 +59,10 @@ describe('checkoutsv1/preview', () => {
   });
 
   it('preview seeds location_group_id', () => {
-    const { window, calls } = loadWindow();
+    const { window, events } = loadWindow();
     window.loadPreviewData();
 
-    expect(calls[0].map((child) => child.location_group_id)).toEqual([
+    expect(events[0].map((child) => child.location_group_id)).toEqual([
       1,
       2,
       2,
