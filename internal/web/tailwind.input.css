@@ -15,6 +15,9 @@
 @source "static/pages/**/*.html";
 @source "static/pages/**/*.js";
 @source "src/checkouts-vue";
+@source not "src/checkouts-vue/components/__tests__/OverdueRow.test.js";
+@source not "src/checkouts-vue/lib/__tests__/lib.test.js";
+@source not "src/checkouts-vue/__tests__/App.test.js";
 @source not "static/pages/admin-guest-entries/admin-guest-entries.test.js";
 @source not "static/pages/admin/fetcher-status.test.js";
 @source not "static/pages/admin/location-groups.test.js";

@@ -16,6 +16,7 @@ const {
   rawSearch,
   hideConfirmed,
   pollFailed,
+  initialLoading,
   searchOpen,
   selection,
   selectAllText,
@@ -117,6 +118,12 @@ function childIdFor(child) {
         Error loading data. Please try again.
       </div>
       <div
+        v-else-if="initialLoading"
+        class="text-center py-12 text-3xl text-slate-500"
+      >
+        Loading children data…
+      </div>
+      <div
         v-else-if="visibleChildren.length === 0"
         class="text-center py-12 text-3xl text-slate-500"
       >
@@ -163,6 +170,7 @@ function childIdFor(child) {
     :class="{ 'translate-y-full': !sheetOpen }"
     :aria-hidden="sheetOpen ? 'false' : 'true'"
     role="dialog"
+    aria-modal="true"
     aria-label="Overdue checkouts"
     tabindex="-1"
     :inert="!sheetOpen"

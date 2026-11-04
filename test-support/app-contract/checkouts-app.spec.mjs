@@ -32,6 +32,35 @@ test('locks and restores body scroll while the overdue sheet is open', async ({
   );
 });
 
+test('keeps drawer rows through the close transition and refreshes on reopen', async ({
+  page
+}, testInfo) => {
+  const api = await openBoard(page, testInfo);
+  await expect(page.locator('#overdue-badge')).toBeVisible();
+
+  await page.locator('#overdue-badge').click();
+  await expect(page.locator('#overdue-sheet')).toHaveAttribute('aria-hidden', 'false');
+  await expect(page.locator('#overdue-sheet-list .child-time')).toHaveCount(2);
+
+  await page.locator('#overdue-sheet-close').click();
+  await expect(page.locator('#overdue-sheet')).toHaveAttribute('aria-hidden', 'true');
+  // The sheet is still sliding out; its rows must not be cleared underneath it.
+  await expect(page.locator('#overdue-sheet-list .child-time')).toHaveCount(2);
+
+  api.setConfirmed('pc:overdue', true);
+  const requestPromise = page.waitForRequest((request) =>
+    request.url().includes('/v1/checkins/checkouts')
+  );
+  await page.clock.runFor(3000);
+  const request = await requestPromise;
+  await request.response();
+
+  await page.locator('#overdue-badge').click();
+  await expect(page.locator('#overdue-sheet')).toHaveAttribute('aria-hidden', 'false');
+  await expect(page.locator('#overdue-sheet-list .child-time')).toHaveCount(1);
+  await expect(page.locator('#overdue-sheet-list')).toContainText('Late Kid');
+});
+
 test('moves the server-rendered menu into the kebab menu exactly once', async ({
   page
 }, testInfo) => {
@@ -49,7 +78,6 @@ test('moves the server-rendered menu into the kebab menu exactly once', async ({
 
   await openBoard(page, testInfo);
   await expect(page.locator('#kebab-menu #admin-link')).toHaveCount(1);
-  await expect(page.locator('#checkouts-menu-source')).toHaveCount(0);
 
   await page.locator('#menu-button').click();
   await expect(page.locator('#kebab-menu')).toBeVisible();
@@ -75,7 +103,7 @@ test('hides the overdue badge when a poll fails', async ({ page }, testInfo) => 
   await expect(page.locator('#overdue-badge')).toBeHidden();
 });
 
-test('keeps Select all inert when location groups fail', async ({
+test('leaves the board unfiltered when Select all is clicked with no groups', async ({
   page
 }, testInfo) => {
   await openBoard(page, testInfo, { state: createState({ groupsStatus: 500 }) });

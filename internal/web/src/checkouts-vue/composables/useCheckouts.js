@@ -27,6 +27,15 @@ import {
 
 const OVERDUE_CUTOFF_MS = OVERDUE_MINUTES * 60 * 1000;
 
+const SHEET_FOCUSABLE_SELECTOR = [
+  'a[href]',
+  'button:not([disabled])',
+  'input:not([disabled]):not([type="hidden"])',
+  'select:not([disabled])',
+  'textarea:not([disabled])',
+  '[tabindex]:not([tabindex="-1"])'
+].join(',');
+
 function sameChildFields(a, b) {
   const keys = Object.keys(a);
   if (keys.length !== Object.keys(b).length) return false;
@@ -76,6 +85,7 @@ export function useCheckouts() {
   const rawSearch = ref('');
   const hideConfirmed = ref(false);
   const pollFailed = ref(false);
+  const initialLoading = ref(true);
   const searchOpen = ref(false);
   const urlSearch = ref(
     typeof window === 'undefined' ? '' : window.location.search
@@ -447,8 +457,12 @@ export function useCheckouts() {
     });
   }
 
-  async function fetchChildrenData() {
+  async function fetchChildrenData({ poll = false } = {}) {
     if (previewBlocked) return;
+    // A periodic poll never interrupts the request already in flight: with a
+    // slow API, aborting every three seconds means no response can ever land.
+    // Explicit refreshes (initial load, filter changes) still supersede it.
+    if (poll && activeController) return;
 
     let controller = null;
     try {
@@ -495,6 +509,7 @@ export function useCheckouts() {
     } finally {
       if (activeController === controller) {
         activeController = null;
+        initialLoading.value = false;
       }
     }
   }
@@ -630,7 +645,8 @@ export function useCheckouts() {
   function closeSheet() {
     if (!sheetOpen.value) return;
     sheetOpen.value = false;
-    sheetRows.value = [];
+    // Keep sheetRows through the slide-out; clearing them here emptied the
+    // drawer mid-animation. The next open replaces them with a fresh snapshot.
     unlockBodyScroll();
   }
 
@@ -684,6 +700,9 @@ export function useCheckouts() {
     expired.forEach((id) => overrides.delete(id));
     if (!pollFailed.value) {
       badgeCount.value = overdueCount.value;
+      // The sheet list is frozen while open, but its header still counts the
+      // live total so a child crossing five minutes updates without a poll.
+      if (sheetOpen.value) sheetCount.value = overdueCount.value;
     }
   }
 
@@ -700,12 +719,47 @@ export function useCheckouts() {
     });
   }
 
+  function trapSheetFocus(event) {
+    const sheet = sheetEl.value;
+    if (!sheet) return;
+
+    const focusables = Array.from(
+      sheet.querySelectorAll(SHEET_FOCUSABLE_SELECTOR)
+    );
+    if (focusables.length === 0) {
+      event.preventDefault();
+      sheet.focus({ preventScroll: true });
+      return;
+    }
+
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+    const active = document.activeElement;
+    const inside = sheet.contains(active);
+
+    if (event.shiftKey) {
+      if (!inside || active === sheet || active === first) {
+        event.preventDefault();
+        last.focus();
+      }
+    } else if (!inside || active === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  }
+
   function onKeydown(event) {
-    if (event.key === 'Escape' && sheetOpen.value) closeSheet();
+    if (!sheetOpen.value) return;
+    if (event.key === 'Escape') {
+      closeSheet();
+    } else if (event.key === 'Tab') {
+      trapSheetFocus(event);
+    }
   }
 
   function loadPreviewData(previewChildren) {
     previewBlocked = true;
+    initialLoading.value = false;
     clearFlash();
     const prepared = (previewChildren || []).map((child) => ({
       ...child,
@@ -772,7 +826,7 @@ export function useCheckouts() {
     fetchLocationGroups();
     fetchChildrenData();
     clockTimer = setInterval(tick, 1000);
-    pollTimer = setInterval(fetchChildrenData, 3000);
+    pollTimer = setInterval(() => fetchChildrenData({ poll: true }), 3000);
 
     document.addEventListener('keydown', onKeydown);
     window.addEventListener('resize', onResize);
@@ -819,6 +873,7 @@ export function useCheckouts() {
     rawSearch,
     hideConfirmed,
     pollFailed,
+    initialLoading,
     searchOpen,
     selection,
     allSelected,
