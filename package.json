@@ -7,7 +7,9 @@
     "test": "vitest run",
     "test:conformance": "playwright test",
     "build:css": "tailwindcss -i internal/web/tailwind.input.css -o internal/web/static/css/tailwind.css --minify",
-    "watch:css": "tailwindcss -i internal/web/tailwind.input.css -o internal/web/static/css/tailwind.css --watch"
+    "watch:css": "tailwindcss -i internal/web/tailwind.input.css -o internal/web/static/css/tailwind.css --watch",
+    "build:checkouts-preact": "vite build --config vite.config.mjs",
+    "watch:checkouts-preact": "vite build --config vite.config.mjs --watch"
   },
   "keywords": [],
   "author": "",
@@ -17,9 +19,14 @@
   },
   "devDependencies": {
     "@playwright/test": "1.64.1",
+    "@preact/preset-vite": "2.10.6",
     "@tailwindcss/cli": "4.2.2",
     "jsdom": "^24.0.0",
     "tailwindcss": "4.2.2",
+    "vite": "7.3.7",
     "vitest": "^2.1.8"
+  },
+  "dependencies": {
+    "preact": "11.1.1"
   }
 }

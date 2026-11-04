@@ -20,11 +20,12 @@
 @source not "static/pages/admin/locations.test.js";
 @source not "static/pages/admin/metrics.test.js";
 @source not "static/pages/admin/planningcenter-event.test.js";
-@source not "static/pages/checkoutsv1/checkouts.test.js";
 @source not "static/pages/checkoutsv1/preview.test.js";
 @source not "static/pages/guest-checkin/guest-checkin.test.js";
 @source not "static/pages/home/home.test.js";
 @source not "static/pages/manual-checkins/manual-checkins.test.js";
 @source "static/js/**/*.js";
 @source not "static/js/__tests__";
+@source "src/checkouts-preact/**/*.{js,jsx}";
+@source not "src/checkouts-preact/core.test.js";
 @source "menu/menu.go";

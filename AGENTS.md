@@ -39,8 +39,12 @@ This file guides coding agents working in this repo. Keep changes small, follow 
 - Install the Playwright browser once: `npx playwright install chromium`
 - Watch CSS: `npm run watch:css`
 - Build CSS: `npm run build:css`
+- Build the Preact checkouts bundle: `npm run build:checkouts-preact`
+  (source in `internal/web/src/checkouts-preact`, output committed at
+  `internal/web/static/dist/preact/checkouts.js`).
+- Watch the checkouts bundle: `npm run watch:checkouts-preact`
 - `package-lock.json` is committed so CI and local installs resolve the same
-  Tailwind and Playwright versions.
+  Tailwind, Vite, and Playwright versions.
 
 ### Lint/format
 - Lint: no dedicated lint config found.
