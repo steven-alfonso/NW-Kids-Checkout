@@ -56,6 +56,15 @@
     let bodyScrollLock = null;
     let lastOverdueCount = 0;
 
+    const FOCUSABLE_SELECTOR = [
+        'a[href]',
+        'button:not([disabled])',
+        'input:not([disabled])',
+        'select:not([disabled])',
+        'textarea:not([disabled])',
+        '[tabindex]:not([tabindex="-1"])'
+    ].join(',');
+
     const selection = $derived(readSelection(urlSearch, locationGroups));
     const hasGroupFilter = $derived(selectionHasFilter(selection));
 
@@ -215,9 +224,15 @@
         sheetCount = liveOverdue.length;
     }
 
-    async function fetchChildrenData() {
+    async function fetchChildrenData({ force = false } = {}) {
         if (previewBlocked) return;
-        if (fetchController) fetchController.abort();
+        // The periodic poll must not cancel a request that is still in flight:
+        // a response slower than the interval would never complete. Explicit
+        // refreshes (filter changes) may cancel and replace the current poll.
+        if (fetchController) {
+            if (!force) return;
+            fetchController.abort();
+        }
         const controller = new AbortController();
         fetchController = controller;
         const seq = ++requestSeq;
@@ -390,7 +405,7 @@
         }
 
         writeGroupParams(ids, includeUnassigned, ids.size === 0 && !includeUnassigned);
-        fetchChildrenData();
+        fetchChildrenData({ force: true });
     }
 
     function onSelectAll() {
@@ -403,7 +418,7 @@
         const newUrl = newSearch ? `?${newSearch}` : window.location.pathname;
         history.replaceState(null, '', newUrl);
         urlSearch = window.location.search;
-        fetchChildrenData();
+        fetchChildrenData({ force: true });
     }
 
     async function toggleSearch() {
@@ -487,7 +502,18 @@
         sheetEl.focus({ preventScroll: true });
     }
 
-    function closeSheet() {
+    function isVisibleFocusTarget(element) {
+        return Boolean(
+            element &&
+                element !== document.body &&
+                element.isConnected &&
+                typeof element.focus === 'function' &&
+                !element.closest('[inert]') &&
+                element.getClientRects().length > 0
+        );
+    }
+
+    async function closeSheet() {
         if (!sheetOpen) return;
         sheetOpen = false;
         sheetSnapshotIds = new Set();
@@ -495,18 +521,55 @@
         unlockBodyScroll();
         const target = returnFocus;
         returnFocus = null;
-        if (
-            target &&
-            target !== document.body &&
-            target.isConnected &&
-            typeof target.focus === 'function'
-        ) {
-            target.focus({ preventScroll: true });
-        }
+        // Let the reactive update clear inert before focusing a background
+        // control. The trigger may also have been hidden by the final
+        // confirmation (display:none), so fall back to a visible control.
+        await tick();
+        const next = isVisibleFocusTarget(target)
+            ? target
+            : document.getElementById('search-toggle-button');
+        if (isVisibleFocusTarget(next)) next.focus({ preventScroll: true });
+    }
+
+    function getSheetFocusable() {
+        if (!sheetEl) return [];
+        return Array.from(sheetEl.querySelectorAll(FOCUSABLE_SELECTOR)).filter(
+            (element) => !element.hidden && element.getClientRects().length > 0
+        );
     }
 
     function onKeydown(event) {
-        if (event.key === 'Escape' && sheetOpen) closeSheet();
+        if (!sheetOpen) return;
+        if (event.key === 'Escape') {
+            event.preventDefault();
+            closeSheet();
+            return;
+        }
+        if (event.key !== 'Tab') return;
+
+        const focusable = getSheetFocusable();
+        if (focusable.length === 0) {
+            event.preventDefault();
+            sheetEl?.focus({ preventScroll: true });
+            return;
+        }
+
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        const active = document.activeElement;
+
+        if (!sheetEl.contains(active) || active === sheetEl) {
+            event.preventDefault();
+            (event.shiftKey ? last : first).focus({ preventScroll: true });
+            return;
+        }
+        if (event.shiftKey && active === first) {
+            event.preventDefault();
+            last.focus({ preventScroll: true });
+        } else if (!event.shiftKey && active === last) {
+            event.preventDefault();
+            first.focus({ preventScroll: true });
+        }
     }
 
     async function loadPreviewData(previewChildren) {
@@ -641,7 +704,10 @@
     />
 </div>
 
-<header class="relative flex justify-between items-center w-full z-20 px-6 pt-4 lg:fixed">
+<header
+    class="relative flex justify-between items-center w-full z-20 px-6 pt-4 lg:fixed"
+    inert={sheetOpen ? true : undefined}
+>
     <div class="flex justify-between items-center">
         <a href="/">
             <picture>
@@ -724,14 +790,19 @@
 </header>
 
 <!-- Main Content -->
-<div class="relative z-10 min-h-screen flex flex-col box-border lg:h-screen lg:pt-28 pb-20">
+<div
+    class="relative z-10 min-h-screen flex flex-col box-border lg:h-screen lg:pt-28 pb-20"
+    inert={sheetOpen ? true : undefined}
+>
     <div
         class="relative z-10 flex flex-col items-center gap-2 px-4 md:flex-row md:justify-center md:gap-3"
     >
         <div
             id="search-controls"
             class="w-full max-w-md md:flex-1 md:max-w-2xl"
-            use:searchPanel={searchOpen}
+            use:searchPanel={{ expanded: searchOpen, groupsLoaded }}
+            aria-hidden={searchOpen ? 'false' : 'true'}
+            inert={searchOpen ? undefined : true}
         >
             <div class="overflow-hidden search-controls-panel pb-2 md:pt-4">
                 <div
@@ -860,6 +931,7 @@
 <button
     id="overdue-badge"
     type="button"
+    inert={sheetOpen ? true : undefined}
     class="fixed bottom-4 left-1/2 -translate-x-1/2 z-30 rounded-full bg-red-600 text-white px-5 py-2.5 text-sm font-bold shadow-[0_4px_12px_rgba(0,0,0,0.3)] hover:bg-red-700 active:bg-red-700 transition-colors cursor-pointer whitespace-nowrap w-max"
     class:hidden={overdueCount === 0}
     class:overdue-badge-jiggle={badgeJiggle}
