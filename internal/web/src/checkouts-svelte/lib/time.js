@@ -3,6 +3,17 @@ export const CONFIRM_OVERRIDE_TTL_MS = 15000;
 
 const PILL_BG_CLASSES = ['bg-gray-400', 'bg-green-500', 'bg-yellow-500', 'bg-red-500'];
 
+export const TIME_PILL_BASE_CLASS =
+    'text-white transition-colors duration-1000 px-1.5 py-0 rounded-md text-base child-time';
+export const TIME_PILL_OVERDUE_BASE_CLASS =
+    'ml-auto text-white transition-colors duration-1000 text-xs px-2.5 py-1 rounded-md child-time';
+
+export function timePillClasses(variant, pillClass) {
+    const base =
+        variant === 'overdue' ? TIME_PILL_OVERDUE_BASE_CLASS : TIME_PILL_BASE_CLASS;
+    return `${base} ${pillClass}`;
+}
+
 export function getCheckedOutTimestamp(value) {
     if (!value) return 0;
     const parsed = Date.parse(value);

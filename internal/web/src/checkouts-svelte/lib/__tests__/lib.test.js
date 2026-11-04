@@ -16,7 +16,8 @@ import {
     getCheckedOutTimestamp,
     isOverdueAt,
     minutesAgoLabel,
-    timePillClass
+    timePillClass,
+    timePillClasses
 } from '../time.js';
 
 const BASE = Date.parse('2026-01-15T12:00:00.000Z');
@@ -146,6 +147,14 @@ describe('time', () => {
         expect(timePillClass(BASE - 8 * 60_000, false, BASE)).toBe('bg-red-500');
         expect(timePillClass(BASE - 60_000, true, BASE)).toBe('bg-gray-400');
         expect(timePillClass(0, false, BASE)).toBe('bg-green-500');
+    });
+
+    it('fades the time pill in both variants', () => {
+        for (const variant of ['main', 'overdue']) {
+            const classes = timePillClasses(variant, 'bg-gray-400');
+            expect(classes).toContain('transition-colors');
+            expect(classes).toContain('duration-1000');
+        }
     });
 
     it('uses an inclusive five-minute overdue boundary', () => {
