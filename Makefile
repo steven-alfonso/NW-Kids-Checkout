@@ -87,6 +87,14 @@ test:
 	go tool godotenv go test -tags dev ./...
 	npm test
 
+.PHONY: test-conformance
+# Browser-level contract for the checkouts page. Runs against the current
+# implementation by default; set CHECKOUTS_PAGE_NEXT to run the same spec
+# against a replacement page during migration. Requires Chromium:
+#   npx playwright install chromium
+test-conformance:
+	npm run test:conformance
+
 .PHONY: db-init
 # Builds a development database: schema, migration stamp, and the Planning
 # Center reference topology. The db-init command only exists under the `dev`

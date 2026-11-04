@@ -21,7 +21,11 @@ This file guides coding agents working in this repo. Keep changes small, follow 
 - Add random per-visit check-in data: `make random-data`
 
 ### Tests
-- Run all tests: `make test` (runs `go test ./...` + `-tags dev ./...` + `npm test` via godotenv)
+- Run Go/unit tests: `make test` (runs `go test ./...` + `-tags dev ./...` + `npm test` via godotenv)
+- Run the checkouts browser conformance suite: `npm run test:conformance` or
+  `make test-conformance`. First run needs `npx playwright install chromium`.
+  The suite is black-box and must keep passing on both the vanilla page and a
+  replacement implementation; see `test-support/conformance/README.md`.
 - CI runs `go test` directly rather than through `make test`: godotenv exits
   non-zero when `.env` is absent, and it is gitignored. No test reads a real
   `.env`; the ones that care about a variable set it with `t.Setenv`.
@@ -31,9 +35,12 @@ This file guides coding agents working in this repo. Keep changes small, follow 
 - Alternative without env loading (if not needed): `go test ./internal/repo/checkin -run Test_sqliteRepo_ListCheckins`
 
 ### Frontend assets (Tailwind)
-- Install deps: `npm install`
+- Install deps: `npm ci` (or `npm install` when changing dependencies)
+- Install the Playwright browser once: `npx playwright install chromium`
 - Watch CSS: `npm run watch:css`
 - Build CSS: `npm run build:css`
+- `package-lock.json` is committed so CI and local installs resolve the same
+  Tailwind and Playwright versions.
 
 ### Lint/format
 - Lint: no dedicated lint config found.

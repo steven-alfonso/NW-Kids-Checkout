@@ -13,7 +13,7 @@ The project is structured as a command-line application with commands:
 - [Golang](https://go.dev/) 1.27.3+
 - [SQLite](https://www.sqlite.org/) 3.37+ (should be on macOS by default). If not, install via Brew.
 - [GNU make](https://www.gnu.org/software/make/) (should be on macOS by default)
-- [Node.js](https://nodejs.org/) 18+ (required for frontend assets and JS tests)
+- [Node.js](https://nodejs.org/) 20+ (required for frontend assets and JS tests; CI uses 22)
 - [godotenv](https://github.com/joho/godotenv). Install via `go install github.com/joho/godotenv/cmd/godotenv@latest` once Golang is installed.
 
 ## Quick Start
@@ -159,8 +159,11 @@ When developing the frontend, you need nodejs and npm.
 
 Install:
 ```shell
-npm install
+npm ci
 ```
+
+Use `npm install` instead when you are changing dependencies; `package-lock.json`
+is committed so CI and local installs resolve the same versions.
 
 Automatically regenerate the tailwind.css file:
 ```shell
@@ -180,11 +183,39 @@ To run the test suite, use the `test` target:
 make test       # go test, then -tags dev, then npm test
 ```
 
+The checkouts page also has a browser-level conformance suite. It is
+deliberately black-box: it loads the real page, mocks the `/v1` API, and
+asserts only the DOM contract documented in
+`test-support/conformance/README.md`. The same spec runs against a replacement
+implementation by pointing `CHECKOUTS_PAGE` at it.
+
+First run (downloads Chromium once):
+
+```sh
+npx playwright install chromium
+```
+
+Then:
+
+```sh
+npm run test:conformance
+# or
+make test-conformance
+```
+
+During a checkouts rewrite, run both page paths:
+
+```sh
+CHECKOUTS_PAGE_NEXT=/static/pages/checkoutsv1-next/checkouts.html \
+  npm run test:conformance
+```
+
 CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs the Go suite
 (both tag sets) as required steps, along with `gofmt`, `go vet`, a build of the
-release entrypoint, and `npm test`, so it is the gate on a push. CI calls
-`go test` directly instead of through `make test` because `godotenv` exits
-non-zero when `.env` is absent, and `.env` is gitignored.
+release entrypoint, `npm test`, and the checkouts conformance suite, so it is
+the gate on a push. CI calls `go test` directly instead of through `make test`
+because `godotenv` exits non-zero when `.env` is absent, and `.env` is
+gitignored.
 
 ## Database
 
