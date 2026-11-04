@@ -39,6 +39,10 @@ This file guides coding agents working in this repo. Keep changes small, follow 
 - Install the Playwright browser once: `npx playwright install chromium`
 - Watch CSS: `npm run watch:css`
 - Build CSS: `npm run build:css`
+- Build the Vue checkouts bundle: `npm run build:checkouts-vue`
+  (watch: `npm run watch:checkouts-vue`). Source lives in
+  `internal/web/src/checkouts-vue`; the committed output is
+  `internal/web/static/dist/vue/checkouts.js`.
 - `package-lock.json` is committed so CI and local installs resolve the same
   Tailwind and Playwright versions.
 

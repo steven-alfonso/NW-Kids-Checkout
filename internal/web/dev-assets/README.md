@@ -63,8 +63,8 @@ loadPreviewData()
 
 It:
 
-- blocks the 3-second auto-refresh from overwriting the demo data
-  (`API_CALL_BLOCKS.fetchChildrenData = true`),
+- blocks the 3-second auto-refresh from overwriting the demo data (the page's
+  `window.__checkoutsPreview.loadPreviewData` handle sets its preview flag),
 - seeds four checkouts: green (0 min), a yellow step at 3.9 min, a red step
   at 7.9 min (both step to the next color within ~1s so the `duration-1000`
   transition is visible), and a confirmed one (gray),

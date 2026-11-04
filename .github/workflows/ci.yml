@@ -156,6 +156,19 @@ jobs:
             exit 1
           fi
 
+      # The checkouts page ships a committed Vite bundle. Docker has no Node
+      # stage, so a stale dist would ship old code with no build error. Rebuild
+      # and fail on any diff, the same way the Tailwind check above works.
+      - name: Verify checkouts bundle is current
+        run: |
+          npm run build:checkouts-vue > /dev/null
+          if ! git diff --quiet -- internal/web/static/dist/vue; then
+            echo "::error::internal/web/static/dist/vue is stale"
+            echo "Run: npm run build:checkouts-vue from a clean tree."
+            git diff --stat -- internal/web/static/dist/vue
+            exit 1
+          fi
+
       - name: Test
         run: npm test
 
@@ -176,6 +189,11 @@ jobs:
 
       - name: Install Chromium
         run: npx playwright install --with-deps chromium
+
+      # The conformance suite serves internal/web/static directly, so it must
+      # run against a bundle built from the current source, not a stale commit.
+      - name: Build checkouts bundle
+        run: npm run build:checkouts-vue
 
       - name: Run conformance suite
         run: npm run test:conformance
