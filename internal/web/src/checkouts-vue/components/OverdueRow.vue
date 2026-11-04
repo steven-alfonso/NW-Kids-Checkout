@@ -51,7 +51,7 @@ const groupLabel = computed(() =>
         ></span>
         <span class="text-xs font-medium text-slate-600">{{ groupLabel }}</span>
         <TimePill
-          class="ml-auto text-white text-xs px-2.5 py-1 rounded-md child-time"
+          class="ml-auto text-white transition-colors duration-1000 text-xs px-2.5 py-1 rounded-md child-time"
           :checked-out-at-ms="checkedOutAtMs"
           :confirmed="confirmed"
           :child-id="childId"
