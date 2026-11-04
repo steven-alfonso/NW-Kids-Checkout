@@ -38,18 +38,20 @@ but nothing below them.
 
 - `[data-child-id="pc:<planning_center_id>"]`
 - `[data-child-id="manual:<public_id>"]`
-- Child rows: a direct child of `#children-list` that contains a
-  `[data-child-id]` element
+- Child rows: a direct `div` child of `#children-list` containing
+  `.child-time[data-child-id]`, `input.child-confirmed-checkbox[data-child-id]`,
+  and `[data-confirmed-label]`
 - `[data-confirmed-label][data-confirmed-state="confirmed"|"unconfirmed"]`
 - `input.child-confirmed-checkbox` with an accessible name
-  `Mark <full name> as confirmed`
+  `Mark <full name> as confirmed`; the checkbox is wrapped in
+  `[data-confirmed-label]`
 - Manual marker: `img[alt="Manual checkin"]`
 - `.child-time` with the displayed `N min ago` text
 
 ### Filters
 
 - `#search-input`
-- `#hide-confirmed-toggle`
+- `#hide-confirmed-toggle`, wrapped in a `label`
 - `#search-toggle-button`
 - `#search-controls`
 - `#location-group-checkboxes`
@@ -58,6 +60,9 @@ but nothing below them.
 
 ### Overdue
 
+- A row is a direct `div` child of `#overdue-sheet-list` with the same
+  `.child-time[data-child-id]`, checkbox, and `[data-confirmed-label]` hooks
+  as a main-list row.
 - `#overdue-badge`
 - `#overdue-sheet`
 - `#overdue-sheet-title`
@@ -65,6 +70,11 @@ but nothing below them.
 - `#overdue-sheet-count`
 - `#overdue-sheet-close`
 - `#overdue-sheet-backdrop`
+
+### Copy
+
+The exact user-visible strings asserted by the suite are part of the contract
+and are listed in `test-support/conformance/README.md`.
 
 ### Accessibility
 
@@ -82,6 +92,7 @@ exist in the vanilla page.
 - Exact Tailwind color classes, animation classes, and layout measurements
 - Internal function names, module shape, or `window.__test`
 - The Go server, authentication, database, or websocket path
+- ETag/cache behavior
 - Pixel-level mobile visual-viewport behavior
 
 ## Harness

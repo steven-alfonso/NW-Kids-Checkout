@@ -146,7 +146,7 @@ Expected: PASS.
 
 ### Task 7: Overdue tests
 
-- [x] Write tests for badge count/text, sheet rows and group labels, close by button/backdrop/Escape, focus return, `aria-hidden`/`inert`, scroll lock, confirmation retention, new-overdue suppression while open, and failed-poll retention.
+- [x] Write tests for badge count/text, sheet rows and group labels, close by button/backdrop/Escape, focus return and focus stability, `aria-hidden`/`inert`, confirmation retention, new-overdue suppression while open, failed-poll retention, successful-empty clearing, and the 5-minute boundary. Body scroll lock and visualViewport geometry are intentionally excluded.
 - [x] Run the group: `npm run test:conformance -- --grep "overdue"`.
 
 ### Task 8: CI, Makefile, docs, known behaviors

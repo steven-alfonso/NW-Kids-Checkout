@@ -13,7 +13,7 @@ The project is structured as a command-line application with commands:
 - [Golang](https://go.dev/) 1.27+
 - [SQLite](https://www.sqlite.org/) 3.37+ (should be on macOS by default). If not, install via Brew.
 - [GNU make](https://www.gnu.org/software/make/) (should be on macOS by default)
-- [Node.js](https://nodejs.org/) 18+ (required for frontend assets and JS tests)
+- [Node.js](https://nodejs.org/) 20+ (required for frontend assets and JS tests; CI uses 22)
 - [godotenv](https://github.com/joho/godotenv). Install via `go install github.com/joho/godotenv/cmd/godotenv@latest` once Golang is installed.
 
 ## Quick Start

@@ -1,7 +1,8 @@
 # Current checkouts behavior encoded by the conformance suite
 
 These behaviors are what the vanilla page does today. The conformance suite
-pins them so the framework migration does not change behavior accidentally.
+pins the ones it can observe; items marked "not covered" are documented so the
+replacement does not change them by accident.
 
 Each one is a candidate for a deliberate change. If you change one, change the
 vanilla page, the replacement page, and the conformance test in the same
@@ -28,7 +29,8 @@ commit.
   PATCH; the checkbox reverts and an error/warning is logged.
 - **Polling does not pause when the tab is hidden.** The 3s interval keeps
   running. A replacement may choose to pause on `visibilitychange`, but that
-  would be a behavior change and needs its own decision.
+  would be a behavior change and needs its own decision. Not covered by this
+  suite.
 - **The 100-child cap is silent.** The page requests `limit=100` and renders at
   most 100 children, with no “showing the first 100” indicator.
 - **Search and hide-confirmed are not stored in the URL.** Only location-group
@@ -61,4 +63,9 @@ commit.
   seconds so a slow server cannot visibly undo the user's click.
 - **The overdue drawer freezes its snapshot.** While open, it does not insert
   children who newly cross the 5-minute threshold. It does keep already-shown
-  rows that become confirmed, and drops rows that leave the polled window.
+  rows that become confirmed. Dropping rows that leave the polled window is
+  not covered by this suite; the fake API does not apply `checked_out_after`.
+- **A top insertion can move focus.** If a poll inserts a new child above a
+  focused row, the page matches rows positionally and focus can move to the
+  new child. The suite tests focus across a bottom insertion; top insertion is
+  a known limitation and a candidate for the replacement to improve.

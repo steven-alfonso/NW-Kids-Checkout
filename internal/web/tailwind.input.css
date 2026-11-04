@@ -7,8 +7,24 @@
  * "Tailwind output is current" check drift whenever a test or doc is edited.
  *
  * This file lives outside internal/web/static so //go:embed does not ship it.
+ * Tailwind v4's `@source not` takes exact paths, not globs, so the page test
+ * files are listed individually. Add new page tests here.
  */
 @import "tailwindcss" source(none);
 
-@source "static/pages";
-@source "static/js";
+@source "static/pages/**/*.html";
+@source "static/pages/**/*.js";
+@source not "static/pages/admin-guest-entries/admin-guest-entries.test.js";
+@source not "static/pages/admin/fetcher-status.test.js";
+@source not "static/pages/admin/location-groups.test.js";
+@source not "static/pages/admin/locations.test.js";
+@source not "static/pages/admin/metrics.test.js";
+@source not "static/pages/admin/planningcenter-event.test.js";
+@source not "static/pages/checkoutsv1/checkouts.test.js";
+@source not "static/pages/checkoutsv1/preview.test.js";
+@source not "static/pages/guest-checkin/guest-checkin.test.js";
+@source not "static/pages/home/home.test.js";
+@source not "static/pages/manual-checkins/manual-checkins.test.js";
+@source "static/js/**/*.js";
+@source not "static/js/__tests__";
+@source "menu/menu.go";

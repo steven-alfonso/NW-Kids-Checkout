@@ -11,7 +11,7 @@ import { extname, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = resolve(fileURLToPath(new URL('../../internal/web/static', import.meta.url)));
-const PORT = Number(process.env.PORT || 4173);
+const PORT = 4173;
 const HOST = '127.0.0.1';
 
 const MIME_TYPES = {

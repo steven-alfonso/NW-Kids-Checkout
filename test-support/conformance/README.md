@@ -43,7 +43,9 @@ CHECKOUTS_PAGE=/static/pages/other/checkouts.html npx playwright test
 
 `CHECKOUTS_PAGE` defaults to
 `/static/pages/checkoutsv1/checkouts.html`. `CHECKOUTS_PAGE_NEXT` is optional;
-when set, the same spec runs under a second project named `next`.
+when set, the same spec runs under a second project named `next`. CI runs the
+vanilla project only until a replacement page exists; set `CHECKOUTS_PAGE_NEXT`
+in the conformance job when it does.
 
 ## How it works
 
@@ -80,21 +82,21 @@ specific selectors to the spec.
 
 ### Children
 
-- A child row is a direct child of `#children-list` that contains a
-  `[data-child-id]` element.
+- A child row is a direct `div` child of `#children-list`. Each row contains:
+  - `.child-time[data-child-id]`
+  - `input.child-confirmed-checkbox[data-child-id]`
+  - `[data-confirmed-label][data-confirmed-state="confirmed"|"unconfirmed"]`
 - Planning Center identity: `[data-child-id="pc:<planning_center_id>"]`
 - Manual identity: `[data-child-id="manual:<public_id>"]`
-- Confirmed state: `[data-confirmed-label][data-confirmed-state="confirmed"]`
-  or `="unconfirmed"`
-- Confirm control: `input.child-confirmed-checkbox` with accessible name
-  `Mark <full name> as confirmed`
+- Confirm control: the checkbox is wrapped in `[data-confirmed-label]`, and
+  its accessible name is `Mark <full name> as confirmed`
 - Manual marker: `img[alt="Manual checkin"]`
 - Time label: `.child-time` with `N min ago` text
 
 ### Filters
 
 - `#search-input`
-- `#hide-confirmed-toggle`
+- `#hide-confirmed-toggle`, wrapped in a `label`
 - `#search-toggle-button`
 - `#search-controls`
 - `#location-group-checkboxes`
@@ -103,6 +105,9 @@ specific selectors to the spec.
 
 ### Overdue
 
+- A row is a direct `div` child of `#overdue-sheet-list` with the same
+  `.child-time[data-child-id]`, checkbox, and `[data-confirmed-label]` hooks
+  as a main-list row.
 - `#overdue-badge`
 - `#overdue-sheet`
 - `#overdue-sheet-title`
@@ -120,6 +125,23 @@ specific selectors to the spec.
 - Search toggle: `aria-label="Toggle search"`,
   `aria-controls="search-controls"`, and `aria-expanded="true|false"`.
 - Confirm control: accessible name `Mark <full name> as confirmed`.
+
+### Copy
+
+These strings are asserted exactly and are part of the contract:
+
+- Empty board: `No children called yet`
+- No search matches: `No matching children`
+- Hide-confirmed empty: `No unconfirmed children`
+- Poll error: `Error loading data. Please try again.`
+- Badge: `<count> overdue. Tap to view`
+- Sheet title: `Overdue >5 min`
+- Sheet count: `<count> overdue` / `No overdue`
+- Empty sheet: `No overdue checkouts`
+- Group select-all: `Select all` / `Deselect all`
+- Time label: `N min ago`
+- Header/time format: `HH:MM`
+- Manual pickup code: `---`
 
 ## API contract
 

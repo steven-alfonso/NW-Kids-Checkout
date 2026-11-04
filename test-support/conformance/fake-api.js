@@ -8,9 +8,8 @@ export function createState(overrides = {}) {
     children: defaultChildren(),
     groupsStatus: 200,
     groupsGate: null,
+    ignoreLimit: false,
     nextPollFailure: null,
-    pollFailuresRemaining: 0,
-    failAllPolls: false,
     confirmStatus: 204,
     applyConfirmations: true,
     confirmGate: null,
@@ -31,7 +30,7 @@ function findChild(state, id) {
   return state.children.find((child) => childKey(child) === id);
 }
 
-function applyCheckoutFilters(children, params, groups) {
+function applyCheckoutFilters(children, params, groups, ignoreLimit) {
   let out = children.slice();
 
   const ids = new Set();
@@ -69,8 +68,10 @@ function applyCheckoutFilters(children, params, groups) {
     });
   }
 
-  const limit = Number(params.get('limit') || 100);
-  if (Number.isFinite(limit) && limit > 0) out = out.slice(0, limit);
+  if (!ignoreLimit) {
+    const limit = Number(params.get('limit') || 100);
+    if (Number.isFinite(limit) && limit > 0) out = out.slice(0, limit);
+  }
   return out;
 }
 
@@ -142,17 +143,12 @@ export async function installFakeApi(page, initialState = createState()) {
         return;
       }
 
-      if (state.failAllPolls || state.pollFailuresRemaining > 0) {
-        if (state.pollFailuresRemaining > 0) state.pollFailuresRemaining -= 1;
-        await route.fulfill({
-          status: 500,
-          contentType: 'application/json',
-          body: JSON.stringify({ error: 'forced poll failure' })
-        });
-        return;
-      }
-
-      const filtered = applyCheckoutFilters(state.children, url.searchParams, state.groups);
+      const filtered = applyCheckoutFilters(
+        state.children,
+        url.searchParams,
+        state.groups,
+        state.ignoreLimit
+      );
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -225,12 +221,6 @@ export async function installFakeApi(page, initialState = createState()) {
     },
     failNextPoll(mode = 'http') {
       state.nextPollFailure = mode;
-    },
-    setGroupsStatus(status) {
-      state.groupsStatus = status;
-    },
-    failAllPolls(value = true) {
-      state.failAllPolls = value;
     },
     setConfirmStatus(status) {
       state.confirmStatus = status;

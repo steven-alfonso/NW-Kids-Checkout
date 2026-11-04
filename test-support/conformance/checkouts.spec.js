@@ -25,6 +25,9 @@ import {
 async function openBoard(page, testInfo, { state = createState(), query = '' } = {}) {
   const api = await installFakeApi(page, state);
   await page.clock.install({ time: BASE_TIME });
+  // Pause before navigation so the initial render observes BASE_TIME. The
+  // vanilla page bootstraps synchronously; a replacement that needs timers to
+  // render its first frame would have to render before relying on them.
   await page.clock.pauseAt(BASE_TIME);
   await page.goto(`${testInfo.project.metadata.pagePath}${query}`);
   return api;
@@ -36,11 +39,12 @@ async function openSearch(page) {
 }
 
 async function pollOnce(page) {
-  const request = page.waitForRequest((request) =>
+  const requestPromise = page.waitForRequest((request) =>
     request.url().includes('/v1/checkins/checkouts')
   );
   await page.clock.runFor(3000);
-  await request;
+  const request = await requestPromise;
+  await request.response();
 }
 
 async function openOverdueSheet(page) {
@@ -59,6 +63,9 @@ test.describe('checkouts board', () => {
     await openBoard(page, testInfo);
 
     await expect(visibleChildRows(page)).toHaveCount(7);
+    await expect(page.locator('#children-list')).not.toContainText(
+      'Loading children data'
+    );
     expect(await childIds(page)).toEqual([
       'pc:fresh',
       'manual:manu',
@@ -194,21 +201,31 @@ test.describe('checkouts board', () => {
     await page.locator('#search-input').fill('fresh');
     await expect(visibleChildRows(page)).toHaveCount(1);
     expect(await childIds(page)).toEqual(['pc:fresh']);
+    expect(new URL(page.url()).searchParams.has('q')).toBe(false);
 
     await page.locator('#search-input').fill('1111');
     await expect(visibleChildRows(page)).toHaveCount(1);
     expect(await childIds(page)).toEqual(['pc:fresh']);
+    expect(new URL(page.url()).searchParams.has('q')).toBe(false);
 
     await page.locator('#search-input').fill('  FRESH  ');
     await expect(visibleChildRows(page)).toHaveCount(1);
     expect(await childIds(page)).toEqual(['pc:fresh']);
+    expect(new URL(page.url()).searchParams.has('q')).toBe(false);
+
+    await page.locator('#search-input').fill('Fresh Kid');
+    await expect(visibleChildRows(page)).toHaveCount(1);
+    expect(await childIds(page)).toEqual(['pc:fresh']);
+    expect(new URL(page.url()).searchParams.has('q')).toBe(false);
 
     await page.locator('#search-input').fill('kId');
     await expect(visibleChildRows(page)).toHaveCount(6);
+    expect(new URL(page.url()).searchParams.has('q')).toBe(false);
 
     await page.locator('#search-input').fill('CHECKIN');
     await expect(visibleChildRows(page)).toHaveCount(1);
     expect(await childIds(page)).toEqual(['manual:manu']);
+    expect(new URL(page.url()).searchParams.has('q')).toBe(false);
 
     await page.locator('#search-input').fill('nope');
     await expect(visibleChildRows(page)).toHaveCount(0);
@@ -319,6 +336,10 @@ test.describe('checkouts board', () => {
 
     await page.unroute('**/v1/**');
     await openBoard(page, testInfo, { query: '?location_group_name=Elementary' });
+    await expect(
+      page.locator('#location-group-checkboxes input[data-lg-id]')
+    ).toHaveCount(3);
+    await pollOnce(page);
     await expect(visibleChildRows(page)).toHaveCount(3);
     expect(await childIds(page)).toEqual(['manual:manu', 'pc:edge', 'pc:overdue']);
 
@@ -404,12 +425,23 @@ test.describe('checkouts board', () => {
     expect(new Set(firstOrder).size).toBe(3);
 
     api.state.children.reverse();
+    api.addChild(
+      makeChild({
+        planning_center_id: 'new',
+        first_name: 'New',
+        last_name: 'Tied',
+        checked_out_at: minutesAgo(0.1)
+      })
+    );
     await pollOnce(page);
-    expect(await childIds(page)).toEqual(firstOrder);
+    await expect(visibleChildRows(page)).toHaveCount(4);
+    const after = await childIds(page);
+    expect(after[0]).toBe('pc:new');
+    expect(after.slice(1)).toEqual(firstOrder);
   });
 
   test('keeps focus inside a child row across a poll', async ({ page }, testInfo) => {
-    await openBoard(page, testInfo);
+    const api = await openBoard(page, testInfo);
     await expect(visibleChildRows(page)).toHaveCount(7);
 
     await childCheckbox(page, 'pc:fresh').focus();
@@ -417,7 +449,16 @@ test.describe('checkouts board', () => {
       'pc:fresh'
     );
 
+    api.addChild(
+      makeChild({
+        planning_center_id: 'focus-new',
+        first_name: 'Focus',
+        last_name: 'New',
+        checked_out_at: minutesAgo(10)
+      })
+    );
     await pollOnce(page);
+    await expect(visibleChildRows(page)).toHaveCount(8);
     expect(await page.evaluate(() => document.activeElement?.dataset?.childId)).toBe(
       'pc:fresh'
     );
@@ -462,7 +503,9 @@ test.describe('checkouts board', () => {
         checked_out_at: minutesAgo(index / 60)
       })
     );
-    await openBoard(page, testInfo, { state: createState({ children }) });
+    await openBoard(page, testInfo, {
+      state: createState({ children, ignoreLimit: true })
+    });
     await expect(visibleChildRows(page)).toHaveCount(100);
   });
 
@@ -545,11 +588,8 @@ test.describe('checkouts board', () => {
     expect(params.get('limit')).toBe('50');
 
     await openSearch(page);
-    const request = page.waitForRequest((request) =>
-      request.url().includes('/v1/checkins/checkouts')
-    );
     await groupCheckbox(page, 2).uncheck();
-    await request;
+    await expect(visibleChildRows(page)).toHaveCount(5);
 
     const pageParams = new URL(page.url()).searchParams;
     expect(pageParams.get('checked_out_after')).toBe('-31m');
@@ -982,6 +1022,7 @@ test.describe('overdue', () => {
       })
     );
     await pollOnce(page);
+    await expect(visibleChildRows(page)).toHaveCount(8);
     expect(await overdueIds(page)).toEqual(['pc:overdue', 'pc:late']);
 
     await page.locator('#overdue-sheet-close').click();
@@ -1104,7 +1145,7 @@ test.describe('overdue', () => {
   });
 
   test('keeps focus in the open sheet across a poll', async ({ page }, testInfo) => {
-    await openBoard(page, testInfo);
+    const api = await openBoard(page, testInfo);
     await expect(visibleChildRows(page)).toHaveCount(7);
     await openOverdueSheet(page);
 
@@ -1113,7 +1154,11 @@ test.describe('overdue', () => {
       'pc:overdue'
     );
 
+    api.state.children.find(
+      (child) => child.planning_center_id === 'late'
+    ).first_name = 'Changed';
     await pollOnce(page);
+    await expect(overdueRow(page, 'pc:late')).toContainText('Changed Kid');
     expect(await page.evaluate(() => document.activeElement?.dataset?.childId)).toBe(
       'pc:overdue'
     );

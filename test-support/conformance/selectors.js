@@ -51,7 +51,3 @@ export async function overdueIds(page) {
 export function groupCheckbox(page, id) {
   return page.locator(`#location-group-checkboxes input[data-lg-id="${id}"]`);
 }
-
-export async function isGroupChecked(page, id) {
-  return groupCheckbox(page, id).isChecked();
-}
