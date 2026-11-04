@@ -39,8 +39,13 @@ function installFetch(payload) {
 
 function mountApp() {
   document.body.innerHTML = `
+    <style>
+      .hidden { display: none; }
+    </style>
     <div id="current-time"></div>
-    <div id="search-toggle-slot"></div>
+    <header class="app-header">
+      <div id="search-toggle-slot"></div>
+    </header>
     <div id="app"></div>
   `;
   const app = createApp(App);
@@ -241,10 +246,15 @@ describe('checkouts App', () => {
     const checkbox = document.querySelector(
       '#overdue-sheet-list input[type="checkbox"]'
     );
-    expect(document.activeElement).toBe(document.getElementById('overdue-sheet'));
-    expect(
-      document.getElementById('overdue-sheet').getAttribute('aria-modal')
-    ).toBe('true');
+    const sheet = document.getElementById('overdue-sheet');
+    const board = document.getElementById('children-list').parentElement;
+    const header = document.querySelector('header');
+    expect(document.activeElement).toBe(sheet);
+    expect(sheet.getAttribute('aria-modal')).toBe('true');
+    expect(sheet.hasAttribute('inert')).toBe(false);
+    expect(header.hasAttribute('inert')).toBe(true);
+    expect(board.hasAttribute('inert')).toBe(true);
+    expect(badge.hasAttribute('inert')).toBe(true);
 
     close.focus();
     document.dispatchEvent(
@@ -271,6 +281,39 @@ describe('checkouts App', () => {
     );
     await nextTick();
     expect(document.activeElement).toBe(badge);
+    expect(sheet.hasAttribute('inert')).toBe(true);
+    expect(header.hasAttribute('inert')).toBe(false);
+    expect(board.hasAttribute('inert')).toBe(false);
+    expect(badge.hasAttribute('inert')).toBe(false);
+
+    app.unmount();
+  });
+
+  it('focuses a visible fallback when the opener badge is hidden on close', async () => {
+    installFetch(() => [child({ planning_center_id: 'only-overdue' })]);
+
+    const app = mountApp();
+    await flush();
+
+    const badge = document.getElementById('overdue-badge');
+    badge.focus();
+    badge.click();
+    await nextTick();
+
+    document
+      .querySelector('#overdue-sheet-list input.child-confirmed-checkbox')
+      .click();
+    await flush();
+
+    expect(badge.classList.contains('hidden')).toBe(true);
+
+    document.getElementById('overdue-sheet-close').click();
+    await nextTick();
+
+    expect(document.activeElement).not.toBe(document.body);
+    expect(document.activeElement).toBe(
+      document.getElementById('search-toggle-button')
+    );
 
     app.unmount();
   });

@@ -42,6 +42,31 @@ afterEach(() => {
 });
 
 describe('SearchPanel', () => {
+  it('removes collapsed controls from the tab order and accessibility tree', async () => {
+    const { app, container, open } = mountPanel();
+    const controls = container.querySelector('#search-controls');
+
+    expect(controls.hasAttribute('inert')).toBe(true);
+    expect(controls.getAttribute('aria-hidden')).toBe('true');
+
+    open.value = true;
+    await nextTick();
+
+    expect(controls.hasAttribute('inert')).toBe(false);
+    expect(controls.getAttribute('aria-hidden')).toBe('false');
+    expect(document.activeElement).toBe(
+      container.querySelector('#search-input')
+    );
+
+    open.value = false;
+    await nextTick();
+
+    expect(controls.hasAttribute('inert')).toBe(true);
+    expect(controls.getAttribute('aria-hidden')).toBe('true');
+
+    app.unmount();
+  });
+
   it('re-measures the expanded panel when location groups arrive late', async () => {
     const { app, container, open, groupsLoaded, groups } = mountPanel();
     const controls = container.querySelector('#search-controls');

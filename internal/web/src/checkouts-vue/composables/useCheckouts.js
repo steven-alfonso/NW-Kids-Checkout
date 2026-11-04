@@ -36,6 +36,43 @@ const SHEET_FOCUSABLE_SELECTOR = [
   '[tabindex]:not([tabindex="-1"])'
 ].join(',');
 
+const SHEET_FOCUS_FALLBACKS = [
+  '#search-toggle-button',
+  '#children-list input[type="checkbox"]:not([disabled])'
+];
+
+function isVisibleFocusTarget(element) {
+  if (!element || element === document.body) return false;
+  if (!element.isConnected || typeof element.focus !== 'function') {
+    return false;
+  }
+  if (element.closest('[inert]')) return false;
+
+  // Walk the ancestor chain: an ancestor's display:none hides the target even
+  // when the target's own computed display is not "none".
+  for (
+    let node = element;
+    node && node.nodeType === 1;
+    node = node.parentElement
+  ) {
+    const style = window.getComputedStyle(node);
+    if (style.display === 'none' || style.visibility === 'hidden') {
+      return false;
+    }
+  }
+  return true;
+}
+
+function setPageHeaderInert(inert) {
+  const header = document.querySelector('header');
+  if (!header) return;
+  if (inert) {
+    header.setAttribute('inert', '');
+  } else {
+    header.removeAttribute('inert');
+  }
+}
+
 function sameChildFields(a, b) {
   const keys = Object.keys(a);
   if (keys.length !== Object.keys(b).length) return false;
@@ -650,6 +687,26 @@ export function useCheckouts() {
     unlockBodyScroll();
   }
 
+  function restoreSheetFocus() {
+    const returnFocus = sheetReturnFocus;
+    sheetReturnFocus = null;
+
+    if (isVisibleFocusTarget(returnFocus)) {
+      returnFocus.focus({ preventScroll: true });
+      return;
+    }
+
+    // Confirming the last overdue row hides the badge that opened the sheet;
+    // focus() on a display:none element is a no-op that drops focus to body.
+    for (const selector of SHEET_FOCUS_FALLBACKS) {
+      const fallback = document.querySelector(selector);
+      if (isVisibleFocusTarget(fallback)) {
+        fallback.focus({ preventScroll: true });
+        return;
+      }
+    }
+  }
+
   function refreshSheet() {
     if (!sheetOpen.value || pollFailed.value) return;
 
@@ -803,20 +860,13 @@ export function useCheckouts() {
       if (!sheet) return;
 
       if (open) {
+        setPageHeaderInert(true);
         syncSheetViewport();
         sheet.focus({ preventScroll: true });
       } else {
         sheet.style.bottom = '';
-        const returnFocus = sheetReturnFocus;
-        sheetReturnFocus = null;
-        if (
-          returnFocus &&
-          returnFocus !== document.body &&
-          returnFocus.isConnected &&
-          typeof returnFocus.focus === 'function'
-        ) {
-          returnFocus.focus({ preventScroll: true });
-        }
+        setPageHeaderInert(false);
+        restoreSheetFocus();
       }
     },
     { flush: 'post' }
@@ -862,6 +912,7 @@ export function useCheckouts() {
         onVisualViewportResize
       );
     }
+    setPageHeaderInert(false);
     unlockBodyScroll();
   });
 

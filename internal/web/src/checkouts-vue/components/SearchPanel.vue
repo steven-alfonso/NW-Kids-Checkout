@@ -87,6 +87,8 @@ onBeforeUnmount(() => window.removeEventListener('resize', onResize));
     ref="controlsEl"
     class="w-full max-w-md md:flex-1 md:max-w-2xl"
     :class="{ 'is-expanded': open }"
+    :inert="open ? null : true"
+    :aria-hidden="open ? 'false' : 'true'"
   >
     <div class="overflow-hidden search-controls-panel pb-2 md:pt-4">
       <div

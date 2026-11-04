@@ -1,5 +1,10 @@
 import { test, expect } from '@playwright/test';
-import { BASE_TIME, defaultChildren } from '../conformance/fixtures.js';
+import {
+  BASE_TIME,
+  defaultChildren,
+  makeChild,
+  minutesAgo
+} from '../conformance/fixtures.js';
 import { createState, installFakeApi } from '../conformance/fake-api.js';
 
 async function openBoard(page, testInfo, { state = createState(), query = '' } = {}) {
@@ -30,6 +35,126 @@ test('locks and restores body scroll while the overdue sheet is open', async ({
   expect(await page.evaluate(() => getComputedStyle(document.body).position)).not.toBe(
     'fixed'
   );
+});
+
+test('inerts the sheet background while open and restores it on close', async ({
+  page
+}, testInfo) => {
+  await openBoard(page, testInfo);
+  const badge = page.locator('#overdue-badge');
+  await badge.click();
+  await expect(page.locator('#overdue-sheet')).toHaveAttribute(
+    'aria-hidden',
+    'false'
+  );
+
+  const readInert = () =>
+    page.evaluate(() => ({
+      header: document.querySelector('header').hasAttribute('inert'),
+      board: document
+        .getElementById('children-list')
+        .parentElement.hasAttribute('inert'),
+      badge: document.getElementById('overdue-badge').hasAttribute('inert'),
+      sheet: document.getElementById('overdue-sheet').hasAttribute('inert')
+    }));
+
+  expect(await readInert()).toEqual({
+    header: true,
+    board: true,
+    badge: true,
+    sheet: false
+  });
+
+  // The sheet and its controls must stay interactive while the background
+  // behind it is inert.
+  await page.locator('#overdue-sheet-close').focus();
+  expect(await page.evaluate(() => document.activeElement?.id)).toBe(
+    'overdue-sheet-close'
+  );
+  await page.locator('#overdue-sheet-close').click();
+  await expect(page.locator('#overdue-sheet')).toHaveAttribute(
+    'aria-hidden',
+    'true'
+  );
+  await expect(badge).toBeFocused();
+
+  expect(await readInert()).toEqual({
+    header: false,
+    board: false,
+    badge: false,
+    sheet: true
+  });
+});
+
+test('removes collapsed search controls from the tab order', async ({
+  page
+}, testInfo) => {
+  await openBoard(page, testInfo);
+  const controls = page.locator('#search-controls');
+  const input = page.locator('#search-input');
+  const toggle = page.locator('#search-toggle-button');
+
+  await expect(controls).toHaveAttribute('inert', '');
+  await expect(controls).toHaveAttribute('aria-hidden', 'true');
+  await expect(input).toBeHidden();
+
+  await toggle.focus();
+  await page.keyboard.press('Tab');
+  expect(
+    await page.evaluate(() =>
+      document
+        .getElementById('search-controls')
+        .contains(document.activeElement)
+    )
+  ).toBe(false);
+
+  await toggle.click();
+  await expect(controls).not.toHaveAttribute('inert', '');
+  await expect(controls).toHaveAttribute('aria-hidden', 'false');
+  await expect(input).toBeVisible();
+  await expect(input).toBeFocused();
+
+  await page.keyboard.press('Tab');
+  expect(await page.evaluate(() => document.activeElement?.id)).toBe(
+    'hide-confirmed-toggle'
+  );
+
+  await toggle.click();
+  await expect(controls).toHaveAttribute('inert', '');
+  await expect(controls).toHaveAttribute('aria-hidden', 'true');
+  await expect(input).toBeHidden();
+});
+
+test('focuses a visible fallback when the opener badge is hidden on close', async ({
+  page
+}, testInfo) => {
+  const state = createState({
+    children: [
+      makeChild({
+        planning_center_id: 'only-overdue',
+        checked_out_at: minutesAgo(6)
+      })
+    ]
+  });
+  await openBoard(page, testInfo, { state });
+
+  const badge = page.locator('#overdue-badge');
+  await expect(badge).toBeVisible();
+  await badge.click();
+  await expect(page.locator('#overdue-sheet')).toHaveAttribute(
+    'aria-hidden',
+    'false'
+  );
+
+  await page.locator('#overdue-sheet-list [data-confirmed-label]').click();
+  await expect(badge).toBeHidden();
+
+  await page.locator('#overdue-sheet-close').click();
+  await expect(page.locator('#overdue-sheet')).toHaveAttribute(
+    'aria-hidden',
+    'true'
+  );
+  await expect(page.locator('#search-toggle-button')).toBeFocused();
 });
 
 test('keeps drawer rows through the close transition and refreshes on reopen', async ({

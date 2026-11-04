@@ -90,6 +90,7 @@ function childIdFor(child) {
 
   <div
     class="relative z-10 min-h-screen flex flex-col box-border lg:h-screen lg:pt-28 pb-20"
+    :inert="sheetOpen ? true : null"
   >
     <div
       class="relative z-10 flex flex-col items-center gap-2 px-4 md:flex-row md:justify-center md:gap-3"
@@ -150,6 +151,7 @@ function childIdFor(child) {
     class="fixed bottom-4 left-1/2 -translate-x-1/2 z-30 rounded-full bg-red-600 text-white px-5 py-2.5 text-sm font-bold shadow-[0_4px_12px_rgba(0,0,0,0.3)] hover:bg-red-700 active:bg-red-700 transition-colors cursor-pointer whitespace-nowrap w-max"
     :class="{ hidden: badgeHidden, 'overdue-badge-jiggle': badgeJiggling }"
     :aria-label="badgeAriaLabel"
+    :inert="sheetOpen ? true : null"
     @click="openSheet"
   >
     {{ badgeText }}
@@ -173,7 +175,7 @@ function childIdFor(child) {
     aria-modal="true"
     aria-label="Overdue checkouts"
     tabindex="-1"
-    :inert="!sheetOpen"
+    :inert="sheetOpen ? null : true"
   >
     <div
       class="flex items-center justify-between gap-2 px-4 pt-3 pb-2 shrink-0"
