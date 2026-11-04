@@ -7,6 +7,7 @@ import vue from '@vitejs/plugin-vue';
 // needed in the Docker image. `emptyOutDir` keeps a deleted source module from
 // lingering in the shipped directory.
 export default defineConfig({
+  base: '/static/dist/vue/',
   plugins: [vue()],
   resolve: {
     alias: {
@@ -23,6 +24,7 @@ export default defineConfig({
     emptyOutDir: true,
     cssCodeSplit: false,
     minify: 'oxc',
+    license: { fileName: 'THIRD_PARTY_NOTICES.md' },
     target: 'es2020',
     rollupOptions: {
       input: fileURLToPath(
@@ -31,8 +33,7 @@ export default defineConfig({
       output: {
         entryFileNames: 'checkouts.js',
         chunkFileNames: 'checkouts-[name].js',
-        assetFileNames: 'checkouts[extname]',
-        inlineDynamicImports: true
+        assetFileNames: 'checkouts[extname]'
       }
     }
   }

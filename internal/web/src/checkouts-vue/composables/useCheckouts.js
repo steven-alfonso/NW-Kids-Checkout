@@ -70,6 +70,7 @@ export function useCheckouts() {
 
   let activeController = null;
   let previewBlocked = false;
+  let previewHandler = null;
   let knownChildIds = new Set();
   let lastFetchParams = null;
   let flashTimer = null;
@@ -447,6 +448,11 @@ export function useCheckouts() {
       console.error('Error fetching children data:', error);
       pollFailed.value = true;
       children.value = [];
+      // Match vanilla: a failed poll hides the overdue badge rather than
+      // leaving a stale count that opens an empty sheet. An already-open sheet
+      // still retains its rows because refreshSheet exits on pollFailed.
+      badgeCount.value = 0;
+      badgeJiggling.value = false;
       await nextTick();
       if (childrenList.value) childrenList.value.scrollTop = 0;
     } finally {
@@ -739,12 +745,12 @@ export function useCheckouts() {
       );
     }
 
+    previewHandler = (event) => loadPreviewData(event.detail);
+    window.addEventListener('checkouts-preview', previewHandler);
+
     callKebabMenuInitializer();
     sheetEl.value?.setAttribute('inert', '');
     nextTick(() => syncSheetViewport({ lift: false }));
-    if (typeof window !== 'undefined') {
-      window.__checkoutsPreview = { loadPreviewData };
-    }
   });
 
   onBeforeUnmount(() => {
@@ -755,6 +761,10 @@ export function useCheckouts() {
     if (jiggleTimer) clearTimeout(jiggleTimer);
     document.removeEventListener('keydown', onKeydown);
     window.removeEventListener('resize', onResize);
+    if (previewHandler) {
+      window.removeEventListener('checkouts-preview', previewHandler);
+      previewHandler = null;
+    }
     if (window.visualViewport) {
       window.visualViewport.removeEventListener(
         'resize',

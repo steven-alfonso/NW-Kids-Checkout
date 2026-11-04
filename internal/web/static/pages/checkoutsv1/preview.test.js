@@ -14,21 +14,21 @@ function loadWindow() {
         runScripts: 'dangerously',
         url: 'http://localhost/'
     });
-    const calls = [];
-    dom.window.__checkoutsPreview = {
-        loadPreviewData: (children) => calls.push(children)
-    };
+    const events = [];
+    dom.window.addEventListener('checkouts-preview', (event) => {
+        events.push(event.detail);
+    });
     dom.window.eval(previewScript);
-    return { window: dom.window, calls };
+    return { window: dom.window, events };
 }
 
 describe('checkoutsv1/preview', () => {
-    it('hands the demo checkouts to the page preview handle', () => {
-        const { window, calls } = loadWindow();
+    it('dispatches the demo checkouts for the page', () => {
+        const { window, events } = loadWindow();
         window.loadPreviewData();
 
-        expect(calls).toHaveLength(1);
-        const data = calls[0];
+        expect(events).toHaveLength(1);
+        const data = events[0];
         expect(data).toHaveLength(10);
         expect(data.map((child) => child.source)).toEqual([
             'planning_center',
@@ -50,9 +50,9 @@ describe('checkoutsv1/preview', () => {
     });
 
     it('seeds location_group_id for the preview rows', () => {
-        const { window, calls } = loadWindow();
+        const { window, events } = loadWindow();
         window.loadPreviewData();
-        expect(calls[0].map((child) => child.location_group_id)).toEqual([
+        expect(events[0].map((child) => child.location_group_id)).toEqual([
             1,
             2,
             2,
@@ -64,19 +64,5 @@ describe('checkoutsv1/preview', () => {
             null,
             null
         ]);
-    });
-
-    it('warns and does nothing before the page publishes a preview handle', () => {
-        const dom = new JSDOM('<!doctype html><html><body></body></html>', {
-            runScripts: 'dangerously',
-            url: 'http://localhost/'
-        });
-        const warnings = [];
-        dom.window.console.warn = (message) => warnings.push(message);
-        dom.window.eval(previewScript);
-
-        dom.window.loadPreviewData();
-
-        expect(warnings).toHaveLength(1);
     });
 });

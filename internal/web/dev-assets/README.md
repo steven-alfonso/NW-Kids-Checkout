@@ -61,14 +61,11 @@ Usage: open the checkouts page in dev, then run this in the browser console:
 loadPreviewData()
 ```
 
-It:
-
-- blocks the 3-second auto-refresh from overwriting the demo data (the page's
-  `window.__checkoutsPreview.loadPreviewData` handle sets its preview flag),
-- seeds four checkouts: green (0 min), a yellow step at 3.9 min, a red step
-  at 7.9 min (both step to the next color within ~1s so the `duration-1000`
-  transition is visible), and a confirmed one (gray),
-- re-renders the list.
+The page owns its reactive store, so `preview.js` builds the ten demo rows and
+dispatches them as a `checkouts-preview` custom event. The page listens for that
+event, blocks the 3-second refresh, and renders the rows. The demo fixture lives
+only in this dev-only script; production does not expose a preview handle or
+ship the rows.
 
 Refresh the page to restore real data.
 

@@ -120,8 +120,8 @@ jobs:
       - uses: actions/checkout@v7
 
       # Neither Dockerfile installs Node, so the frontend suite is the only
-      # thing pinning a Node version and package.json declares no engines field.
-      # 22 is the current LTS line.
+      # thing pinning a Node version. package.json declares the Vite engine
+      # range; 22 is the current LTS line and satisfies it.
       - uses: actions/setup-node@v7
         with:
           node-version: "22"
@@ -158,14 +158,15 @@ jobs:
 
       # The checkouts page ships a committed Vite bundle. Docker has no Node
       # stage, so a stale dist would ship old code with no build error. Rebuild
-      # and fail on any diff, the same way the Tailwind check above works.
+      # and fail on any changed or untracked output, the same way the Tailwind
+      # check above works.
       - name: Verify checkouts bundle is current
         run: |
           npm run build:checkouts-vue > /dev/null
-          if ! git diff --quiet -- internal/web/static/dist/vue; then
+          if [ -n "$(git status --porcelain -- internal/web/static/dist/vue)" ]; then
             echo "::error::internal/web/static/dist/vue is stale"
             echo "Run: npm run build:checkouts-vue from a clean tree."
-            git diff --stat -- internal/web/static/dist/vue
+            git status --short -- internal/web/static/dist/vue
             exit 1
           fi
 

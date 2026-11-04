@@ -17,13 +17,6 @@ export const PAUL_TOL_MUTED = [
   '#AA4499'
 ];
 
-export const PILL_BG_CLASSES = [
-  'bg-gray-400',
-  'bg-green-500',
-  'bg-yellow-500',
-  'bg-red-500'
-];
-
 export function getChildId(child) {
   if (!child) return '';
   if (child.source === 'manual') {

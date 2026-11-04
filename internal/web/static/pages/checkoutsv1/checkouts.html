@@ -189,13 +189,18 @@
 
         <div
             class="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 text-4xl md:text-6xl font-bold text-gray-800">
-            <span id="current-time"></span>
+            <span id="current-time">14:30</span>
         </div>
 
         <div class="hidden lg:block w-16 md:w-24"></div>
 
         <div class="absolute top-6 right-6 flex items-center gap-2">
-            <div id="search-toggle-slot"></div>
+            <div id="search-toggle-slot">
+                <button id="search-toggle-button" type="button" disabled aria-label="Toggle search"
+                    class="cursor-not-allowed rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-400 shadow-sm">
+                    Search
+                </button>
+            </div>
 
             <div class="relative z-50">
                 <button id="menu-button" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="kebab-menu" class="inline-flex h-11 w-11 cursor-pointer items-center justify-center rounded-full border border-slate-200 bg-white text-slate-700 shadow-sm transition hover:border-slate-300 hover:text-slate-900">
@@ -214,7 +219,16 @@
     </header>
 
     <!-- Vue app: main content, overdue badge, and overdue sheet -->
-    <div id="app"></div>
+    <div id="app">
+        <noscript>
+            <div class="text-center text-gray-600 py-8">
+                This page requires JavaScript.
+            </div>
+        </noscript>
+        <div class="text-center text-gray-500 py-8">
+            Loading checkouts…
+        </div>
+    </div>
 
     <script src="/static/js/kebab-menu.js?v=dev"></script>
     <script type="module" src="/static/dist/vue/checkouts.js?v=dev"></script>
