@@ -22,7 +22,7 @@ export default defineConfig({
     outDir: 'internal/web/static/dist/vue',
     emptyOutDir: true,
     cssCodeSplit: false,
-    minify: 'esbuild',
+    minify: 'oxc',
     target: 'es2020',
     rollupOptions: {
       input: fileURLToPath(
