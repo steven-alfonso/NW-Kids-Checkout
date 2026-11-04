@@ -59,9 +59,22 @@ function animate(expanded) {
 
 watch(() => props.open, animate, { flush: 'post' });
 
-function onResize() {
+function resizeToContent() {
   if (!props.open || !controlsEl.value) return;
   controlsEl.value.style.height = `${controlsEl.value.scrollHeight}px`;
+}
+
+// Location groups can arrive after the panel is already expanded (the board
+// loads them in parallel with checkouts). Re-measure the fixed pixel height so
+// the new filter rows are not clipped by the panel's overflow-hidden wrapper.
+watch(
+  [() => props.groupsLoaded, () => props.groups],
+  resizeToContent,
+  { flush: 'post' }
+);
+
+function onResize() {
+  resizeToContent();
 }
 
 onMounted(() => window.addEventListener('resize', onResize));

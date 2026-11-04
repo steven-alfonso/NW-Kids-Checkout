@@ -61,6 +61,34 @@ test('keeps drawer rows through the close transition and refreshes on reopen', a
   await expect(page.locator('#overdue-sheet-list')).toContainText('Late Kid');
 });
 
+test('shows only the no-JS message when scripting is disabled', async ({
+  browser
+}, testInfo) => {
+  const context = await browser.newContext({
+    javaScriptEnabled: false,
+    baseURL: testInfo.project.use.baseURL
+  });
+  const page = await context.newPage();
+  await page.goto(testInfo.project.metadata.pagePath);
+
+  // Locator visibility relies on page scripting; read the computed state
+  // through the test harness instead so this works with JS disabled.
+  const state = await page.evaluate(() => {
+    const message = document.querySelector('noscript div');
+    const loading = document.getElementById('checkouts-loading');
+    return {
+      message: message?.textContent.trim(),
+      messageHeight: message?.getBoundingClientRect().height ?? 0,
+      loadingDisplay: loading ? getComputedStyle(loading).display : null
+    };
+  });
+  expect(state.message).toBe('This page requires JavaScript.');
+  expect(state.messageHeight).toBeGreaterThan(0);
+  expect(state.loadingDisplay).toBe('none');
+
+  await context.close();
+});
+
 test('moves the server-rendered menu into the kebab menu exactly once', async ({
   page
 }, testInfo) => {
