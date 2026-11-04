@@ -214,7 +214,6 @@ export function App() {
   const [drawerCount, setDrawerCount] = useState(0);
 
   const listRef = useRef(null);
-  const listScrollTop = useRef(0);
   const searchControlsRef = useRef(null);
   const searchInputRef = useRef(null);
   const groupContainerRef = useRef(null);
@@ -716,12 +715,10 @@ export function App() {
     if (!list) return;
     if (listError) {
       list.scrollTop = 0;
-      listScrollTop.current = 0;
       return;
     }
     const maxScrollTop = Math.max(0, list.scrollHeight - list.clientHeight);
-    const nextScrollTop = Math.min(listScrollTop.current, maxScrollTop);
-    if (list.scrollTop !== nextScrollTop) list.scrollTop = nextScrollTop;
+    if (list.scrollTop > maxScrollTop) list.scrollTop = maxScrollTop;
   }, [children, searchText, hideConfirmed, selection, listError]);
 
   useLayoutEffect(() => {
@@ -917,9 +914,6 @@ export function App() {
         <div
           id="children-list"
           ref={listRef}
-          onScroll={(event) => {
-            listScrollTop.current = event.currentTarget.scrollTop;
-          }}
           style={{ overflowAnchor: 'none' }}
           class="grid grid-cols-1 gap-3 px-4 py-4 md:grid-cols-2 lg:flex-1 lg:min-h-0 lg:overflow-y-auto lg:content-start lg:grid-cols-3"
         >
