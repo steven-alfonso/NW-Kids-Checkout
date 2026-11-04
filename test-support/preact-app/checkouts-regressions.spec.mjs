@@ -200,6 +200,45 @@ test('re-measures the expanded search when location groups arrive late', async (
     .toBe(true);
 });
 
+test('removes collapsed search controls from the tab order and accessibility tree', async ({
+  page
+}, testInfo) => {
+  await openBoard(page, testInfo);
+  const controls = page.locator('#search-controls');
+  const input = page.locator('#search-input');
+  const toggle = page.locator('#search-toggle-button');
+
+  await expect(controls).toHaveAttribute('inert', '');
+  await expect(controls).toHaveAttribute('aria-hidden', 'true');
+  await expect(input).toBeHidden();
+
+  await toggle.focus();
+  await page.keyboard.press('Tab');
+  expect(
+    await page.evaluate(() =>
+      document
+        .getElementById('search-controls')
+        .contains(document.activeElement)
+    )
+  ).toBe(false);
+
+  await toggle.click();
+  await expect(controls).not.toHaveAttribute('inert', '');
+  await expect(controls).toHaveAttribute('aria-hidden', 'false');
+  await expect(input).toBeVisible();
+  await expect(input).toBeFocused();
+
+  await page.keyboard.press('Tab');
+  expect(await page.evaluate(() => document.activeElement?.id)).toBe(
+    'hide-confirmed-toggle'
+  );
+
+  await toggle.click();
+  await expect(controls).toHaveAttribute('inert', '');
+  await expect(controls).toHaveAttribute('aria-hidden', 'true');
+  await expect(input).toBeHidden();
+});
+
 test('restores the body scroll position after closing the sheet', async ({
   page
 }, testInfo) => {

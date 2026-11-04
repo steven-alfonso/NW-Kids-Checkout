@@ -120,8 +120,9 @@ jobs:
       - uses: actions/checkout@v7
 
       # Neither Dockerfile installs Node, so the frontend suite is the only
-      # thing pinning a Node version. package.json declares the Vite engine
-      # range; 22 is the current LTS line and satisfies it.
+      # thing pinning a Node version. jsdom 30 declares the narrowest toolchain
+      # range; package.json mirrors it, and 22 is the current LTS line and
+      # satisfies it.
       - uses: actions/setup-node@v7
         with:
           node-version: "22"

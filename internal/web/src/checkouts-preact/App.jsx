@@ -988,6 +988,8 @@ export function App() {
             id="search-controls"
             ref={searchControlsRef}
             class={`w-full max-w-md md:flex-1 md:max-w-2xl${searchExpanded ? ' is-expanded' : ''}`}
+            inert={!searchExpanded}
+            aria-hidden={!searchExpanded}
           >
             <div class="overflow-hidden search-controls-panel pb-2 md:pt-4">
               <div class="flex flex-col items-center gap-2 md:flex-row md:items-center md:gap-3">

@@ -12,6 +12,8 @@ Covered here:
 - new-child flash lifecycle (`child-card-flash` for four seconds)
 - badge jiggle when the overdue count rises
 - expanded-search height re-measure when location groups arrive late
+- collapsed search controls leave the tab order and accessibility tree, and
+  return when expanded
 - body scroll-position restoration after closing the sheet
 - a poll held open past the next 3s interval is not aborted
 
