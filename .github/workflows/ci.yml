@@ -133,6 +133,20 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # The Svelte bundle is committed so the Docker build needs no Node stage.
+      # Rebuild it here and fail if the source tree and artifact disagree.
+      - name: Build the checkouts bundle
+        run: npm run build:checkouts-svelte
+
+      - name: Verify the checkouts bundle is current
+        run: |
+          if ! git diff --quiet -- internal/web/static/dist/svelte; then
+            echo "::error::internal/web/static/dist/svelte is stale"
+            echo "Run: npm run build:checkouts-svelte from a clean tree."
+            git diff --stat -- internal/web/static/dist/svelte
+            exit 1
+          fi
+
       # The CSS that ships is the committed file: nothing in the Dockerfiles or
       # cmd/assets regenerates it, and no test reads it, so a page can gain
       # utility classes that are simply absent from production. That exact bug
@@ -173,6 +187,9 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Build the checkouts bundle
+        run: npm run build:checkouts-svelte
 
       - name: Install Chromium
         run: npx playwright install --with-deps chromium

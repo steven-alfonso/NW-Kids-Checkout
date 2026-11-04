@@ -42,6 +42,15 @@ This file guides coding agents working in this repo. Keep changes small, follow 
 - `package-lock.json` is committed so CI and local installs resolve the same
   Tailwind and Playwright versions.
 
+### Checkouts Svelte bundle
+- Source: `internal/web/src/checkouts-svelte/` (outside `static`, so it is not
+  embedded).
+- Build: `npm run build:checkouts-svelte` writes the single committed bundle
+  `internal/web/static/dist/svelte/checkouts.js`.
+- Watch: `npm run watch:checkouts-svelte`.
+- The built file is committed because the Docker build has no Node stage. CI
+  rebuilds it and fails if the committed output is stale.
+
 ### Lint/format
 - Lint: no dedicated lint config found.
 - Format: use `gofmt` (Go standard). Use `go fmt ./...` before committing when editing Go code.

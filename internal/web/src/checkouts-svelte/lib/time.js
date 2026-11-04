@@ -1,0 +1,43 @@
+export const OVERDUE_MINUTES = 5;
+export const CONFIRM_OVERRIDE_TTL_MS = 15000;
+
+const PILL_BG_CLASSES = ['bg-gray-400', 'bg-green-500', 'bg-yellow-500', 'bg-red-500'];
+
+export function getCheckedOutTimestamp(value) {
+    if (!value) return 0;
+    const parsed = Date.parse(value);
+    if (Number.isNaN(parsed)) return 0;
+    return parsed;
+}
+
+export function minutesAgoLabel(checkedOutAtMs, nowMs) {
+    if (!checkedOutAtMs) return '0 min ago';
+    const now = typeof nowMs === 'number' ? nowMs : Date.now();
+    const diffInMinutes = Math.max(0, Math.floor((now - checkedOutAtMs) / (1000 * 60)));
+    return `${diffInMinutes} min ago`;
+}
+
+export function timePillClass(checkedOutAtMs, confirmed, nowMs) {
+    if (confirmed) return PILL_BG_CLASSES[0];
+    if (!checkedOutAtMs) return PILL_BG_CLASSES[1];
+
+    const now = typeof nowMs === 'number' ? nowMs : Date.now();
+    const diffInMinutes = Math.max(0, (now - checkedOutAtMs) / (1000 * 60));
+
+    if (diffInMinutes >= 8) return PILL_BG_CLASSES[3];
+    if (diffInMinutes >= 4) return PILL_BG_CLASSES[2];
+    return PILL_BG_CLASSES[1];
+}
+
+export function formatClock(nowMs) {
+    return new Date(nowMs).toLocaleTimeString('en-US', {
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false
+    });
+}
+
+export function isOverdueAt(checkedOutAtMs, nowMs) {
+    if (!checkedOutAtMs) return false;
+    return nowMs - checkedOutAtMs >= OVERDUE_MINUTES * 60 * 1000;
+}
