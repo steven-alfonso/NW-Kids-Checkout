@@ -10,7 +10,9 @@
     "watch:css": "tailwindcss -i internal/web/tailwind.input.css -o internal/web/static/css/tailwind.css --watch",
     "build:checkouts-svelte": "vite build --config vite.config.mjs",
     "watch:checkouts-svelte": "vite build --config vite.config.mjs --watch",
-    "test:app": "playwright test --config playwright.app.config.mjs"
+    "test:app": "playwright test --config playwright.app.config.mjs",
+    "bench": "node benchmarks/checkouts-bench.mjs --name=svelte --bundle=internal/web/static/dist/svelte/checkouts.js",
+    "bench:cpu4": "node benchmarks/checkouts-bench.mjs --name=svelte-cpu4 --bundle=internal/web/static/dist/svelte/checkouts.js --cpu=4"
   },
   "keywords": [],
   "author": "",

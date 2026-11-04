@@ -1,0 +1,348 @@
+{
+  "name": "svelte",
+  "pagePath": "/static/pages/checkoutsv1/checkouts.html",
+  "environment": {
+    "node": "v24.16.0",
+    "platform": "darwin",
+    "arch": "arm64",
+    "viewport": {
+      "width": 1280,
+      "height": 720
+    },
+    "runs": 5,
+    "cpuThrottle": 1,
+    "note": "Local comparison only; static assets served from localhost."
+  },
+  "bundle": {
+    "path": "internal/web/static/dist/svelte/checkouts.js",
+    "bytes": 71873,
+    "gzipBytes": 25905
+  },
+  "initial7": {
+    "boardReady": {
+      "count": 5,
+      "min": 30.69,
+      "median": 34.98,
+      "p95": 36.19,
+      "max": 36.19,
+      "mean": 33.77,
+      "samples": [
+        34.98,
+        31.01,
+        36,
+        36.19,
+        30.69
+      ]
+    },
+    "firstPaint": {
+      "count": 5,
+      "min": 12,
+      "median": 12,
+      "p95": 16,
+      "max": 16,
+      "mean": 13.6,
+      "samples": [
+        16,
+        12,
+        12,
+        16,
+        12
+      ]
+    },
+    "fcp": {
+      "count": 5,
+      "min": 12,
+      "median": 12,
+      "p95": 16,
+      "max": 16,
+      "mean": 13.6,
+      "samples": [
+        16,
+        12,
+        12,
+        16,
+        12
+      ]
+    },
+    "lcp": {
+      "count": 0,
+      "min": null,
+      "median": null,
+      "p95": null,
+      "max": null,
+      "mean": null,
+      "samples": []
+    },
+    "domContentLoaded": {
+      "count": 5,
+      "min": 19.6,
+      "median": 19.7,
+      "p95": 22.6,
+      "max": 22.6,
+      "mean": 20.78,
+      "samples": [
+        22.3,
+        19.7,
+        19.6,
+        22.6,
+        19.7
+      ]
+    },
+    "load": {
+      "count": 5,
+      "min": 23,
+      "median": 25.8,
+      "p95": 28.9,
+      "max": 28.9,
+      "mean": 25.32,
+      "samples": [
+        25.9,
+        23,
+        25.8,
+        28.9,
+        23
+      ]
+    },
+    "samples": [
+      {
+        "boardReady": 34.97966600000001,
+        "firstPaint": 16,
+        "fcp": 16,
+        "lcp": null,
+        "domContentLoaded": 22.30000001192093,
+        "load": 25.899999976158142
+      },
+      {
+        "boardReady": 31.014999999999986,
+        "firstPaint": 12,
+        "fcp": 12,
+        "lcp": null,
+        "domContentLoaded": 19.700000047683716,
+        "load": 23
+      },
+      {
+        "boardReady": 35.998249999999985,
+        "firstPaint": 12,
+        "fcp": 12,
+        "lcp": null,
+        "domContentLoaded": 19.600000023841858,
+        "load": 25.80000001192093
+      },
+      {
+        "boardReady": 36.18733299999997,
+        "firstPaint": 16,
+        "fcp": 16,
+        "lcp": null,
+        "domContentLoaded": 22.600000023841858,
+        "load": 28.899999976158142
+      },
+      {
+        "boardReady": 30.69383300000004,
+        "firstPaint": 12,
+        "fcp": 12,
+        "lcp": null,
+        "domContentLoaded": 19.69999998807907,
+        "load": 23
+      }
+    ]
+  },
+  "initial100": {
+    "boardReady": {
+      "count": 3,
+      "min": 33.17,
+      "median": 33.59,
+      "p95": 36.59,
+      "max": 36.59,
+      "mean": 34.45,
+      "samples": [
+        33.17,
+        33.59,
+        36.59
+      ]
+    },
+    "firstPaint": {
+      "count": 3,
+      "min": 12,
+      "median": 12,
+      "p95": 12,
+      "max": 12,
+      "mean": 12,
+      "samples": [
+        12,
+        12,
+        12
+      ]
+    },
+    "fcp": {
+      "count": 3,
+      "min": 12,
+      "median": 12,
+      "p95": 12,
+      "max": 12,
+      "mean": 12,
+      "samples": [
+        12,
+        12,
+        12
+      ]
+    },
+    "lcp": {
+      "count": 0,
+      "min": null,
+      "median": null,
+      "p95": null,
+      "max": null,
+      "mean": null,
+      "samples": []
+    },
+    "domContentLoaded": {
+      "count": 3,
+      "min": 19.3,
+      "median": 19.8,
+      "p95": 19.8,
+      "max": 19.8,
+      "mean": 19.63,
+      "samples": [
+        19.3,
+        19.8,
+        19.8
+      ]
+    },
+    "load": {
+      "count": 3,
+      "min": 23.1,
+      "median": 23.6,
+      "p95": 29,
+      "max": 29,
+      "mean": 25.23,
+      "samples": [
+        23.1,
+        23.6,
+        29
+      ]
+    },
+    "samples": [
+      {
+        "boardReady": 33.16845799999999,
+        "firstPaint": 12,
+        "fcp": 12,
+        "lcp": null,
+        "domContentLoaded": 19.30000001192093,
+        "load": 23.100000023841858
+      },
+      {
+        "boardReady": 33.58620799999994,
+        "firstPaint": 12,
+        "fcp": 12,
+        "lcp": null,
+        "domContentLoaded": 19.80000001192093,
+        "load": 23.599999964237213
+      },
+      {
+        "boardReady": 36.58779199999992,
+        "firstPaint": 12,
+        "fcp": 12,
+        "lcp": null,
+        "domContentLoaded": 19.80000001192093,
+        "load": 29
+      }
+    ]
+  },
+  "poll7": {
+    "count": 5,
+    "min": 3.63,
+    "median": 16.3,
+    "p95": 17.6,
+    "max": 17.6,
+    "mean": 14.06,
+    "samples": [
+      3.63,
+      16.72,
+      17.6,
+      16.3,
+      16.03
+    ]
+  },
+  "poll100": {
+    "count": 3,
+    "min": 16.42,
+    "median": 16.96,
+    "p95": 18.98,
+    "max": 18.98,
+    "mean": 17.45,
+    "samples": [
+      18.98,
+      16.96,
+      16.42
+    ]
+  },
+  "tick100": {
+    "count": 5,
+    "min": 0.64,
+    "median": 1.21,
+    "p95": 4.68,
+    "max": 4.68,
+    "mean": 2.03,
+    "samples": [
+      0.91,
+      0.64,
+      1.21,
+      2.71,
+      4.68
+    ]
+  },
+  "interactions": {
+    "openSheet": {
+      "count": 3,
+      "min": 33.42,
+      "median": 33.72,
+      "p95": 34.9,
+      "max": 34.9,
+      "mean": 34.01,
+      "samples": [
+        33.42,
+        34.9,
+        33.72
+      ]
+    },
+    "closeSheet": {
+      "count": 3,
+      "min": 61.85,
+      "median": 64.91,
+      "p95": 66.94,
+      "max": 66.94,
+      "mean": 64.57,
+      "samples": [
+        61.85,
+        66.94,
+        64.91
+      ]
+    },
+    "search": {
+      "count": 3,
+      "min": 54.82,
+      "median": 56.29,
+      "p95": 56.44,
+      "max": 56.44,
+      "mean": 55.85,
+      "samples": [
+        56.29,
+        56.44,
+        54.82
+      ]
+    },
+    "confirm": {
+      "count": 3,
+      "min": 31.76,
+      "median": 32.06,
+      "p95": 117.35,
+      "max": 117.35,
+      "mean": 60.39,
+      "samples": [
+        117.35,
+        31.76,
+        32.06
+      ]
+    }
+  }
+}
