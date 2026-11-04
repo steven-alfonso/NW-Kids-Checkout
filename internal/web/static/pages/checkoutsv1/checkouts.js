@@ -493,6 +493,101 @@ function unlockBodyScroll() {
     }
 }
 
+// ---- modal dialog ----
+// role="dialog" is non-modal by default: it announces a dialog without promising
+// the rest of the page is off-limits. The main list's confirmation checkboxes are
+// sr-only but focusable, and their change handler PATCHes a child as picked up,
+// so without the mechanisms below a keyboard or screen-reader user could confirm
+// a child they never saw -- the same wrong-child harm the drawer guards against.
+const SHEET_FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+// The page's focusable background, minus the sheet and its backdrop. inert
+// removes all three from the tab ring and the accessibility tree in one go;
+// aria-hidden on the sheet only covers assistive tech.
+const SHEET_BACKGROUND_IDS = ['page-header', 'board-content', 'overdue-badge'];
+
+function setSheetBackgroundInert(isInert) {
+    SHEET_BACKGROUND_IDS.forEach((id) => {
+        const element = document.getElementById(id);
+        if (!element) return;
+        if (isInert) element.setAttribute('inert', '');
+        else element.removeAttribute('inert');
+    });
+}
+
+// Visually hidden is not "unreachable": the row checkboxes are sr-only and still
+// focusable, which is exactly the case this trap exists for. jsdom applies no
+// stylesheet, so visibility is read off the attributes this page actually uses
+// rather than from getComputedStyle.
+function isVisuallyHidden(element) {
+    return Boolean(element.closest('[hidden], [aria-hidden="true"]')) || element.classList.contains('hidden');
+}
+
+function getSheetFocusables() {
+    if (!dom.overdueSheet) return [];
+    return [...dom.overdueSheet.querySelectorAll(SHEET_FOCUSABLE)]
+        .filter((element) => !isVisuallyHidden(element) && element.tabIndex >= 0);
+}
+
+// Keeps the tab ring inside the sheet: what the keyboard's own Tab does in
+// supporting browsers, made explicit for the ones that do not implement inert.
+function trapSheetTab(event) {
+    if (!isOverdueSheetOpen || event.key !== 'Tab' || !dom.overdueSheet) return;
+    const focusable = getSheetFocusables();
+    if (focusable.length === 0) {
+        event.preventDefault();
+        dom.overdueSheet.focus({ preventScroll: true });
+        return;
+    }
+    // -1 means focus is on the sheet itself (tabindex="-1"), which sits outside
+    // the ring; treat it as the boundary in whichever direction was pressed.
+    const index = focusable.indexOf(event.target);
+    const atStart = index <= 0;
+    const atEnd = index === -1 || index === focusable.length - 1;
+    if (event.shiftKey && atStart) {
+        event.preventDefault();
+        focusable[focusable.length - 1].focus();
+    } else if (!event.shiftKey && atEnd) {
+        event.preventDefault();
+        focusable[0].focus();
+    }
+}
+
+// Catches the escapes Tab-wrapping cannot: a click, a programmatic focus, or a
+// screen reader moving its virtual cursor behind the dialog. Focus returns to the
+// sheet rather than a specific control, so the reader keeps their place.
+function containSheetFocus(event) {
+    if (!isOverdueSheetOpen || !dom.overdueSheet) return;
+    const target = event.target;
+    if (!target || target === dom.overdueSheet || dom.overdueSheet.contains(target)) return;
+    dom.overdueSheet.focus({ preventScroll: true });
+}
+
+// A focus restore must land on something a keyboard user can see and reach. The
+// page hides controls with the `hidden` utility class or the hidden attribute,
+// and inert is checked as well because the background carries it until close
+// clears it. Reading these attributes rather than layout also keeps the check
+// meaningful in jsdom, which has no layout engine.
+function isVisibleFocusTarget(element) {
+    return Boolean(
+        element &&
+        element !== document.body &&
+        element.isConnected &&
+        typeof element.focus === 'function' &&
+        !element.closest('[hidden], [inert]') &&
+        !element.classList.contains('hidden')
+    );
+}
+
+// Used when the opener has since been hidden -- notably the badge after the last
+// overdue child is confirmed. Prefer a visible header control over <body>, which
+// would drop the keyboard user at the top of the document with no context.
+function getSheetCloseFocusFallback() {
+    return ['search-toggle-button', 'menu-button']
+        .map((id) => document.getElementById(id))
+        .find(isVisibleFocusTarget) || null;
+}
+
 // Keep the drawer inside the *visual* viewport: on mobile browsers with
 // top/bottom chrome the layout viewport (which `bottom`/`height` resolve
 // against) is taller than what is on screen, so a drawer sized against it
@@ -543,6 +638,8 @@ function openOverdueSheet() {
     // focus, so leaving this set would silently strand focus on the opener.
     dom.overdueSheet.removeAttribute('inert');
     dom.overdueSheetBackdrop.classList.remove('hidden');
+    // The sheet itself is not in this set, so it stays focusable and operable.
+    setSheetBackgroundInert(true);
     lockBodyScroll();
     // preventScroll so focusing does not fight the body-scroll lock.
     dom.overdueSheet.focus({ preventScroll: true });
@@ -576,11 +673,20 @@ function closeOverdueSheet() {
     // Hand focus back to whatever opened the sheet. Skipped when there is
     // nothing worth restoring to, e.g. the badge auto-close path, and when the
     // opener has since left the document.
+    //
+    // Background inert must be gone before the focus call: an inert subtree
+    // cannot take focus, so clearing it afterwards would make the restore a
+    // no-op. The opener can also have been hidden by the final confirmation
+    // (the badge goes display:none with the last overdue child), in which case
+    // fall back to a visible header control rather than leaving focus on body.
+    setSheetBackgroundInert(false);
     const returnFocus = overdueSheetReturnFocus;
     overdueSheetReturnFocus = null;
-    if (returnFocus && returnFocus !== document.body && returnFocus.isConnected
-        && typeof returnFocus.focus === 'function') {
-        returnFocus.focus({ preventScroll: true });
+    if (wasOpen) {
+        const focusTarget = isVisibleFocusTarget(returnFocus)
+            ? returnFocus
+            : getSheetCloseFocusFallback();
+        if (focusTarget) focusTarget.focus({ preventScroll: true });
     }
     // Set after the focus restore above, never before: an inert subtree cannot
     // take focus, so marking it first would make that restore a no-op and
@@ -765,6 +871,15 @@ function pushURLFromSelection(idsSet, includeUnassigned) {
     fetchChildrenData();
 }
 
+// The panel animates through a fixed pixel height, so anything added after the
+// expand -- location groups load in parallel with the first checkouts poll --
+// would be clipped by overflow:hidden until the next resize.
+function resizeExpandedSearchControls() {
+    const controls = document.getElementById('search-controls');
+    if (!controls || !controls.classList.contains('is-expanded')) return;
+    controls.style.height = `${controls.scrollHeight}px`;
+}
+
 function renderLocationGroupSettings(groups) {
     const container = document.getElementById('location-group-checkboxes');
     if (!container) return;
@@ -779,6 +894,7 @@ function renderLocationGroupSettings(groups) {
     parts.push(`<label class="inline-flex items-center gap-1.5 text-sm cursor-pointer"><input type="checkbox" data-lg-id="unassigned" class="h-4 w-4 rounded border-slate-300 cursor-pointer"> <span style="background-color:${unassignedColor}" class="inline-block h-3 w-3 rounded-sm border border-black/10 shrink-0"></span> Unassigned</label>`);
     container.innerHTML = parts.join('');
     syncLocationGroupUIFromURL();
+    resizeExpandedSearchControls();
 }
 
 function syncLocationGroupUIFromURL() {
@@ -1194,7 +1310,13 @@ document.addEventListener('DOMContentLoaded', function () {
         if (event.key === 'Escape' && dom.overdueSheet && !dom.overdueSheet.classList.contains('translate-y-full')) {
             closeOverdueSheet();
         }
+        trapSheetTab(event);
     });
+    // focusin rather than focusout: it reports where focus actually landed, the
+    // only way to catch focus arriving behind the dialog by a route Tab does not
+    // govern. Both handlers no-op while the sheet is closed, so the board stays
+    // fully keyboard-navigable the rest of the time.
+    document.addEventListener('focusin', containSheetFocus);
 
     if (typeof window.initKebabMenu === "function") {
         window.initKebabMenu();
@@ -1235,10 +1357,22 @@ document.addEventListener('DOMContentLoaded', function () {
         function animateSearchControls(expanded) {
             searchControls.classList.toggle('is-expanded', expanded);
             if (expanded) {
+                // The collapsed panel is inert so its input, switch and group
+                // checkboxes stay out of the tab order. Clear that before the
+                // height animation, which ends with a focus() on the input.
+                searchControls.removeAttribute('inert');
+                searchControls.setAttribute('aria-hidden', 'false');
                 searchControls.style.height = '0px';
                 void searchControls.offsetHeight;
                 searchControls.style.height = `${searchControls.scrollHeight}px`;
             } else {
+                // Collapsing around a focused control would blur it to <body>
+                // once the ancestor goes inert; hand focus to the toggle first.
+                if (searchControls.contains(document.activeElement)) {
+                    searchToggleButton.focus({ preventScroll: true });
+                }
+                searchControls.setAttribute('inert', '');
+                searchControls.setAttribute('aria-hidden', 'true');
                 searchControls.style.height = `${searchControls.scrollHeight}px`;
                 void searchControls.offsetHeight;
                 searchControls.style.height = '0px';
@@ -1253,11 +1387,7 @@ document.addEventListener('DOMContentLoaded', function () {
                 searchInput?.focus();
             }
         });
-        window.addEventListener('resize', () => {
-            if (searchControls.classList.contains('is-expanded')) {
-                searchControls.style.height = `${searchControls.scrollHeight}px`;
-            }
-        });
+        window.addEventListener('resize', resizeExpandedSearchControls);
     }
 
     const locationGroupCheckboxes = document.getElementById('location-group-checkboxes');

@@ -437,6 +437,78 @@ describe('checkoutsv1/checkouts', () => {
         expect(controls.style.height).toBe('456px');
     });
 
+    it('keeps the collapsed search controls out of the tab order with inert and aria-hidden', () => {
+        const window = loadWindow({
+            html: `<!doctype html><html><body>
+                <button id="search-toggle-button" aria-expanded="false" aria-controls="search-controls"><svg data-search-toggle-icon></svg></button>
+                <div id="search-controls" inert aria-hidden="true">
+                    <input id="search-input" type="search">
+                    <input id="hide-confirmed-toggle" type="checkbox" role="switch">
+                </div>
+            </body></html>`
+        });
+        window.document.dispatchEvent(new window.Event('DOMContentLoaded'));
+        const toggle = window.document.getElementById('search-toggle-button');
+        const controls = window.document.getElementById('search-controls');
+        const input = window.document.getElementById('search-input');
+
+        // The shipped page starts collapsed, so the first paint must already be
+        // out of the tab ring -- height:0/opacity:0 hides it visually only.
+        expect(controls.hasAttribute('inert')).toBe(true);
+        expect(controls.getAttribute('aria-hidden')).toBe('true');
+
+        toggle.click();
+        expect(controls.hasAttribute('inert')).toBe(false);
+        expect(controls.getAttribute('aria-hidden')).toBe('false');
+        expect(window.document.activeElement).toBe(input);
+
+        toggle.click();
+        expect(controls.hasAttribute('inert')).toBe(true);
+        expect(controls.getAttribute('aria-hidden')).toBe('true');
+        // Collapsing around a focused control hands focus to the toggle rather
+        // than letting inert drop it on <body>.
+        expect(window.document.activeElement).toBe(toggle);
+    });
+
+    it('re-measures the expanded search controls when location groups arrive late', () => {
+        const window = loadWindow({
+            html: `<!doctype html><html><body>
+                <button id="search-toggle-button" aria-expanded="false" aria-controls="search-controls"><svg data-search-toggle-icon></svg></button>
+                <div id="search-controls">
+                    <div class="search-controls-panel">
+                        <input id="search-input" type="search">
+                        <div id="location-group-checkboxes"></div>
+                    </div>
+                </div>
+            </body></html>`
+        });
+        window.document.dispatchEvent(new window.Event('DOMContentLoaded'));
+        const toggle = window.document.getElementById('search-toggle-button');
+        const controls = window.document.getElementById('search-controls');
+
+        let scrollHeight = 120;
+        Object.defineProperty(controls, 'scrollHeight', {
+            configurable: true,
+            get: () => scrollHeight
+        });
+
+        toggle.click();
+        expect(controls.style.height).toBe('120px');
+
+        // The groups fetch runs in parallel with the checkouts fetch. If it
+        // lands after the expand, the new checkboxes must not stay clipped by
+        // the fixed pixel height measured before they existed.
+        scrollHeight = 240;
+        window.renderLocationGroupSettings([{ id: 1, name: 'Nursery' }]);
+        expect(controls.querySelectorAll('#location-group-checkboxes input').length).toBe(2);
+        expect(controls.style.height).toBe('240px');
+
+        toggle.click();
+        scrollHeight = 300;
+        window.renderLocationGroupSettings([{ id: 1, name: 'Nursery' }, { id: 2, name: 'Toddlers' }]);
+        expect(controls.style.height).toBe('0px');
+    });
+
     it('renders no-unconfirmed message when hiding confirmed empties the board', () => {
         const window = loadWindow();
         window.__test.setChildrenData([
@@ -1394,6 +1466,188 @@ describe('checkoutsv1/checkouts', () => {
             expect(w.document.activeElement).toBe(badge);
         });
 
+        // ---- the sheet is a modal dialog ----
+        // role="dialog" alone is non-modal by definition. Nothing stopped focus
+        // leaving the sheet, and the main list's .child-confirmed-checkbox
+        // inputs are sr-only-but-focusable, so a keyboard user could land on a
+        // real control behind the sheet and confirm a child they never saw.
+        describe('the sheet as a modal dialog', () => {
+            // Mirrors the shipped page: the list and close button live INSIDE
+            // #overdue-sheet, and the page has a header and board to inert.
+            function modalWindow() {
+                return loadWindow({
+                    html: `<!doctype html><html><body>
+                        <header id="page-header">
+                            <button id="search-toggle-button" type="button">Toggle search</button>
+                            <button id="menu-button" type="button">Menu</button>
+                        </header>
+                        <div id="board-content">
+                            <div id="children-list"></div>
+                            <button id="behind-control" type="button">Behind</button>
+                        </div>
+                        <button id="overdue-badge" class="hidden"></button>
+                        <div id="overdue-sheet-backdrop" class="hidden"></div>
+                        <div id="overdue-sheet" class="translate-y-full" role="dialog" aria-modal="true" tabindex="-1" inert>
+                            <button id="overdue-sheet-close" type="button" aria-label="Close overdue list">x</button>
+                            <div id="overdue-sheet-list"><div class="text-center py-6 text-sm text-slate-500">No overdue checkouts</div></div>
+                        </div>
+                    </body></html>`,
+                    fetchImpl: async () => ({ ok: true, json: async () => ({ checkins: [], manual_checkins: [] }) })
+                });
+            }
+
+            async function modalReady(children, nowMs = 1_700_000_000_000) {
+                const w = modalWindow();
+                w.document.dispatchEvent(new w.Event('DOMContentLoaded'));
+                await new Promise(r => setTimeout(r, 10));
+                freezeClock(w, nowMs);
+                w.__test.setChildrenData(children);
+                w.updateUI();
+                return w;
+            }
+
+            // jsdom implements neither Tab navigation nor inert behaviour, so
+            // the handler is driven directly and judged by where focus ended up
+            // and whether the handler claimed the event.
+            function pressTab(w, target, { shift = false } = {}) {
+                const event = new w.KeyboardEvent('keydown', {
+                    key: 'Tab', shiftKey: shift, bubbles: true, cancelable: true
+                });
+                target.dispatchEvent(event);
+                return event;
+            }
+
+            function sheetFocusables(w) {
+                const sheet = w.document.getElementById('overdue-sheet');
+                return [...sheet.querySelectorAll('button, input, [tabindex]')]
+                    .filter(el => el.tabIndex >= 0);
+            }
+
+            it('inerts the page behind the sheet but keeps the sheet operable', async () => {
+                const w = await modalReady([childAt('a', 6, 1_700_000_000_000)]);
+                const header = w.document.getElementById('page-header');
+                const board = w.document.getElementById('board-content');
+                const badge = w.document.getElementById('overdue-badge');
+                const sheet = w.document.getElementById('overdue-sheet');
+
+                w.openOverdueSheet();
+
+                // aria-modal alone does not stop a screen reader swiping to a
+                // main-list checkbox behind the sheet; inert removes the page
+                // from both the tab ring and the accessibility tree.
+                expect(header.hasAttribute('inert')).toBe(true);
+                expect(board.hasAttribute('inert')).toBe(true);
+                expect(badge.hasAttribute('inert')).toBe(true);
+                expect(sheet.hasAttribute('inert')).toBe(false);
+                expect(sheet.getAttribute('aria-modal')).toBe('true');
+
+                w.closeOverdueSheet();
+
+                // Leaking inert would brick the board after one dismissal.
+                expect(header.hasAttribute('inert')).toBe(false);
+                expect(board.hasAttribute('inert')).toBe(false);
+                expect(badge.hasAttribute('inert')).toBe(false);
+                expect(sheet.hasAttribute('inert')).toBe(true);
+            });
+
+            it('wraps Tab from the last control back to the first', async () => {
+                const w = await modalReady([childAt('a', 6, 1_700_000_000_000), childAt('b', 7, 1_700_000_000_000)]);
+                w.openOverdueSheet();
+                const focusable = sheetFocusables(w);
+                expect(focusable.length).toBeGreaterThan(1);
+
+                focusable[focusable.length - 1].focus();
+                const event = pressTab(w, focusable[focusable.length - 1]);
+
+                expect(event.defaultPrevented).toBe(true);
+                expect(w.document.activeElement === focusable[0]).toBe(true);
+            });
+
+            it('wraps Shift+Tab from the first control back to the last', async () => {
+                const w = await modalReady([childAt('a', 6, 1_700_000_000_000), childAt('b', 7, 1_700_000_000_000)]);
+                w.openOverdueSheet();
+                const focusable = sheetFocusables(w);
+
+                focusable[0].focus();
+                const event = pressTab(w, focusable[0], { shift: true });
+
+                expect(event.defaultPrevented).toBe(true);
+                expect(w.document.activeElement === focusable[focusable.length - 1]).toBe(true);
+            });
+
+            it('leaves an ordinary Tab to the browser', async () => {
+                const w = await modalReady([childAt('a', 6, 1_700_000_000_000), childAt('b', 7, 1_700_000_000_000)]);
+                w.openOverdueSheet();
+                const focusable = sheetFocusables(w);
+
+                // Mid-ring Tab is the browser's to perform. Claiming it without
+                // wrapping would strand the user on the first control.
+                const fromFirst = pressTab(w, focusable[0]);
+                expect(fromFirst.defaultPrevented).toBe(false);
+
+                focusable[1].focus();
+                const fromMiddle = pressTab(w, focusable[1]);
+                expect(fromMiddle.defaultPrevented).toBe(false);
+            });
+
+            it('pulls focus back when it lands behind the open sheet', async () => {
+                const w = await modalReady([childAt('a', 6, 1_700_000_000_000)]);
+                w.openOverdueSheet();
+                const sheet = w.document.getElementById('overdue-sheet');
+
+                // What a click, a programmatic focus, or assistive tech moving
+                // its virtual cursor can do without a Tab event.
+                w.document.getElementById('behind-control').focus();
+
+                expect(sheet.contains(w.document.activeElement)).toBe(true);
+            });
+
+            it('does not trap focus once the sheet is closed', async () => {
+                const w = await modalReady([childAt('a', 6, 1_700_000_000_000)]);
+                w.openOverdueSheet();
+                w.closeOverdueSheet();
+                const behind = w.document.getElementById('behind-control');
+
+                behind.focus();
+
+                expect(w.document.activeElement).toBe(behind);
+            });
+
+            it('restores focus to the search toggle when the opener badge was hidden', async () => {
+                const now0 = 1_700_000_000_000;
+                const w = await modalReady([childAt('a', 6, now0)], now0);
+                const badge = w.document.getElementById('overdue-badge');
+                const searchToggle = w.document.getElementById('search-toggle-button');
+                const header = w.document.getElementById('page-header');
+                expect(badge.classList.contains('hidden')).toBe(false);
+
+                badge.focus();
+                w.openOverdueSheet();
+                expect(w.document.activeElement).not.toBe(badge);
+
+                // Confirming the last overdue child hides the badge while the
+                // sheet stays open, so the opener is no longer a valid focus
+                // target by the time close runs.
+                w.__test.setChildrenData([
+                    childAt('a', 6, now0, { checked_out_confirmed_at: new Date(now0).toISOString() })
+                ]);
+                w.updateOverdueUI();
+                expect(badge.classList.contains('hidden')).toBe(true);
+
+                let headerInertAtFocus = null;
+                searchToggle.addEventListener('focus', () => {
+                    headerInertAtFocus = header.hasAttribute('inert');
+                });
+
+                w.closeOverdueSheet();
+
+                // Not <body>: the fallback keeps the keyboard user on a visible
+                // control, and background inert is gone before focus lands.
+                expect(w.document.activeElement).toBe(searchToggle);
+                expect(headerInertAtFocus).toBe(false);
+            });
+        });
+
         // ---- the drawer is a frozen snapshot ----
         // Three properties, together, make the list unable to move under the
         // reader: no row is ever inserted, the only removals are children aging
@@ -1968,5 +2222,54 @@ describe('checkoutsv1/checkouts', () => {
         expect(first).toEqual(['a', 'b']);
         await w.fetchChildrenData();
         expect(w.__test.getVisibleChildren().map((c) => c.planning_center_id)).toEqual(first);
+    });
+
+    describe('shipped checkouts page', () => {
+        function shippedPage() {
+            return fs.readFileSync(
+                path.resolve(process.cwd(), 'internal/web/static/pages/checkoutsv1/checkouts.html'),
+                'utf8'
+            );
+        }
+
+        it('shows a no-JS message and hides the loading row when scripting is disabled', () => {
+            // jsdom's scripting flag is off by default, which is exactly the
+            // no-JS state: <noscript> children are parsed as real elements.
+            const dom = new JSDOM(shippedPage());
+            const doc = dom.window.document;
+            const loading = doc.getElementById('checkouts-loading');
+
+            expect(loading).not.toBeNull();
+            expect(loading.textContent).toContain('Loading children data');
+
+            const noscript = doc.querySelector('noscript');
+            expect(noscript).not.toBeNull();
+            expect(noscript.textContent).toContain('This page requires JavaScript.');
+            const style = noscript.querySelector('style');
+            expect(style).not.toBeNull();
+            expect(style.textContent).toContain('#checkouts-loading');
+            expect(style.textContent).toContain('display: none');
+        });
+
+        it('ships the search panel collapsed, inert, and hidden from assistive tech', () => {
+            const dom = new JSDOM(shippedPage());
+            const controls = dom.window.document.getElementById('search-controls');
+
+            // height:0/opacity:0 is visual only; without inert the input,
+            // switch and group checkboxes stay in the tab order.
+            expect(controls).not.toBeNull();
+            expect(controls.hasAttribute('inert')).toBe(true);
+            expect(controls.getAttribute('aria-hidden')).toBe('true');
+        });
+
+        it('ships the overdue sheet as a modal dialog', () => {
+            const dom = new JSDOM(shippedPage());
+            const sheet = dom.window.document.getElementById('overdue-sheet');
+
+            expect(sheet).not.toBeNull();
+            expect(sheet.getAttribute('role')).toBe('dialog');
+            expect(sheet.getAttribute('aria-modal')).toBe('true');
+            expect(sheet.hasAttribute('inert')).toBe(true);
+        });
     });
 });
