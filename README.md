@@ -198,6 +198,12 @@ To run the test suite, use the `test` target:
 make test       # go test, then -tags dev, then npm test
 ```
 
+Run the app-level checkouts contract (body scroll lock, menu handoff, failed-poll badge, groups failure, dev preview):
+
+```sh
+npm run test:app
+```
+
 The checkouts page also has a browser-level conformance suite. It is
 deliberately black-box: it loads the real page, mocks the `/v1` API, and
 asserts only the DOM contract documented in
