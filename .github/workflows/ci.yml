@@ -120,8 +120,8 @@ jobs:
       - uses: actions/checkout@v7
 
       # Neither Dockerfile installs Node, so the frontend suite is the only
-      # thing pinning a Node version and package.json declares no engines field.
-      # 22 is the current LTS line.
+      # thing pinning a Node version. package.json declares the Vite engine
+      # range; 22 is the current LTS line and satisfies it.
       - uses: actions/setup-node@v7
         with:
           node-version: "22"
@@ -140,10 +140,12 @@ jobs:
 
       - name: Verify the checkouts bundle is current
         run: |
-          if ! git diff --quiet -- internal/web/static/dist/svelte; then
+          # git status, not git diff: it also catches untracked Vite output
+          # (for example a newly emitted CSS file).
+          if [ -n "$(git status --porcelain -- internal/web/static/dist/svelte)" ]; then
             echo "::error::internal/web/static/dist/svelte is stale"
             echo "Run: npm run build:checkouts-svelte from a clean tree."
-            git diff --stat -- internal/web/static/dist/svelte
+            git status --short -- internal/web/static/dist/svelte
             exit 1
           fi
 

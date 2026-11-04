@@ -15,6 +15,7 @@
 @source "static/pages/**/*.html";
 @source "static/pages/**/*.js";
 @source "src/checkouts-svelte";
+@source not "src/checkouts-svelte/lib/__tests__";
 @source not "static/pages/admin-guest-entries/admin-guest-entries.test.js";
 @source not "static/pages/admin/fetcher-status.test.js";
 @source not "static/pages/admin/location-groups.test.js";

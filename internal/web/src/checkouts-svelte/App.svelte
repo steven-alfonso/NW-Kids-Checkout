@@ -6,8 +6,7 @@
     import { normalizeCheckoutsResponse } from './lib/api.js';
     import { compareByCheckoutId, getChildId } from './lib/identity.js';
     import { getLocationGroupColor } from './lib/groups.js';
-    import { createPreviewChildren } from './lib/preview-data.js';
-    import { readSelection, selectionHasFilter } from './lib/selection.js';
+    import { readSelection, selectionHasFilter, allGroupsSelected } from './lib/selection.js';
     import {
         CONFIRM_OVERRIDE_TTL_MS,
         formatClock,
@@ -41,7 +40,6 @@
     let childrenListEl;
     let sheetEl;
     let backdropEl;
-    let badgeEl;
 
     const confirmingIds = new Set();
     let knownChildIds = new Set();
@@ -73,6 +71,9 @@
                     compareByCheckoutId(a, b)
             );
     });
+    // A failed poll clears childrenData, so this reaches zero immediately.
+    // Vanilla hid the badge on the next 1s tick instead; the difference is
+    // under one second and is not covered by the conformance contract.
     const overdueCount = $derived(liveOverdue.length);
 
     const visibleChildren = $derived.by(() => {
@@ -109,15 +110,9 @@
               : 'No children called yet'
     );
 
-    const everyGroupChecked = $derived.by(() => {
-        if (selection.isEmpty) return false;
-        if (!hasGroupFilter) return true;
-        if (locationGroups.length === 0) return false;
-        return (
-            selection.includeUnassigned &&
-            locationGroups.every((group) => selection.ids.has(Number(group.id)))
-        );
-    });
+    const everyGroupChecked = $derived(
+        allGroupsSelected(selection, locationGroups, groupsLoaded)
+    );
     const selectAllLabel = $derived(everyGroupChecked ? 'Deselect all' : 'Select all');
 
     function isGroupChecked(id) {
@@ -510,7 +505,19 @@
         if (event.key === 'Escape' && sheetOpen) closeSheet();
     }
 
-    function loadPreviewData() {
+    async function loadPreviewData() {
+        let createPreviewChildren;
+        try {
+            // A variable keeps Vite from trying to bundle this dev-only module.
+            const previewDataUrl = '/static/dev/preview-data.js';
+            ({ createPreviewChildren } = await import(
+                /* @vite-ignore */ previewDataUrl
+            ));
+        } catch (error) {
+            console.warn('Checkouts preview fixture is unavailable outside dev.', error);
+            return;
+        }
+
         previewBlocked = true;
         requestSeq += 1;
         if (fetchController) {
@@ -538,8 +545,12 @@
                 badgeJiggle = false;
             }, 1000);
             lastOverdueCount = count;
-            return () => clearTimeout(timer);
+            return () => {
+                clearTimeout(timer);
+                badgeJiggle = false;
+            };
         }
+        badgeJiggle = false;
         lastOverdueCount = count;
     });
 
@@ -830,7 +841,6 @@
 
 <!-- Overdue floating badge (phone-friendly, zero cost when no overdue) -->
 <button
-    bind:this={badgeEl}
     id="overdue-badge"
     type="button"
     class="fixed bottom-4 left-1/2 -translate-x-1/2 z-30 rounded-full bg-red-600 text-white px-5 py-2.5 text-sm font-bold shadow-[0_4px_12px_rgba(0,0,0,0.3)] hover:bg-red-700 active:bg-red-700 transition-colors cursor-pointer whitespace-nowrap w-max"
@@ -859,6 +869,7 @@
     class="fixed inset-x-0 bottom-0 z-40 bg-slate-50 rounded-t-2xl shadow-2xl border-t border-slate-200 flex flex-col"
     class:translate-y-full={!sheetOpen}
     aria-hidden={sheetOpen ? 'false' : 'true'}
+    aria-modal={sheetOpen ? 'true' : undefined}
     role="dialog"
     aria-label="Overdue checkouts"
     tabindex="-1"

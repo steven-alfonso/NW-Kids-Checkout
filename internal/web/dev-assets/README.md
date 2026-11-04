@@ -61,14 +61,12 @@ Usage: open the checkouts page in dev, then run this in the browser console:
 loadPreviewData()
 ```
 
-It:
-
-- blocks the 3-second auto-refresh from overwriting the demo data
-  (`API_CALL_BLOCKS.fetchChildrenData = true`),
-- seeds four checkouts: green (0 min), a yellow step at 3.9 min, a red step
-  at 7.9 min (both step to the next color within ~1s so the `duration-1000`
-  transition is visible), and a confirmed one (gray),
-- re-renders the list.
+The page owns its state, so `preview.js` delegates to
+`window.__checkoutsPreview.loadPreviewData()`. That method dynamically imports
+`preview-data.js` from this directory (served at `/static/dev/preview-data.js`
+only when `ENVIRONMENT=dev`), blocks the 3-second auto-refresh, and seeds the
+same ten demo rows the CLI command uses. In production the import 404s, so the
+demo fixture is not shipped in the bundle.
 
 Refresh the page to restore real data.
 

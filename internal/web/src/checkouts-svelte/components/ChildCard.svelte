@@ -1,12 +1,10 @@
 <script>
     import ConfirmControl from './ConfirmControl.svelte';
     import TimePill from './TimePill.svelte';
-    import { getChildId } from '../lib/identity.js';
     import { getLocationGroupColor } from '../lib/groups.js';
 
     let { child, nowMs, confirmed, flash = false, onRequestConfirm } = $props();
 
-    const childId = $derived(getChildId(child));
     const name = $derived(
         `${child.first_name || ''} ${child.last_name || ''}`.trim()
     );

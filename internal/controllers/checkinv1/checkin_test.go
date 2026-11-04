@@ -592,7 +592,7 @@ func TestController_Checkouts_filter_validation(t *testing.T) {
 		assert.Equal(t, fiber.StatusOK, resp.StatusCode)
 	})
 
-	// checkoutsv1/checkouts.js sends limit=100 on every poll.
+	// The checkouts page sends limit=100 on every poll.
 	t.Run("limit=100 used by the checkouts page is accepted", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/v1/checkins/checkouts?limit=100", nil)
 		req.Header.Set("Accept", "application/json")

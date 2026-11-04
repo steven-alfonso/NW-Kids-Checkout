@@ -51,3 +51,13 @@ export function selectionHasFilter(selection) {
         selection.includeUnassigned
     );
 }
+
+export function allGroupsSelected(selection, locationGroups, groupsLoaded) {
+    if (selection.isEmpty) return false;
+    if (!selectionHasFilter(selection)) return groupsLoaded;
+    if (locationGroups.length === 0) return false;
+    return (
+        selection.includeUnassigned &&
+        locationGroups.every((group) => selection.ids.has(Number(group.id)))
+    );
+}

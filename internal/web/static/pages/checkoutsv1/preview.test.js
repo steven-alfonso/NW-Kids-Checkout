@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { JSDOM } from 'jsdom';
-import { createPreviewChildren } from '../../../src/checkouts-svelte/lib/preview-data.js';
+import { createPreviewChildren } from '../../../dev-assets/preview-data.js';
 
 const previewPath = path.resolve(process.cwd(), 'internal/web/dev-assets/preview.js');
 const previewScript = fs.readFileSync(previewPath, 'utf8');
