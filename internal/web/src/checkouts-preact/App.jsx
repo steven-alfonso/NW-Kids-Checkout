@@ -10,6 +10,8 @@ import { subscribeClock } from './clock.js';
 import {
   CONFIRM_OVERRIDE_TTL_MS,
   FLASH_RESET_DELAY_MS,
+  TIME_PILL_BASE_CLASS,
+  TIME_PILL_OVERDUE_BASE_CLASS,
   buildLocationGroupSearch,
   compareByCheckoutId,
   filterVisibleChildren,
@@ -166,7 +168,7 @@ class ChildRow extends Component {
             <div class="text-black text-xl">{childCode(child)}</div>
             <div class="flex items-center gap-3">
               <TimeLabel
-                baseClass="text-white transition-colors duration-1000 px-1.5 py-0 rounded-md text-base child-time"
+                baseClass={TIME_PILL_BASE_CLASS}
                 childId={getChildId(child)}
                 checkedOutAtMs={child.checked_out_at_ms}
                 confirmed={confirmed}
@@ -217,7 +219,7 @@ class OverdueRow extends Component {
             ></span>
             <span class="text-xs font-medium text-slate-600">{groupLabel}</span>
             <TimeLabel
-              baseClass="ml-auto text-white text-xs px-2.5 py-1 rounded-md child-time"
+              baseClass={TIME_PILL_OVERDUE_BASE_CLASS}
               childId={getChildId(child)}
               checkedOutAtMs={checkedOutAtMs}
               confirmed={confirmed}

@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  TIME_PILL_BASE_CLASS,
+  TIME_PILL_OVERDUE_BASE_CLASS,
   buildLocationGroupSearch,
   calculateMinutesAgoFromTimestamp,
   filterVisibleChildren,
@@ -68,6 +70,13 @@ describe('checkouts-preact core', () => {
     expect(getTimePillClass(base, false, base + 4 * 60_000)).toBe('bg-yellow-500');
     expect(getTimePillClass(base, false, base + 8 * 60_000)).toBe('bg-red-500');
     expect(getTimePillClass(base, true, base + 20 * 60_000)).toBe('bg-gray-400');
+  });
+
+  it('fades the time pill in both variants', () => {
+    for (const baseClass of [TIME_PILL_BASE_CLASS, TIME_PILL_OVERDUE_BASE_CLASS]) {
+      expect(baseClass).toContain('transition-colors');
+      expect(baseClass).toContain('duration-1000');
+    }
   });
 
   it('derives integer minutes and pill colors from the same value', () => {
