@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { JSDOM } from 'jsdom';
@@ -11,27 +11,19 @@ function loadWindow() {
     const dom = new JSDOM('<!doctype html><html><body></body></html>', {
         runScripts: 'dangerously'
     });
+    const events = [];
+    dom.window.addEventListener('checkouts-preview', () => events.push(true));
     dom.window.eval(previewScript);
-    return dom.window;
+    return { window: dom.window, events };
 }
 
 describe('checkoutsv1/preview', () => {
-    it('delegates to the Svelte page preview handle', () => {
-        const window = loadWindow();
-        const loadPreviewData = vi.fn();
-        window.__checkoutsPreview = { loadPreviewData };
+    it('signals the Svelte page to load the dev fixture', () => {
+        const { window, events } = loadWindow();
 
         window.loadPreviewData();
 
-        expect(loadPreviewData).toHaveBeenCalledTimes(1);
-    });
-
-    it('warns instead of throwing when the page is not ready', () => {
-        const window = loadWindow();
-        const warn = vi.spyOn(window.console, 'warn').mockImplementation(() => {});
-
-        expect(() => window.loadPreviewData()).not.toThrow();
-        expect(warn).toHaveBeenCalledTimes(1);
+        expect(events).toHaveLength(1);
     });
 
     it('seeds the same demo rows the vanilla preview used', () => {

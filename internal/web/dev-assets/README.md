@@ -61,12 +61,12 @@ Usage: open the checkouts page in dev, then run this in the browser console:
 loadPreviewData()
 ```
 
-The page owns its state, so `preview.js` delegates to
-`window.__checkoutsPreview.loadPreviewData()`. That method dynamically imports
-`preview-data.js` from this directory (served at `/static/dev/preview-data.js`
-only when `ENVIRONMENT=dev`), blocks the 3-second auto-refresh, and seeds the
-same ten demo rows the CLI command uses. In production the import 404s, so the
-demo fixture is not shipped in the bundle.
+The page owns its state, so `preview.js` dispatches a `checkouts-preview`
+custom event. The page then dynamically imports `preview-data.js` from this
+directory (served at `/static/dev/preview-data.js` only when `ENVIRONMENT=dev`),
+blocks the 3-second auto-refresh, and seeds the same ten demo rows the CLI
+command uses. In production the import 404s, so the demo fixture is not shipped
+in the bundle.
 
 Refresh the page to restore real data.
 

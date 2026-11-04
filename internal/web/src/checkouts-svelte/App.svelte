@@ -505,17 +505,31 @@
         if (event.key === 'Escape' && sheetOpen) closeSheet();
     }
 
-    async function loadPreviewData() {
-        let createPreviewChildren;
-        try {
-            // A variable keeps Vite from trying to bundle this dev-only module.
-            const previewDataUrl = '/static/dev/preview-data.js';
-            ({ createPreviewChildren } = await import(
-                /* @vite-ignore */ previewDataUrl
-            ));
-        } catch (error) {
-            console.warn('Checkouts preview fixture is unavailable outside dev.', error);
-            return;
+    async function loadPreviewData(previewChildren) {
+        let children;
+        if (Array.isArray(previewChildren)) {
+            children = previewChildren.map((child) => ({
+                ...child,
+                checked_out_at_ms:
+                    child.checked_out_at_ms ??
+                    getCheckedOutTimestamp(child.checked_out_at)
+            }));
+        } else {
+            let createPreviewChildren;
+            try {
+                // A variable keeps Vite from trying to bundle this dev-only module.
+                const previewDataUrl = '/static/dev/preview-data.js';
+                ({ createPreviewChildren } = await import(
+                    /* @vite-ignore */ previewDataUrl
+                ));
+            } catch (error) {
+                console.warn(
+                    'Checkouts preview fixture is unavailable outside dev.',
+                    error
+                );
+                return;
+            }
+            children = createPreviewChildren();
         }
 
         previewBlocked = true;
@@ -526,7 +540,7 @@
         }
         clearFlashStyles();
         overrides = {};
-        childrenData = createPreviewChildren();
+        childrenData = children;
         loaded = true;
         pollFailed = false;
         knownChildIds = new Set(childrenData.map(getChildId).filter(Boolean));
@@ -581,6 +595,9 @@
 
         document.addEventListener('keydown', onKeydown);
 
+        const onPreview = (event) => loadPreviewData(event.detail);
+        window.addEventListener('checkouts-preview', onPreview);
+
         if (typeof window.initKebabMenu === 'function') {
             window.initKebabMenu();
         } else if (
@@ -589,8 +606,6 @@
         ) {
             window.NWKidsKebabMenu.initKebabMenu();
         }
-
-        window.__checkoutsPreview = { loadPreviewData };
 
         fetchLocationGroups();
         fetchChildrenData();
@@ -601,11 +616,9 @@
             window.removeEventListener('resize', onResize);
             visualViewport?.removeEventListener('resize', onVisualViewportResize);
             document.removeEventListener('keydown', onKeydown);
+            window.removeEventListener('checkouts-preview', onPreview);
             if (fetchController) fetchController.abort();
             if (flashTimeoutId) clearTimeout(flashTimeoutId);
-            if (window.__checkoutsPreview?.loadPreviewData === loadPreviewData) {
-                delete window.__checkoutsPreview;
-            }
         };
     });
 </script>

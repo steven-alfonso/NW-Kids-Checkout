@@ -23,7 +23,7 @@ This file guides coding agents working in this repo. Keep changes small, follow 
 ### Tests
 - Run Go/unit tests: `make test` (runs `go test ./...` + `-tags dev ./...` + `npm test` via godotenv)
 - Run the checkouts browser conformance suite: `npm run test:conformance` or
-  `make test-conformance`. First run needs `npx playwright install chromium`.
+  `make test-conformance`; run `npm run test:app` for the app-level contract. First run needs `npx playwright install chromium`.
   The suite is black-box and must keep passing on both the vanilla page and a
   replacement implementation; see `test-support/conformance/README.md`.
 - CI runs `go test` directly rather than through `make test`: godotenv exits
