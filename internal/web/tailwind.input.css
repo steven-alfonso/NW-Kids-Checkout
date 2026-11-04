@@ -1,0 +1,14 @@
+/*
+ * Tailwind input for the browser pages.
+ *
+ * Explicit sources matter: automatic source detection scans the whole working
+ * tree, so test-support, docs, and generated files can introduce utility
+ * classes that never appear in the shipped pages. That makes the CI
+ * "Tailwind output is current" check drift whenever a test or doc is edited.
+ *
+ * This file lives outside internal/web/static so //go:embed does not ship it.
+ */
+@import "tailwindcss" source(none);
+
+@source "static/pages";
+@source "static/js";

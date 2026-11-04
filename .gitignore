@@ -1,5 +1,4 @@
 node_modules/
-package-lock.json
 .DS_Store
 
 # The local sqlite database and its WAL sidecars.
@@ -17,3 +16,7 @@ bin/kids-checkin
 tmp/*
 
 .worktrees/
+
+# Playwright output
+test-results/
+playwright-report/

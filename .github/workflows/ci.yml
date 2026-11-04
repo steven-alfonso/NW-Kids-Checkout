@@ -126,49 +126,66 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: "22"
+          cache: npm
 
-      # package-lock.json is gitignored, so `npm ci` cannot be used: there is no
-      # lockfile to install from. `npm install` resolves fresh each run, which
-      # also means this job can break on an upstream release. That is worth
-      # knowing -- committing the lockfile would fix both, and is a separate
-      # change from adding CI.
-      #
-      # That same missing lockfile is why there is no `cache: npm` here. npm
-      # caching needs a lockfile to key on, and setup-node fails outright when it
-      # cannot find one. Caching ~/.npm directly by hand would key on something
-      # weaker than a lockfile while still restoring a resolved tree, which is a
-      # worse trade than a 68MB install. Commit the lockfile first, then add
-      # cache: npm.
+      # package-lock.json is committed, so npm ci installs the exact tree the
+      # local and CI runs use. That matters for the Tailwind byte-for-byte
+      # check below and for the pinned Playwright browser version.
       - name: Install dependencies
-        run: npm install
+        run: npm ci
 
       # The CSS that ships is the committed file: nothing in the Dockerfiles or
       # cmd/assets regenerates it, and no test reads it, so a page can gain
       # utility classes that are simply absent from production. That exact bug
       # shipped. Rebuilding here fails the job when the two disagree.
       #
-      # Sources are auto-detected from the working tree; only .gitignore'd
-      # files are excluded, so an untracked, non-ignored file changes this
-      # build without being in any commit.
+      # Sources are pinned in internal/web/tailwind.input.css, so test-support,
+      # docs, and other non-page files cannot change the generated CSS.
       #
       # Byte-for-byte, which is why package.json pins both Tailwind packages to
-      # exact versions: an unpinned `npm install` floats to the latest 4.x, and
-      # a release changes both the banner and the emitted rules (4.3.x turned
-      # calc(var(--spacing) * 0) into 0). Unpinned, this step fails on someone
-      # else's install instead of on real drift -- which is exactly how it
-      # failed on its first run. A committed lockfile is the proper fix for
-      # that, and is still the separate change noted above.
+      # exact versions and package-lock.json is committed. An unpinned install
+      # floats to the latest 4.x, and a release changes both the banner and the
+      # emitted rules (4.3.x turned calc(var(--spacing) * 0) into 0). Pinned,
+      # this step fails on real source drift instead of someone else's install.
       - name: Verify Tailwind output is current
         run: |
           npm run build:css > /dev/null
           if ! git diff --quiet -- internal/web/static/css/tailwind.css; then
             echo "::error::internal/web/static/css/tailwind.css is stale"
-            echo "Run: npm run build:css from a clean tree -- sources are"
-            echo "auto-detected, so an untracked, non-ignored file changes the"
-            echo "output without being in any commit."
+            echo "Run: npm run build:css from a clean tree."
             git diff --stat -- internal/web/static/css/tailwind.css
             exit 1
           fi
 
       - name: Test
         run: npm test
+
+  conformance:
+    name: Checkouts conformance
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Run conformance suite
+        run: npm run test:conformance
+
+      - name: Upload Playwright artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-conformance
+          path: test-results/
+          if-no-files-found: ignore
+          retention-days: 7
