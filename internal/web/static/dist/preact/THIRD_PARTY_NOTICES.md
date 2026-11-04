@@ -2,10 +2,6 @@
 
 The app bundles dependencies which contain the following licenses:
 
-## jsx-runtime - 0.0.0 (MIT)
-
-## preact-hooks - 0.0.0 (MIT)
-
 ## preact - 11.1.1 (MIT)
 
 The MIT License (MIT)

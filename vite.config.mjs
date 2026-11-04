@@ -21,8 +21,7 @@ export default defineConfig({
       output: {
         format: 'iife',
         entryFileNames: 'checkouts.js',
-        assetFileNames: 'checkouts.css',
-        inlineDynamicImports: true
+        assetFileNames: 'checkouts.css'
       }
     }
   }

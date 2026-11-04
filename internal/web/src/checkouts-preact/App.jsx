@@ -1,4 +1,5 @@
-import { Component, createPortal } from 'preact';
+import { createPortal } from 'preact';
+import { memo } from './memo.js';
 import {
   useCallback,
   useLayoutEffect,
@@ -130,148 +131,146 @@ function HeaderTime() {
   return text;
 }
 
-class ChildRow extends Component {
-  shouldComponentUpdate(nextProps) {
-    const props = this.props;
-    return (
-      nextProps.child !== props.child ||
-      nextProps.confirmed !== props.confirmed ||
-      nextProps.flash !== props.flash ||
-      nextProps.onConfirm !== props.onConfirm
-    );
-  }
+function ChildRowBase({ child, confirmed, flash, onConfirm }) {
+  const name = childLabelName(child);
 
-  render({ child, confirmed, flash, onConfirm }) {
-    const name = childLabelName(child);
-
-    return (
+  return (
+    <div
+      class={`bg-white rounded-lg shadow-[0_0_10px_rgba(0,0,0,0.25)] flex${flash ? ' child-card-flash' : ''}`}
+    >
       <div
-        class={`bg-white rounded-lg shadow-[0_0_10px_rgba(0,0,0,0.25)] flex${flash ? ' child-card-flash' : ''}`}
-      >
-        <div
-          class="rounded-l-lg"
-          style={{ ...locationGroupStyle(child), width: '6px', flexShrink: 0 }}
-          aria-hidden="true"
-        ></div>
-        <div class="flex-1 py-2.5 px-4 flex flex-col justify-center">
-          <div class="font-bold text-gray-800 text-2xl mb-0">
-            {name}
-            {child.source === 'manual' && (
-              <img
-                src={MANUAL_STAR_ICON_SRC}
-                alt="Manual checkin"
-                class="inline-block h-5 w-5 ml-2 relative -top-0.5"
-              />
-            )}
-          </div>
-          <div class="flex justify-between items-center">
-            <div class="text-black text-xl">{childCode(child)}</div>
-            <div class="flex items-center gap-3">
-              <TimeLabel
-                baseClass={TIME_PILL_BASE_CLASS}
-                childId={getChildId(child)}
-                checkedOutAtMs={child.checked_out_at_ms}
-                confirmed={confirmed}
-              />
-              <ConfirmControl
-                child={child}
-                confirmed={confirmed}
-                onChange={(checkbox) =>
-                  onConfirm(child, checkbox.checked, checkbox)
-                }
-              />
-            </div>
-          </div>
+        class="rounded-l-lg"
+        style={{ ...locationGroupStyle(child), width: '6px', flexShrink: 0 }}
+        aria-hidden="true"
+      ></div>
+      <div class="flex-1 py-2.5 px-4 flex flex-col justify-center">
+        <div class="font-bold text-gray-800 text-2xl mb-0">
+          {name}
+          {child.source === 'manual' && (
+            <img
+              src={MANUAL_STAR_ICON_SRC}
+              alt="Manual checkin"
+              class="inline-block h-5 w-5 ml-2 relative -top-0.5"
+            />
+          )}
         </div>
-      </div>
-    );
-  }
-}
-
-class OverdueRow extends Component {
-  shouldComponentUpdate(nextProps) {
-    const props = this.props;
-    return (
-      nextProps.child !== props.child ||
-      nextProps.confirmed !== props.confirmed ||
-      nextProps.groups !== props.groups ||
-      nextProps.onConfirm !== props.onConfirm
-    );
-  }
-
-  render({ child, confirmed, groups, onConfirm }) {
-    const checkedOutAtMs = child.checked_out_at_ms;
-    const name = childLabelName(child);
-    const barColor = getLocationGroupColor(child.location_group_id);
-    const groupLabel = getOverdueGroupLabel(child, groups);
-
-    return (
-      <div class="bg-white rounded-lg shadow flex overflow-hidden">
-        <div
-          style={{ backgroundColor: barColor, width: '6px', flexShrink: 0 }}
-          aria-hidden="true"
-        ></div>
-        <div class="flex-1 py-2 px-3 flex flex-col gap-1">
-          <div class="flex items-center gap-2">
-            <span
-              class="inline-block h-2.5 w-2.5 rounded-sm border border-black/10 shrink-0"
-              style={{ backgroundColor: barColor }}
-            ></span>
-            <span class="text-xs font-medium text-slate-600">{groupLabel}</span>
+        <div class="flex justify-between items-center">
+          <div class="text-black text-xl">{childCode(child)}</div>
+          <div class="flex items-center gap-3">
             <TimeLabel
-              baseClass={TIME_PILL_OVERDUE_BASE_CLASS}
+              baseClass={TIME_PILL_BASE_CLASS}
               childId={getChildId(child)}
-              checkedOutAtMs={checkedOutAtMs}
+              checkedOutAtMs={child.checked_out_at_ms}
               confirmed={confirmed}
             />
-          </div>
-          <div class="font-bold text-gray-800 text-lg leading-tight">
-            {name}
-            {child.source === 'manual' && (
-              <img
-                src={MANUAL_STAR_ICON_SRC}
-                alt="Manual checkin"
-                class="inline-block h-5 w-5 ml-2 relative -top-0.5"
-              />
-            )}
-          </div>
-          <div class="flex justify-between items-center">
-            <div class="text-black text-base">{childCode(child)}</div>
-            <label
-              class="relative flex items-center cursor-pointer leading-none"
-              data-confirmed-label
-              data-confirmed-state={confirmed ? 'confirmed' : 'unconfirmed'}
-            >
-              <input
-                type="checkbox"
-                class="sr-only child-confirmed-checkbox"
-                aria-label={`Mark ${name} as confirmed`}
-                data-child-id={getChildId(child)}
-                data-planning-center-id={child.planning_center_id || ''}
-                data-public-id={child.public_id || ''}
-                data-source={child.source || ''}
-                checked={confirmed}
-                onChange={(event) =>
-                  onConfirm(
-                    child,
-                    event.currentTarget.checked,
-                    event.currentTarget
-                  )
-                }
-              />
-              <img
-                src={CONFIRMED_ICON_SRC}
-                alt=""
-                class="h-9 w-9 block"
-                data-confirmed-icon
-              />
-            </label>
+            <ConfirmControl
+              child={child}
+              confirmed={confirmed}
+              onChange={(checkbox) =>
+                onConfirm(child, checkbox.checked, checkbox)
+              }
+            />
           </div>
         </div>
       </div>
-    );
-  }
+    </div>
+  );
 }
+
+function childRowPropsEqual(prev, next) {
+  return (
+    prev.child === next.child &&
+    prev.confirmed === next.confirmed &&
+    prev.flash === next.flash &&
+    prev.onConfirm === next.onConfirm
+  );
+}
+
+const ChildRow = memo(ChildRowBase, childRowPropsEqual);
+
+function OverdueRowBase({ child, confirmed, groups, onConfirm }) {
+  const checkedOutAtMs = child.checked_out_at_ms;
+  const name = childLabelName(child);
+  const barColor = getLocationGroupColor(child.location_group_id);
+  const groupLabel = getOverdueGroupLabel(child, groups);
+
+  return (
+    <div class="bg-white rounded-lg shadow flex overflow-hidden">
+      <div
+        style={{ backgroundColor: barColor, width: '6px', flexShrink: 0 }}
+        aria-hidden="true"
+      ></div>
+      <div class="flex-1 py-2 px-3 flex flex-col gap-1">
+        <div class="flex items-center gap-2">
+          <span
+            class="inline-block h-2.5 w-2.5 rounded-sm border border-black/10 shrink-0"
+            style={{ backgroundColor: barColor }}
+          ></span>
+          <span class="text-xs font-medium text-slate-600">{groupLabel}</span>
+          <TimeLabel
+            baseClass={TIME_PILL_OVERDUE_BASE_CLASS}
+            childId={getChildId(child)}
+            checkedOutAtMs={checkedOutAtMs}
+            confirmed={confirmed}
+          />
+        </div>
+        <div class="font-bold text-gray-800 text-lg leading-tight">
+          {name}
+          {child.source === 'manual' && (
+            <img
+              src={MANUAL_STAR_ICON_SRC}
+              alt="Manual checkin"
+              class="inline-block h-5 w-5 ml-2 relative -top-0.5"
+            />
+          )}
+        </div>
+        <div class="flex justify-between items-center">
+          <div class="text-black text-base">{childCode(child)}</div>
+          <label
+            class="relative flex items-center cursor-pointer leading-none"
+            data-confirmed-label
+            data-confirmed-state={confirmed ? 'confirmed' : 'unconfirmed'}
+          >
+            <input
+              type="checkbox"
+              class="sr-only child-confirmed-checkbox"
+              aria-label={`Mark ${name} as confirmed`}
+              data-child-id={getChildId(child)}
+              data-planning-center-id={child.planning_center_id || ''}
+              data-public-id={child.public_id || ''}
+              data-source={child.source || ''}
+              checked={confirmed}
+              onChange={(event) =>
+                onConfirm(
+                  child,
+                  event.currentTarget.checked,
+                  event.currentTarget
+                )
+              }
+            />
+            <img
+              src={CONFIRMED_ICON_SRC}
+              alt=""
+              class="h-9 w-9 block"
+              data-confirmed-icon
+            />
+          </label>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function overdueRowPropsEqual(prev, next) {
+  return (
+    prev.child === next.child &&
+    prev.confirmed === next.confirmed &&
+    prev.groups === next.groups &&
+    prev.onConfirm === next.onConfirm
+  );
+}
+
+const OverdueRow = memo(OverdueRowBase, overdueRowPropsEqual);
 
 export function App() {
   const [children, setChildren] = useState([]);
