@@ -10,7 +10,7 @@ export default defineConfig({
         outDir: 'internal/web/static/dist/svelte',
         emptyOutDir: true,
         copyPublicDir: false,
-        target: 'es2020',
+        target: 'es2022',
         rollupOptions: {
             input: 'internal/web/src/checkouts-svelte/main.js',
             output: {

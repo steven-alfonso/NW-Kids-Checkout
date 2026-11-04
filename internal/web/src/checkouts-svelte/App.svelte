@@ -20,8 +20,11 @@
     const DEBUG = new URLSearchParams(window.location.search).has('debug');
     const FLASH_RESET_DELAY_MS = 4000;
 
-    let childrenData = $state([]);
-    let locationGroups = $state([]);
+    // These collections are always replaced wholesale (poll payload, override
+    // update, flash batch) and nothing mutates an entry in place, so raw state
+    // keeps assignment reactivity without proxying every row on each poll.
+    let childrenData = $state.raw([]);
+    let locationGroups = $state.raw([]);
     let groupsLoaded = $state(false);
     let loaded = $state(false);
     let pollFailed = $state(false);
@@ -30,10 +33,10 @@
     let hideConfirmed = $state(false);
     let searchOpen = $state(false);
     let urlSearch = $state(window.location.search);
-    let overrides = $state({});
-    let flashIds = $state({});
+    let overrides = $state.raw({});
+    let flashIds = $state.raw({});
     let sheetOpen = $state(false);
-    let sheetItems = $state([]);
+    let sheetItems = $state.raw([]);
     let sheetCount = $state(0);
     let badgeJiggle = $state(false);
 
@@ -102,6 +105,7 @@
     });
 
     const searchActive = $derived(searchQuery.trim().length > 0);
+    const clockLabel = $derived(formatClock(nowMs));
     const emptyMessage = $derived(
         searchActive
             ? 'No matching children'
@@ -655,7 +659,7 @@
     <div
         class="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 text-4xl md:text-6xl font-bold text-gray-800"
     >
-        <span id="current-time">{formatClock(nowMs)}</span>
+        <span id="current-time">{clockLabel}</span>
     </div>
 
     <div class="hidden lg:block w-16 md:w-24"></div>
