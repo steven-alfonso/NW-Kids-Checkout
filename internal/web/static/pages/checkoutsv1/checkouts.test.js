@@ -27,7 +27,8 @@ window.__test = {
     computeNewChildIds: (children) => computeNewChildIds(children),
     getFlashChildIds: () => flashChildIds,
     setFlashChildIds: (ids) => { flashChildIds = ids; },
-    clearFlashStyles: () => clearFlashStyles()
+    clearFlashStyles: () => clearFlashStyles(),
+    isVisibleFocusTarget: (element) => isVisibleFocusTarget(element)
 };
 `;
 
@@ -1646,6 +1647,48 @@ describe('checkoutsv1/checkouts', () => {
                 expect(w.document.activeElement).toBe(searchToggle);
                 expect(headerInertAtFocus).toBe(false);
             });
+
+            it('restores focus to the badge when the opener click did not focus it', async () => {
+                const now0 = 1_700_000_000_000;
+                const w = await modalReady([childAt('a', 6, now0)], now0);
+                const badge = w.document.getElementById('overdue-badge');
+                expect(badge.classList.contains('hidden')).toBe(false);
+
+                // Safari/iOS do not move focus to a button on a pointer tap, so
+                // activeElement is still <body> when the click handler runs.
+                expect(w.document.activeElement.tagName).toBe('BODY');
+                badge.click();
+                expect(
+                    w.document.getElementById('overdue-sheet').contains(w.document.activeElement)
+                ).toBe(true);
+
+                w.closeOverdueSheet();
+
+                // The opener is the element that was clicked, not whatever
+                // happened to have focus when the sheet opened.
+                expect(w.document.activeElement.id).toBe('overdue-badge');
+            });
+
+            it('rejects a focus target hidden by an ancestor class or aria-hidden', async () => {
+                const w = await modalReady([childAt('a', 6, 1_700_000_000_000)]);
+                const isVisible = w.__test.isVisibleFocusTarget;
+                const wrapper = w.document.createElement('div');
+                const target = w.document.createElement('button');
+                wrapper.appendChild(target);
+                w.document.body.appendChild(wrapper);
+
+                wrapper.className = 'hidden';
+                expect(isVisible(target)).toBe(false);
+
+                // aria-hidden is hidden from assistive tech but still focusable
+                // in the DOM, so restoring focus there strands screen readers.
+                wrapper.className = '';
+                wrapper.setAttribute('aria-hidden', 'true');
+                expect(isVisible(target)).toBe(false);
+
+                wrapper.removeAttribute('aria-hidden');
+                expect(isVisible(target)).toBe(true);
+            });
         });
 
         // ---- the drawer is a frozen snapshot ----
@@ -2232,6 +2275,22 @@ describe('checkoutsv1/checkouts', () => {
             );
         }
 
+        // The boot watchdog lives in the page's inline script, so executing it
+        // means parsing the shipped page with scripting on. beforeParse swaps
+        // the timer for a handle the test can fire without waiting.
+        function watchdogWindow() {
+            const dom = new JSDOM(shippedPage(), {
+                runScripts: 'dangerously',
+                beforeParse(window) {
+                    window.setTimeout = (callback) => {
+                        window.__runBootWatchdog = callback;
+                        return 0;
+                    };
+                }
+            });
+            return dom.window;
+        }
+
         it('shows a no-JS message and hides the loading row when scripting is disabled', () => {
             // jsdom's scripting flag is off by default, which is exactly the
             // no-JS state: <noscript> children are parsed as real elements.
@@ -2242,13 +2301,41 @@ describe('checkoutsv1/checkouts', () => {
             expect(loading).not.toBeNull();
             expect(loading.textContent).toContain('Loading children data');
 
-            const noscript = doc.querySelector('noscript');
-            expect(noscript).not.toBeNull();
-            expect(noscript.textContent).toContain('This page requires JavaScript.');
-            const style = noscript.querySelector('style');
+            // <style> is metadata content, so it cannot live in a body-level
+            // <noscript> (transparent, flow content). The rule belongs in head.
+            const style = doc.head.querySelector('noscript style');
             expect(style).not.toBeNull();
             expect(style.textContent).toContain('#checkouts-loading');
             expect(style.textContent).toContain('display: none');
+
+            const message = [...doc.querySelectorAll('noscript')]
+                .find((element) => element.textContent.includes('This page requires JavaScript.'));
+            expect(message).toBeDefined();
+        });
+
+        it('replaces the loading row when checkouts.js never boots', () => {
+            const w = watchdogWindow();
+            expect(typeof w.__runBootWatchdog).toBe('function');
+
+            w.__runBootWatchdog();
+
+            // The no-JS message only renders when scripting is disabled. If the
+            // script 404s or is blocked, the reader otherwise stares at a
+            // placeholder that will never resolve.
+            expect(w.document.getElementById('checkouts-loading').textContent)
+                .toContain('Unable to load checkouts');
+        });
+
+        it('leaves the loading row alone once checkouts.js has booted', () => {
+            const w = watchdogWindow();
+            w.__checkoutsInitialized = true;
+
+            w.__runBootWatchdog();
+
+            // A slow first poll is not a load failure: boot marks the script as
+            // alive before any request, so the watchdog must stand down.
+            expect(w.document.getElementById('checkouts-loading').textContent)
+                .toContain('Loading children data');
         });
 
         it('ships the search panel collapsed, inert, and hidden from assistive tech', () => {

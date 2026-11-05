@@ -566,7 +566,9 @@ function containSheetFocus(event) {
 // A focus restore must land on something a keyboard user can see and reach. The
 // page hides controls with the `hidden` utility class or the hidden attribute,
 // and inert is checked as well because the background carries it until close
-// clears it. Reading these attributes rather than layout also keeps the check
+// clears it. aria-hidden counts too: such an element is focusable but absent
+// from the accessibility tree, so restoring focus there strands screen-reader
+// users. Reading these attributes rather than layout also keeps the check
 // meaningful in jsdom, which has no layout engine.
 function isVisibleFocusTarget(element) {
     return Boolean(
@@ -574,8 +576,7 @@ function isVisibleFocusTarget(element) {
         element !== document.body &&
         element.isConnected &&
         typeof element.focus === 'function' &&
-        !element.closest('[hidden], [inert]') &&
-        !element.classList.contains('hidden')
+        !element.closest('[hidden], [inert], .hidden, [aria-hidden="true"]')
     );
 }
 
@@ -618,13 +619,17 @@ function syncOverdueSheetToViewport({ lift = true } = {}) {
     sheet.style.bottom = overlap > 0 ? `${Math.floor(overlap)}px` : '';
 }
 
-function openOverdueSheet() {
+function openOverdueSheet(event) {
     if (!dom.overdueSheet || !dom.overdueSheetBackdrop) return;
     isOverdueSheetOpen = true;
     // Captured before the focus move below, so close can put it back. The sheet is
     // a role="dialog" that occludes the badge, so leaving focus on whatever opened
     // it strands keyboard and screen-reader users on an invisible control.
-    overdueSheetReturnFocus = document.activeElement;
+    //
+    // Prefer the clicked element over activeElement: Safari/iOS do not move focus
+    // to a button on a pointer tap, so activeElement is still <body> there and
+    // the restore would fall through to a header control instead of the badge.
+    overdueSheetReturnFocus = event?.currentTarget || document.activeElement;
     overdueRetainedIds.clear();
     // Fresh snapshot on every open so prior confirms are reflected
     const overdue = getOverdueChildren();
