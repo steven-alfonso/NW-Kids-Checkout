@@ -156,8 +156,30 @@ func (controller *Controller) checkoutsWeb(c *fiber.Ctx) error {
 	}
 
 	filter.Recent = true
+	manualCheckinsVisible := !isLocationGroupFilterEmpty(c, filter)
+	filter.ManualCheckinsVisible = manualCheckinsVisible
 	manualFilter := manualFilterFromCheckinFilter(filter)
 	manualFilter.Recent = true
+
+	log := middleware.GetLogger(c)
+
+	version, err := controller.checkinRepo.CheckoutsVersion(c.Context(), filter)
+	if err != nil {
+		log.WarnContext(c.Context(), "checkouts version failed", slog.String("error", err.Error()))
+		version = ""
+	}
+
+	etag := ""
+	if version != "" {
+		etag = weakETag(version)
+	}
+
+	// A matching token can describe a body whose checked_out_after cutoff is up
+	// to one version bucket old; see the tradeoff note in CheckoutsVersion.
+	if etag != "" && etagMatches(c.Get(fiber.HeaderIfNoneMatch), etag) {
+		setCheckoutsValidator(c, etag)
+		return c.SendStatus(fiber.StatusNotModified)
+	}
 
 	checkins, err := controller.checkinRepo.ListCheckins(c.Context(), filter)
 	if err != nil {
@@ -165,7 +187,7 @@ func (controller *Controller) checkoutsWeb(c *fiber.Ctx) error {
 	}
 
 	var manualCheckins []manualcheckin.ManualCheckin
-	if !isLocationGroupFilterEmpty(c, filter) {
+	if manualCheckinsVisible {
 		manualCheckins, err = controller.manualRepo.ListManualCheckins(c.Context(), manualFilter)
 		if err != nil {
 			return fiber.NewError(fiber.StatusInternalServerError, err.Error())
@@ -179,43 +201,70 @@ func (controller *Controller) checkoutsWeb(c *fiber.Ctx) error {
 		checkins = sortCheckins(checkins)
 	}
 
+	// The token was read before the two list queries. If it moved, the body may
+	// mix two states or be newer than the token, so hand the body hash to the
+	// response instead: a validator must describe the representation it is
+	// attached to. The same fallback covers a failed re-check.
+	if version != "" {
+		latest, versionErr := controller.checkinRepo.CheckoutsVersion(c.Context(), filter)
+		if versionErr != nil {
+			log.WarnContext(c.Context(), "checkouts version re-check failed", slog.String("error", versionErr.Error()))
+			etag = ""
+		} else if latest != version {
+			etag = ""
+		}
+	}
+
 	return sendCheckoutsJSON(c, CheckoutsResponse{
 		Checkins:       repoCheckinSliceToOutput(checkins),
 		ManualCheckins: repoManualCheckinSliceToOutput(manualCheckins),
-	})
+	}, etag)
 }
 
-// sendCheckoutsJSON writes the poll payload with a validator so the client's 3s
-// poll can revalidate instead of re-downloading an unchanged list. The checkouts
-// page polls far more often than the data changes, so most responses collapse
-// to an empty 304.
-func sendCheckoutsJSON(c *fiber.Ctx, payload CheckoutsResponse) error {
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "could not encode checkouts")
-	}
+// weakETag wraps an opaque repo token in the HTTP weak-entity-tag syntax.
+func weakETag(token string) string {
+	return `W/"` + token + `"`
+}
 
-	// Weak validator: the identity representation is hashed here, but gzip may
-	// content-code it on the way out, and a weak tag is the correct validator
-	// when a weak transformation like compression is applied (RFC 9110 8.8.1).
-	sum := sha256.Sum256(body)
-	etag := `W/"` + hex.EncodeToString(sum[:16]) + `"`
-
+// setCheckoutsValidator writes the revalidation headers shared by the 200 and
+// 304 poll paths.
+func setCheckoutsValidator(c *fiber.Ctx, etag string) {
 	// no-cache (not no-store) so the browser keeps the body and revalidates it
 	// on the next poll instead of refetching every time.
+	//
+	// This is safe for the current one-tenant-per-deployment model: every
+	// authenticated user sees the same payload, so a shared cache cannot leak
+	// between tenants. A shared-tenant origin needs private caching, the tenant
+	// in the token, and Vary/auth-aware cache handling.
 	c.Set(fiber.HeaderCacheControl, "no-cache")
 	// Vary on Accept-Encoding because compression re-encodes the body, and on
 	// Accept because this route content-negotiates: the same path serves HTML
 	// or this payload depending on the request's Accept header.
 	c.Vary(fiber.HeaderAcceptEncoding, fiber.HeaderAccept)
 	c.Set(fiber.HeaderETag, etag)
+}
+
+// sendCheckoutsJSON writes the poll payload with a validator so the client's 3s
+// poll can revalidate instead of re-downloading an unchanged list. The checkouts
+// page polls far more often than the data changes, so most responses collapse
+// to an empty 304. An empty etag asks for the exact body hash.
+func sendCheckoutsJSON(c *fiber.Ctx, payload CheckoutsResponse, etag string) error {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "could not encode checkouts")
+	}
+
+	if etag == "" {
+		sum := sha256.Sum256(body)
+		etag = weakETag(hex.EncodeToString(sum[:16]))
+	}
+
+	setCheckoutsValidator(c, etag)
 
 	if etagMatches(c.Get(fiber.HeaderIfNoneMatch), etag) {
 		return c.SendStatus(fiber.StatusNotModified)
 	}
 
-	// Set the content type directly rather than via c.Type, which treats its
-	// argument as a file extension and would fall back to octet-stream.
 	c.Set(fiber.HeaderContentType, fiber.MIMEApplicationJSON)
 	return c.Send(body)
 }
@@ -433,11 +482,14 @@ func buildFilter(c *fiber.Ctx) (checkin.Filter, error) {
 	}
 	filter.LocationGroupIDs = ids
 
+	checkedOutAtBeforeRelative := false
 	if cobStr := c.Query("checked_out_before"); cobStr != "" {
 		// try time.ParseDuration
 		ago, err := time.ParseDuration(cobStr)
 		if err == nil {
 			filter.CheckedOutAtBefore = time.Now().Add(ago)
+			filter.CheckedOutAtBeforeKey = "relative:" + ago.String()
+			checkedOutAtBeforeRelative = true
 		} else {
 			filter.CheckedOutAtBefore, err = time.ParseInLocation(time.RFC3339, cobStr, time.UTC)
 			if err != nil {
@@ -460,6 +512,16 @@ func buildFilter(c *fiber.Ctx) (checkin.Filter, error) {
 
 	if !filter.CheckedOutAtAfter.IsZero() && !filter.CheckedOutAtBefore.IsZero() && filter.CheckedOutAtAfter.After(filter.CheckedOutAtBefore) {
 		return checkin.Filter{}, errors.New("checked_out_after must be before checked_out_before")
+	}
+
+	// Round relative upper bounds up after validating the exact window. An upper
+	// bound admits more rows as time advances, so rounding down could hide a row
+	// that just became eligible. Rounding up can only include a row early, and it
+	// keeps the resolved cutoff, and therefore the ETag, stable within a bucket.
+	// CheckedOutAtBeforeKey keeps distinct windows from sharing a token when they
+	// round to the same cutoff.
+	if checkedOutAtBeforeRelative {
+		filter.CheckedOutAtBefore = checkin.RoundCheckoutsVersionTimeUp(filter.CheckedOutAtBefore)
 	}
 
 	return filter, nil

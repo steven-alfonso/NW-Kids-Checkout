@@ -2,14 +2,39 @@ package checkin
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"slices"
 	"time"
 
 	"kids-checkin/internal/repo"
 
 	"github.com/Masterminds/squirrel"
 )
+
+// CheckoutsVersionBucket is the granularity of the time-window portion of the
+// checkouts validator. It buckets lower time bounds in the token and rounds
+// relative upper bounds up before querying so the token stays stable between
+// polls; see RoundCheckoutsVersionTimeUp.
+const CheckoutsVersionBucket = 5 * time.Minute
+
+const checkoutsVersionBucketSeconds = int64(CheckoutsVersionBucket / time.Second)
+
+// RoundCheckoutsVersionTimeUp rounds t up to the next CheckoutsVersionBucket
+// boundary. Relative upper time bounds must round up: the resulting cutoff can
+// only admit rows early, never hide one, and it keeps the validator stable
+// between bucket rollovers.
+func RoundCheckoutsVersionTimeUp(t time.Time) time.Time {
+	utc := t.UTC()
+	truncated := utc.Truncate(CheckoutsVersionBucket)
+	if truncated.Equal(utc) {
+		return truncated
+	}
+	return truncated.Add(CheckoutsVersionBucket)
+}
 
 type Filter struct {
 	ID                 int64
@@ -24,9 +49,17 @@ type Filter struct {
 	FirstName          string
 	LastName           string
 	CheckedOutAtBefore time.Time
-	CheckedOutAtAfter  time.Time
-	Limit              int
-	Recent             bool
+	// CheckedOutAtBeforeKey identifies a relative upper bound before it is
+	// rounded to a bucket. It is part of the version token, not the SQL filter,
+	// because two different windows can round to the same cutoff.
+	CheckedOutAtBeforeKey string
+	CheckedOutAtAfter     time.Time
+	Limit                 int
+	Recent                bool
+	// ManualCheckinsVisible records the controller's decision to include
+	// manual checkins. It is part of the checkouts version token, not the SQL
+	// filter, because that decision depends on raw query-parameter presence.
+	ManualCheckinsVisible bool
 }
 
 type Checkin struct {
@@ -50,6 +83,9 @@ type Repo interface {
 	RemoveOldCheckins(ctx context.Context, olderThan time.Time) (deletedCount int64, err error)
 	DeleteCheckin(ctx context.Context, id int64) error
 	DeleteAllCheckins(ctx context.Context) (int64, error)
+	// CheckoutsVersion returns an opaque token that changes whenever the
+	// checkouts data or the request filter changes.
+	CheckoutsVersion(ctx context.Context, filter Filter) (string, error)
 }
 
 type sqliteRepo struct {
@@ -197,6 +233,116 @@ func (s *sqliteRepo) ListCheckins(ctx context.Context, filter Filter) ([]Checkin
 	}
 
 	return checkins, nil
+}
+
+func (s *sqliteRepo) CheckoutsVersion(ctx context.Context, filter Filter) (string, error) {
+	// The counter is per database, which is the tenancy boundary today (one DB
+	// per church/instance). A shared-schema deployment must scope this read and
+	// the triggers by tenant before relying on the token across tenants.
+	//
+	// Triggers on the tables that feed the checkouts response increment this
+	// counter, while ignoring updates that change no response-visible column.
+	// Unlike COUNT/MAX aggregates it sees updates that do not move a maximum,
+	// delete/insert pairs that preserve a count, and changes to filter-only
+	// columns such as event_id and location names. Reading it is O(1) regardless
+	// of table size.
+	var version int64
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COALESCE(MAX(version), 0) FROM checkouts_version`).Scan(&version); err != nil {
+		return "", fmt.Errorf("reading checkouts version: %w", err)
+	}
+
+	// Known tradeoff: for the checkouts poll (Recent is always true), a relative
+	// checked_out_after lower bound advances every poll but only its bucket is
+	// in the token. Between rollovers a 304 can serve a body whose cutoff is up
+	// to one bucket old, so rows that have aged out may linger that long. This
+	// cannot hide a new checkout: inserts and response-visible updates bump the
+	// counter, and moving a lower bound forward only removes rows. The tradeoff
+	// buys 304s on the three-second poll.
+	//
+	// checked_out_before is different: an upper bound admits additional rows as
+	// time advances, so the controller rounds relative bounds up to this same
+	// bucket before querying. The exact cutoff is then stable within a bucket and
+	// can only include rows early, never hide one.
+	//
+	// An unordered read with a limit can also expose a different subset of the
+	// remaining rows as the window moves, so that case uses the exact cutoff too.
+	checkedOutBefore := ""
+	if !filter.CheckedOutAtBefore.IsZero() {
+		checkedOutBefore = filter.CheckedOutAtBefore.UTC().Format(time.RFC3339Nano)
+	}
+
+	checkedOutAfterBucket := int64(0)
+	checkedOutAfter := ""
+	if !filter.CheckedOutAtAfter.IsZero() {
+		if filter.Recent || filter.Limit == 0 {
+			checkedOutAfterBucket = filter.CheckedOutAtAfter.UTC().Unix() / checkoutsVersionBucketSeconds
+		} else {
+			checkedOutAfter = filter.CheckedOutAtAfter.UTC().Format(time.RFC3339Nano)
+		}
+	}
+
+	// Canonicalize the group IDs so the set of requested groups, not its request
+	// order, determines the token.
+	locationGroupIDs := slices.Clone(filter.LocationGroupIDs)
+	slices.Sort(locationGroupIDs)
+	locationGroupIDs = slices.Compact(locationGroupIDs)
+	if locationGroupIDs == nil {
+		locationGroupIDs = []int64{}
+	}
+
+	// JSON gives every field a name and escapes string values, so two different
+	// filters cannot serialize to the same bytes (the previous "|"-joined form
+	// could, for example, collide on names containing "|").
+	signature, err := json.Marshal(struct {
+		Version                 int64   `json:"version"`
+		LocationGroupName       string  `json:"location_group_name"`
+		PlanningCenterID        string  `json:"planning_center_id"`
+		FirstName               string  `json:"first_name"`
+		LastName                string  `json:"last_name"`
+		LocationGroupID         int64   `json:"location_group_id"`
+		LocationGroupIDs        []int64 `json:"location_group_ids"`
+		IncludeUnassigned       bool    `json:"include_unassigned"`
+		Recent                  bool    `json:"recent"`
+		ManualCheckinsVisible   bool    `json:"manual_checkins_visible"`
+		LocationName            string  `json:"location_name"`
+		ID                      int64   `json:"id"`
+		LocationID              int64   `json:"location_id"`
+		EventID                 int64   `json:"event_id"`
+		Limit                   int     `json:"limit"`
+		CheckedOutAtBefore      string  `json:"checked_out_at_before"`
+		CheckedOutAtBeforeKey   string  `json:"checked_out_at_before_key"`
+		CheckedOutAtAfter       string  `json:"checked_out_at_after"`
+		CheckedOutAtAfterBucket int64   `json:"checked_out_at_after_bucket"`
+	}{
+		Version:                 version,
+		LocationGroupName:       filter.LocationGroupName,
+		PlanningCenterID:        filter.PlanningCenterID,
+		FirstName:               filter.FirstName,
+		LastName:                filter.LastName,
+		LocationGroupID:         filter.LocationGroupID,
+		LocationGroupIDs:        locationGroupIDs,
+		IncludeUnassigned:       filter.IncludeUnassigned,
+		Recent:                  filter.Recent,
+		ManualCheckinsVisible:   filter.ManualCheckinsVisible,
+		LocationName:            filter.LocationName,
+		ID:                      filter.ID,
+		LocationID:              filter.LocationID,
+		EventID:                 filter.EventID,
+		Limit:                   filter.Limit,
+		CheckedOutAtBefore:      checkedOutBefore,
+		CheckedOutAtBeforeKey:   filter.CheckedOutAtBeforeKey,
+		CheckedOutAtAfter:       checkedOutAfter,
+		CheckedOutAtAfterBucket: checkedOutAfterBucket,
+	})
+	if err != nil {
+		return "", fmt.Errorf("encoding checkouts version: %w", err)
+	}
+
+	// The controller turns this opaque token into a weak ETag; keeping the HTTP
+	// formatting out of the repository makes the token reusable by other callers.
+	sum := sha256.Sum256(signature)
+	return hex.EncodeToString(sum[:16]), nil
 }
 
 func (s *sqliteRepo) CreateCheckin(ctx context.Context, checkin Checkin) (Checkin, error) {

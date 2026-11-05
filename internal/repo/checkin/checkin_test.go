@@ -2,6 +2,7 @@ package checkin
 
 import (
 	"database/sql"
+	"fmt"
 	"log"
 	"os"
 	"testing"
@@ -10,6 +11,7 @@ import (
 	dbschema "kids-checkin/db"
 	"kids-checkin/internal/db"
 	"kids-checkin/internal/repo"
+	"kids-checkin/internal/repo/manualcheckin"
 
 	"github.com/Masterminds/squirrel"
 	_ "github.com/mattn/go-sqlite3"
@@ -455,13 +457,16 @@ func Test_sqliteRepo_RemoveOldCheckins(t *testing.T) {
 			beforeFn: func(t *testing.T) {
 				_, err := squirrel.Delete("checkins").RunWith(testDB).ExecContext(t.Context())
 				require.NoError(t, err)
+				// Use a margin wider than the gap between the table being
+				// built and this subtest running. A 1ms margin made this flaky
+				// when CI scheduling delayed the insert past olderThan.
 				_, err = s.CreateCheckin(t.Context(), Checkin{
 					PlanningCenterID: "plc_1234",
 					LocationID:       1,
 					FirstName:        "somefirstname1",
 					LastName:         "somelastname1",
 					SecurityCode:     "ABC123",
-					CheckedOutAt:     time.Now().Add(-24 * time.Hour).Add(-1 * time.Millisecond),
+					CheckedOutAt:     time.Now().Add(-25 * time.Hour),
 				})
 				require.NoError(t, err)
 				_, err = s.CreateCheckin(t.Context(), Checkin{
@@ -747,4 +752,631 @@ func execSchema(t *testing.T, tDB *sql.DB) {
 	t.Helper()
 	_, err := tDB.Exec(dbschema.Schema)
 	require.NoError(t, err)
+}
+
+func Test_sqliteRepo_CheckoutsVersion(t *testing.T) {
+	resetCheckoutTables := func(t *testing.T) {
+		t.Helper()
+		for _, table := range []string{"checkins", "manual_checkins", "locations", "location_groups"} {
+			_, err := squirrel.Delete(table).RunWith(testDB).ExecContext(t.Context())
+			require.NoError(t, err)
+		}
+	}
+
+	s := NewRepo(testDB)
+	manualRepo := manualcheckin.NewRepo(testDB)
+	now := time.Now().UTC()
+
+	createCheckin := func(t *testing.T, pcID string, checkedOutAt, confirmedAt time.Time) Checkin {
+		t.Helper()
+		created, err := s.CreateCheckin(t.Context(), Checkin{
+			PlanningCenterID:      pcID,
+			FirstName:             "first",
+			LastName:              "last",
+			SecurityCode:          "ABC123",
+			CheckedOutAt:          checkedOutAt,
+			CheckedOutConfirmedAt: confirmedAt,
+		})
+		require.NoError(t, err)
+		return created
+	}
+
+	version := func(t *testing.T) string {
+		t.Helper()
+		v, err := s.CheckoutsVersion(t.Context(), Filter{})
+		require.NoError(t, err)
+		return v
+	}
+
+	counter := func(t *testing.T) int64 {
+		t.Helper()
+		var v int64
+		err := testDB.QueryRowContext(t.Context(),
+			`SELECT COALESCE(MAX(version), 0) FROM checkouts_version`).Scan(&v)
+		require.NoError(t, err)
+		return v
+	}
+
+	t.Run("empty database returns an opaque validator", func(t *testing.T) {
+		resetCheckoutTables(t)
+		v := version(t)
+		assert.NotEmpty(t, v)
+		assert.NotContains(t, v, `W/"`, "the repo returns an opaque token; the controller formats the HTTP ETag")
+	})
+
+	t.Run("stable for unchanged state", func(t *testing.T) {
+		resetCheckoutTables(t)
+		assert.Equal(t, version(t), version(t))
+	})
+
+	t.Run("changes when a checkin is inserted", func(t *testing.T) {
+		resetCheckoutTables(t)
+		before := version(t)
+		createCheckin(t, "plc_cv", now, time.Time{})
+		assert.NotEqual(t, before, version(t))
+	})
+
+	t.Run("changes when a checkin is upserted on conflict", func(t *testing.T) {
+		resetCheckoutTables(t)
+		createCheckin(t, "plc_upsert", now.Add(-10*time.Minute), time.Time{})
+		before := version(t)
+		createCheckin(t, "plc_upsert", now.Add(-5*time.Minute), time.Time{})
+		assert.NotEqual(t, before, version(t), "the fetcher's ON CONFLICT update must bump the counter")
+	})
+
+	t.Run("identical upsert does not advance the counter", func(t *testing.T) {
+		resetCheckoutTables(t)
+		createCheckin(t, "plc_noop", now, time.Time{})
+		before := counter(t)
+
+		// The fetcher retries a whole batch when one checkout is dropped, so
+		// re-upserting an unchanged row must not invalidate every client's ETag.
+		createCheckin(t, "plc_noop", now, time.Time{})
+
+		assert.Equal(t, before, counter(t),
+			"an upsert that changes no response-visible column must not bump the counter")
+	})
+
+	t.Run("rollback leaves the version unchanged", func(t *testing.T) {
+		resetCheckoutTables(t)
+		before := version(t)
+
+		tx, err := testDB.BeginTx(t.Context(), nil)
+		require.NoError(t, err)
+		_, err = NewRepo(tx).CreateCheckin(t.Context(), Checkin{
+			PlanningCenterID: "plc_rollback",
+			FirstName:        "rollback",
+			LastName:         "kid",
+			SecurityCode:     "ABC123",
+			CheckedOutAt:     now,
+		})
+		require.NoError(t, err)
+		require.NoError(t, tx.Rollback())
+
+		assert.Equal(t, before, version(t), "a rolled-back write must not advance the counter")
+	})
+
+	t.Run("changes when a confirmation is set", func(t *testing.T) {
+		resetCheckoutTables(t)
+		createCheckin(t, "plc_cv", now, time.Time{})
+		before := version(t)
+		_, err := s.SetCheckedOutConfirmedAt(t.Context(), "plc_cv", true)
+		require.NoError(t, err)
+		assert.NotEqual(t, before, version(t))
+	})
+
+	t.Run("changes when an older confirmation is cleared", func(t *testing.T) {
+		resetCheckoutTables(t)
+		older := createCheckin(t, "older", now.Add(-10*time.Minute), now.Add(-9*time.Minute))
+		createCheckin(t, "newer", now.Add(-5*time.Minute), now.Add(-4*time.Minute))
+
+		before := version(t)
+		_, err := s.SetCheckedOutConfirmedAt(t.Context(), older.PlanningCenterID, false)
+		require.NoError(t, err)
+		assert.NotEqual(t, before, version(t), "clearing a non-max confirmation still changes the payload")
+	})
+
+	t.Run("changes when a manual checkin is inserted", func(t *testing.T) {
+		resetCheckoutTables(t)
+		before := version(t)
+		_, err := manualRepo.CreateManualCheckin(t.Context(), manualcheckin.ManualCheckin{
+			FirstName:    "manual",
+			LastName:     "kid",
+			CheckedOutAt: now,
+		})
+		require.NoError(t, err)
+		assert.NotEqual(t, before, version(t))
+	})
+
+	t.Run("changes when an older manual checkout is undone", func(t *testing.T) {
+		resetCheckoutTables(t)
+		older, err := manualRepo.CreateManualCheckin(t.Context(), manualcheckin.ManualCheckin{
+			FirstName: "older", LastName: "kid", CheckedOutAt: now.Add(-10 * time.Minute),
+		})
+		require.NoError(t, err)
+		_, err = manualRepo.CreateManualCheckin(t.Context(), manualcheckin.ManualCheckin{
+			FirstName: "newer", LastName: "kid", CheckedOutAt: now.Add(-5 * time.Minute),
+		})
+		require.NoError(t, err)
+
+		before := version(t)
+		_, err = manualRepo.SetManualCheckedOutAt(t.Context(), older.ID, false)
+		require.NoError(t, err)
+		assert.NotEqual(t, before, version(t), "undoing a non-max manual checkout still changes the payload")
+	})
+
+	t.Run("changes when an older manual confirmation is cleared", func(t *testing.T) {
+		resetCheckoutTables(t)
+		older, err := manualRepo.CreateManualCheckin(t.Context(), manualcheckin.ManualCheckin{
+			FirstName: "older", LastName: "kid", CheckedOutAt: now.Add(-10 * time.Minute),
+			CheckedOutConfirmedAt: now.Add(-9 * time.Minute),
+		})
+		require.NoError(t, err)
+		_, err = manualRepo.CreateManualCheckin(t.Context(), manualcheckin.ManualCheckin{
+			FirstName: "newer", LastName: "kid", CheckedOutAt: now.Add(-5 * time.Minute),
+			CheckedOutConfirmedAt: now.Add(-4 * time.Minute),
+		})
+		require.NoError(t, err)
+
+		before := version(t)
+		_, err = manualRepo.SetManualCheckedOutConfirmedAt(t.Context(), older.ID, false)
+		require.NoError(t, err)
+		assert.NotEqual(t, before, version(t), "clearing a non-max manual confirmation still changes the payload")
+	})
+
+	t.Run("changes when an old checkin is deleted", func(t *testing.T) {
+		resetCheckoutTables(t)
+		older := createCheckin(t, "older", now.Add(-10*time.Minute), time.Time{})
+		createCheckin(t, "newer", now.Add(-5*time.Minute), time.Time{})
+
+		before := version(t)
+		require.NoError(t, s.DeleteCheckin(t.Context(), older.ID))
+		assert.NotEqual(t, before, version(t))
+	})
+
+	t.Run("changes when a delete and an older insert preserve count and max", func(t *testing.T) {
+		resetCheckoutTables(t)
+		older := createCheckin(t, "older", now.Add(-10*time.Minute), time.Time{})
+		createCheckin(t, "newer", now.Add(-5*time.Minute), time.Time{})
+
+		before := version(t)
+		require.NoError(t, s.DeleteCheckin(t.Context(), older.ID))
+		createCheckin(t, "replacement", now.Add(-20*time.Minute), time.Time{})
+		assert.NotEqual(t, before, version(t), "a compensating delete/insert pair must not cancel out")
+	})
+
+	t.Run("changes when a location group is reassigned", func(t *testing.T) {
+		resetCheckoutTables(t)
+		g1, err := squirrel.Insert("location_groups").RunWith(testDB).Columns("name").Values("g1").ExecContext(t.Context())
+		require.NoError(t, err)
+		g1ID, _ := g1.LastInsertId()
+		g2, err := squirrel.Insert("location_groups").RunWith(testDB).Columns("name").Values("g2").ExecContext(t.Context())
+		require.NoError(t, err)
+		g2ID, _ := g2.LastInsertId()
+		l1, err := squirrel.Insert("locations").RunWith(testDB).
+			Columns("name", "planning_center_id", "event_id", "location_group_id").
+			Values("l1", "plloc_swap_1", 1, g1ID).ExecContext(t.Context())
+		require.NoError(t, err)
+		l1ID, _ := l1.LastInsertId()
+		l2, err := squirrel.Insert("locations").RunWith(testDB).
+			Columns("name", "planning_center_id", "event_id", "location_group_id").
+			Values("l2", "plloc_swap_2", 1, g2ID).ExecContext(t.Context())
+		require.NoError(t, err)
+		l2ID, _ := l2.LastInsertId()
+
+		before := version(t)
+		_, err = testDB.ExecContext(t.Context(),
+			`UPDATE locations SET location_group_id = CASE id WHEN ? THEN ? WHEN ? THEN ? END WHERE id IN (?, ?)`,
+			l1ID, g2ID, l2ID, g1ID, l1ID, l2ID)
+		require.NoError(t, err)
+		assert.NotEqual(t, before, version(t), "a group swap changes the payload even when the id sum does not")
+	})
+
+	t.Run("changes when a location or group is renamed", func(t *testing.T) {
+		resetCheckoutTables(t)
+		g, err := squirrel.Insert("location_groups").RunWith(testDB).Columns("name").Values("old group").ExecContext(t.Context())
+		require.NoError(t, err)
+		gID, _ := g.LastInsertId()
+		l, err := squirrel.Insert("locations").RunWith(testDB).
+			Columns("name", "planning_center_id", "event_id", "location_group_id").
+			Values("old location", "plloc_rename", 1, gID).ExecContext(t.Context())
+		require.NoError(t, err)
+		lID, _ := l.LastInsertId()
+
+		before := version(t)
+		_, err = testDB.ExecContext(t.Context(), `UPDATE locations SET name = 'new location' WHERE id = ?`, lID)
+		require.NoError(t, err)
+		assert.NotEqual(t, before, version(t), "location renames affect location_name filters")
+
+		before = version(t)
+		_, err = testDB.ExecContext(t.Context(), `UPDATE location_groups SET name = 'new group' WHERE id = ?`, gID)
+		require.NoError(t, err)
+		assert.NotEqual(t, before, version(t), "group renames affect location_group_name filters")
+	})
+
+	t.Run("changes when a checkin event is changed", func(t *testing.T) {
+		resetCheckoutTables(t)
+		created, err := s.CreateCheckin(t.Context(), Checkin{
+			PlanningCenterID: "plc_event", EventID: 1, FirstName: "first", LastName: "last",
+			SecurityCode: "ABC123", CheckedOutAt: now,
+		})
+		require.NoError(t, err)
+
+		before := version(t)
+		_, err = testDB.ExecContext(t.Context(), `UPDATE checkins SET event_id = 2 WHERE id = ?`, created.ID)
+		require.NoError(t, err)
+		assert.NotEqual(t, before, version(t), "event_id changes affect event_id filters")
+	})
+
+	t.Run("filter affects the validator", func(t *testing.T) {
+		resetCheckoutTables(t)
+		v1, err := s.CheckoutsVersion(t.Context(), Filter{Limit: 10})
+		require.NoError(t, err)
+		v2, err := s.CheckoutsVersion(t.Context(), Filter{Limit: 20})
+		require.NoError(t, err)
+		assert.NotEqual(t, v1, v2)
+	})
+
+	t.Run("Recent affects the validator", func(t *testing.T) {
+		resetCheckoutTables(t)
+		v1, err := s.CheckoutsVersion(t.Context(), Filter{Recent: false})
+		require.NoError(t, err)
+		v2, err := s.CheckoutsVersion(t.Context(), Filter{Recent: true})
+		require.NoError(t, err)
+		assert.NotEqual(t, v1, v2, "Recent changes the order and therefore which limited rows are returned")
+	})
+
+	t.Run("manual checkin visibility affects the validator", func(t *testing.T) {
+		resetCheckoutTables(t)
+		v1, err := s.CheckoutsVersion(t.Context(), Filter{ManualCheckinsVisible: false})
+		require.NoError(t, err)
+		v2, err := s.CheckoutsVersion(t.Context(), Filter{ManualCheckinsVisible: true})
+		require.NoError(t, err)
+		assert.NotEqual(t, v1, v2, "the response includes or omits manual checkins based on this decision")
+	})
+
+	t.Run("checked_out_before is exact within a bucket", func(t *testing.T) {
+		resetCheckoutTables(t)
+		bucketStart := time.Unix((time.Now().Unix()/300)*300, 0).UTC()
+
+		v1, err := s.CheckoutsVersion(t.Context(), Filter{CheckedOutAtBefore: bucketStart.Add(time.Minute)})
+		require.NoError(t, err)
+		v2, err := s.CheckoutsVersion(t.Context(), Filter{CheckedOutAtBefore: bucketStart.Add(2 * time.Minute)})
+		require.NoError(t, err)
+
+		assert.NotEqual(t, v1, v2,
+			"a relative upper bound admits new rows as it advances; it must not be bucketed")
+	})
+
+	t.Run("upper-bound key separates windows that round to the same cutoff", func(t *testing.T) {
+		resetCheckoutTables(t)
+		cutoff := time.Unix((time.Now().Unix()/300)*300, 0).UTC()
+
+		v1, err := s.CheckoutsVersion(t.Context(), Filter{
+			CheckedOutAtBefore:    cutoff,
+			CheckedOutAtBeforeKey: "relative:-5m0s",
+		})
+		require.NoError(t, err)
+		v2, err := s.CheckoutsVersion(t.Context(), Filter{
+			CheckedOutAtBefore:    cutoff,
+			CheckedOutAtBeforeKey: "relative:-6m0s",
+		})
+		require.NoError(t, err)
+		assert.NotEqual(t, v1, v2,
+			"two different windows that round to the same cutoff must not share a validator")
+	})
+
+	t.Run("unordered limited after bound is exact within a bucket", func(t *testing.T) {
+		resetCheckoutTables(t)
+		bucketStart := time.Unix((time.Now().Unix()/300)*300, 0).UTC()
+
+		v1, err := s.CheckoutsVersion(t.Context(), Filter{
+			CheckedOutAtAfter: bucketStart.Add(time.Minute),
+			Limit:             10,
+		})
+		require.NoError(t, err)
+		v2, err := s.CheckoutsVersion(t.Context(), Filter{
+			CheckedOutAtAfter: bucketStart.Add(2 * time.Minute),
+			Limit:             10,
+		})
+		require.NoError(t, err)
+
+		assert.NotEqual(t, v1, v2,
+			"an unordered limited query can return a different subset as the cutoff moves")
+	})
+
+	t.Run("group ID order does not affect the validator", func(t *testing.T) {
+		resetCheckoutTables(t)
+		v1, err := s.CheckoutsVersion(t.Context(), Filter{LocationGroupIDs: []int64{2, 1}})
+		require.NoError(t, err)
+		v2, err := s.CheckoutsVersion(t.Context(), Filter{LocationGroupIDs: []int64{1, 2}})
+		require.NoError(t, err)
+		assert.Equal(t, v1, v2, "the query treats the group IDs as a set, so the token must too")
+	})
+
+	t.Run("separator characters do not collide with other filters", func(t *testing.T) {
+		resetCheckoutTables(t)
+		v1, err := s.CheckoutsVersion(t.Context(), Filter{FirstName: "a|b", LastName: "c"})
+		require.NoError(t, err)
+		v2, err := s.CheckoutsVersion(t.Context(), Filter{FirstName: "a", LastName: "b|c"})
+		require.NoError(t, err)
+		assert.NotEqual(t, v1, v2, "the old pipe-joined encoding collided on these filters")
+
+		v3, err := s.CheckoutsVersion(t.Context(), Filter{LocationName: "id=5"})
+		require.NoError(t, err)
+		v4, err := s.CheckoutsVersion(t.Context(), Filter{ID: 5})
+		require.NoError(t, err)
+		assert.NotEqual(t, v3, v4, "the old encoding collided on filter-name-shaped values")
+	})
+}
+
+func TestRoundCheckoutsVersionTimeUp(t *testing.T) {
+	bucket := CheckoutsVersionBucket
+	boundary := time.Unix(1_700_000_000, 0).UTC().Truncate(bucket)
+
+	tests := []struct {
+		name string
+		in   time.Time
+		want time.Time
+	}{
+		{"already on a boundary", boundary, boundary},
+		{"just after a boundary", boundary.Add(time.Nanosecond), boundary.Add(bucket)},
+		{"inside a bucket", boundary.Add(bucket / 2), boundary.Add(bucket)},
+		{"just before a boundary", boundary.Add(bucket - time.Nanosecond), boundary.Add(bucket)},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, RoundCheckoutsVersionTimeUp(tc.in))
+			assert.Zero(t, tc.want.Unix()%int64(bucket/time.Second),
+				"the helper must align with the Unix bucket used for lower bounds")
+		})
+	}
+}
+
+func Test_sqliteRepo_CheckoutsVersion_invalidationMatrix(t *testing.T) {
+	s := NewRepo(testDB)
+	manualRepo := manualcheckin.NewRepo(testDB)
+	now := time.Now().UTC()
+
+	reset := func(t *testing.T) {
+		t.Helper()
+		for _, table := range []string{"checkins", "manual_checkins", "locations", "location_groups"} {
+			_, err := squirrel.Delete(table).RunWith(testDB).ExecContext(t.Context())
+			require.NoError(t, err)
+		}
+	}
+
+	counter := func(t *testing.T) int64 {
+		t.Helper()
+		var v int64
+		err := testDB.QueryRowContext(t.Context(),
+			`SELECT COALESCE(MAX(version), 0) FROM checkouts_version`).Scan(&v)
+		require.NoError(t, err)
+		return v
+	}
+
+	createCheckin := func(t *testing.T) Checkin {
+		t.Helper()
+		created, err := s.CreateCheckin(t.Context(), Checkin{
+			PlanningCenterID: "plc_matrix",
+			LocationID:       1,
+			FirstName:        "first",
+			LastName:         "last",
+			SecurityCode:     "ABC123",
+			CheckedOutAt:     now,
+		})
+		require.NoError(t, err)
+		return created
+	}
+
+	t.Run("checkins response-visible updates advance the counter", func(t *testing.T) {
+		cases := []struct {
+			name   string
+			update func(t *testing.T, c Checkin)
+		}{
+			{"planning_center_id", func(t *testing.T, c Checkin) {
+				execUpdate(t, `UPDATE checkins SET planning_center_id = 'plc_matrix_updated' WHERE id = ?`, c.ID)
+			}},
+			{"location_id", func(t *testing.T, c Checkin) {
+				execUpdate(t, `UPDATE checkins SET location_id = 99 WHERE id = ?`, c.ID)
+			}},
+			{"first_name", func(t *testing.T, c Checkin) {
+				execUpdate(t, `UPDATE checkins SET first_name = 'changed' WHERE id = ?`, c.ID)
+			}},
+			{"last_name", func(t *testing.T, c Checkin) {
+				execUpdate(t, `UPDATE checkins SET last_name = 'changed' WHERE id = ?`, c.ID)
+			}},
+			{"security_code", func(t *testing.T, c Checkin) {
+				execUpdate(t, `UPDATE checkins SET security_code = 'XYZ789' WHERE id = ?`, c.ID)
+			}},
+			{"checked_out_at", func(t *testing.T, c Checkin) {
+				execUpdate(t, `UPDATE checkins SET checked_out_at = ? WHERE id = ?`, now.Add(-time.Minute), c.ID)
+			}},
+			{"checked_out_confirmed_at", func(t *testing.T, c Checkin) {
+				execUpdate(t, `UPDATE checkins SET checked_out_confirmed_at = ? WHERE id = ?`, now, c.ID)
+			}},
+			{"event_id", func(t *testing.T, c Checkin) {
+				execUpdate(t, `UPDATE checkins SET event_id = 42 WHERE id = ?`, c.ID)
+			}},
+		}
+
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				reset(t)
+				checkin := createCheckin(t)
+				before := counter(t)
+				tc.update(t, checkin)
+				assert.NotEqual(t, before, counter(t))
+			})
+		}
+	})
+
+	t.Run("manual checkin response-visible updates advance the counter", func(t *testing.T) {
+		cases := []struct {
+			name   string
+			update func(t *testing.T, m manualcheckin.ManualCheckin)
+		}{
+			{"public_id", func(t *testing.T, m manualcheckin.ManualCheckin) {
+				execUpdate(t, `UPDATE manual_checkins SET public_id = 'manual-updated' WHERE id = ?`, m.ID)
+			}},
+			{"first_name", func(t *testing.T, m manualcheckin.ManualCheckin) {
+				execUpdate(t, `UPDATE manual_checkins SET first_name = 'changed' WHERE id = ?`, m.ID)
+			}},
+			{"last_name", func(t *testing.T, m manualcheckin.ManualCheckin) {
+				execUpdate(t, `UPDATE manual_checkins SET last_name = 'changed' WHERE id = ?`, m.ID)
+			}},
+			{"checked_out_at", func(t *testing.T, m manualcheckin.ManualCheckin) {
+				execUpdate(t, `UPDATE manual_checkins SET checked_out_at = ? WHERE id = ?`, now.Add(-time.Minute), m.ID)
+			}},
+			{"checked_out_confirmed_at", func(t *testing.T, m manualcheckin.ManualCheckin) {
+				execUpdate(t, `UPDATE manual_checkins SET checked_out_confirmed_at = ? WHERE id = ?`, now, m.ID)
+			}},
+		}
+
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				reset(t)
+				manual, err := manualRepo.CreateManualCheckin(t.Context(), manualcheckin.ManualCheckin{
+					FirstName: "first", LastName: "last", CheckedOutAt: now,
+				})
+				require.NoError(t, err)
+				before := counter(t)
+				tc.update(t, manual)
+				assert.NotEqual(t, before, counter(t))
+			})
+		}
+	})
+
+	t.Run("non-visible updates do not advance the counter", func(t *testing.T) {
+		t.Run("checkins.fetched_at", func(t *testing.T) {
+			reset(t)
+			checkin := createCheckin(t)
+			before := counter(t)
+			execUpdate(t, `UPDATE checkins SET fetched_at = ? WHERE id = ?`, now, checkin.ID)
+			assert.Equal(t, before, counter(t))
+		})
+
+		t.Run("locations non-visible columns", func(t *testing.T) {
+			reset(t)
+			res, err := squirrel.Insert("locations").
+				RunWith(testDB).
+				Columns("name", "planning_center_id", "event_id").
+				Values("matrix", "plloc_matrix", 1).
+				ExecContext(t.Context())
+			require.NoError(t, err)
+			locationID, err := res.LastInsertId()
+			require.NoError(t, err)
+
+			before := counter(t)
+			execUpdate(t, `UPDATE locations SET auto_fetch = 1 WHERE id = ?`, locationID)
+			assert.Equal(t, before, counter(t), "auto_fetch is not response-visible")
+
+			execUpdate(t, `UPDATE locations SET event_id = 2 WHERE id = ?`, locationID)
+			assert.Equal(t, before, counter(t), "locations.event_id is not response-visible")
+
+			execUpdate(t, `UPDATE locations SET last_checked_out_time = ? WHERE id = ?`, now, locationID)
+			assert.Equal(t, before, counter(t), "last_checked_out_time is not response-visible")
+		})
+
+		t.Run("manual_checkins.created_at", func(t *testing.T) {
+			reset(t)
+			manual, err := manualRepo.CreateManualCheckin(t.Context(), manualcheckin.ManualCheckin{
+				FirstName: "first", LastName: "last", CheckedOutAt: now,
+			})
+			require.NoError(t, err)
+
+			before := counter(t)
+			execUpdate(t, `UPDATE manual_checkins SET created_at = ? WHERE id = ?`, now.Add(-time.Hour), manual.ID)
+			assert.Equal(t, before, counter(t))
+		})
+
+		t.Run("manual_checkins.child_id", func(t *testing.T) {
+			reset(t)
+			childID := insertTestChild(t, now)
+			manual, err := manualRepo.CreateManualCheckin(t.Context(), manualcheckin.ManualCheckin{
+				ChildID: childID, FirstName: "first", LastName: "last", CheckedOutAt: now,
+			})
+			require.NoError(t, err)
+
+			before := counter(t)
+			execUpdate(t, `UPDATE manual_checkins SET child_id = NULL WHERE id = ?`, manual.ID)
+			assert.Equal(t, before, counter(t), "child_id is not response-visible")
+		})
+	})
+}
+
+func execUpdate(t *testing.T, query string, args ...any) {
+	t.Helper()
+	_, err := testDB.ExecContext(t.Context(), query, args...)
+	require.NoError(t, err)
+}
+
+func insertTestChild(t *testing.T, now time.Time) int64 {
+	t.Helper()
+	res, err := testDB.ExecContext(t.Context(),
+		`INSERT INTO parents (first_name, last_name, phone, email, address1, city, state, zip, created_at)
+		 VALUES ('matrix', 'parent', '555', 'matrix@example.com', '1 Main', 'City', 'ST', '12345', ?)`,
+		now)
+	require.NoError(t, err)
+	parentID, err := res.LastInsertId()
+	require.NoError(t, err)
+
+	res, err = testDB.ExecContext(t.Context(),
+		`INSERT INTO children (parent_id, first_name, last_name, dob, grade, gender, relationship, created_at)
+		 VALUES (?, 'matrix', 'child', '2020-01-01', '1', 'boy', 'parent', ?)`,
+		parentID, now)
+	require.NoError(t, err)
+	childID, err := res.LastInsertId()
+	require.NoError(t, err)
+	return childID
+}
+
+func Benchmark_sqliteRepo_CheckoutsVersion(b *testing.B) {
+	_, err := squirrel.Delete("checkins").RunWith(testDB).ExecContext(b.Context())
+	require.NoError(b, err)
+	_, err = squirrel.Delete("manual_checkins").RunWith(testDB).ExecContext(b.Context())
+	require.NoError(b, err)
+	_, err = squirrel.Delete("locations").RunWith(testDB).ExecContext(b.Context())
+	require.NoError(b, err)
+
+	res, err := squirrel.Insert("locations").
+		RunWith(testDB).
+		Columns("name", "planning_center_id", "event_id").
+		Values("bench", "plloc_bench", 1).
+		ExecContext(b.Context())
+	require.NoError(b, err)
+	locID, _ := res.LastInsertId()
+
+	s := NewRepo(testDB)
+	for i := 0; i < 1000; i++ {
+		_, err := s.CreateCheckin(b.Context(), Checkin{
+			PlanningCenterID: fmt.Sprintf("plc_bench_%d", i),
+			LocationID:       locID,
+			FirstName:        "first",
+			LastName:         "last",
+			SecurityCode:     "ABC123",
+			CheckedOutAt:     time.Now().UTC().Add(-time.Minute),
+		})
+		require.NoError(b, err)
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, err := s.CheckoutsVersion(b.Context(), Filter{})
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func Benchmark_sqliteRepo_ListCheckins(b *testing.B) {
+	s := NewRepo(testDB)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, err := s.ListCheckins(b.Context(), Filter{})
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
 }

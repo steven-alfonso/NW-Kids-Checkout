@@ -28,8 +28,9 @@ db-reset:
 		INSERT INTO schema_migrations (version, dirty) VALUES ($$latest, 0);"
 
 .PHONY: db-migrate
-# The snapshot dumps raw sqlite_master text (not .schema) so db/structure.sql
-# is byte-identical regardless of the sqlite3 CLI version.
+# The snapshot dumps raw sqlite_master text (not .schema) for tables, indexes,
+# and triggers so db/structure.sql is byte-identical regardless of the sqlite3
+# CLI version.
 #
 # The mkdir matters (see db-reset): database/ is gitignored and absent on a
 # fresh clone.
@@ -38,7 +39,7 @@ db-migrate:
 	tmpdb=$$(mktemp) && \
 	sqlite3 $$tmpdb < db/pragmas.sqlite && \
 	migrate -source file://db/migrations -database "sqlite3://$$tmpdb" up && \
-	sqlite3 -batch -noheader -init /dev/null $$tmpdb "SELECT sql || ';' FROM sqlite_master WHERE type IN ('table','index') AND name NOT IN ('schema_migrations','sqlite_sequence','version_unique') AND sql IS NOT NULL;" > db/structure.sql && \
+	sqlite3 -batch -noheader -init /dev/null $$tmpdb "SELECT sql || ';' FROM sqlite_master WHERE type IN ('table','index','trigger') AND name NOT IN ('schema_migrations','sqlite_sequence','version_unique') AND sql IS NOT NULL;" > db/structure.sql && \
 	rm -f $$tmpdb && \
 	migrate -source file://db/migrations -database "sqlite3://$(KIDS_CHECKIN_DB_FILE)" up
 
