@@ -126,6 +126,11 @@ specific selectors to the spec.
   `aria-controls="search-controls"`, and `aria-expanded="true|false"`.
 - Confirm control: accessible name `Mark <full name> as confirmed`.
 
+Focus containment beyond the attributes above (Tab wrap, background `inert`
+while the sheet is open, the collapsed search panel's `inert`, and the
+script-load fallback) is implementation-local; see `KNOWN-BEHAVIORS.md` and
+`test-support/app-contract/`.
+
 ### Copy
 
 These strings are asserted exactly and are part of the contract:

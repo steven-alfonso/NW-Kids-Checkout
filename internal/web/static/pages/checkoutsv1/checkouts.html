@@ -165,6 +165,17 @@
         }
     </style>
 
+    <!-- Metadata content belongs in head: a body-level <noscript> is
+         transparent for flow content, so the <style> that hides the loading
+         placeholder is only conforming here. -->
+    <noscript>
+        <style>
+            #checkouts-loading {
+                display: none;
+            }
+        </style>
+    </noscript>
+
 </head>
 
 <body class="min-h-screen overflow-y-auto bg-white lg:h-screen lg:overflow-hidden">
@@ -176,7 +187,7 @@
             class="absolute right-0 bottom-0 h-[200px] w-auto m:h-auto object-cover object-bottom lg:h-auto lg:w-[40%] z-0">
     </div>
 
-    <header class="relative flex justify-between items-center w-full z-20 px-6 pt-4 lg:fixed">
+    <header id="page-header" class="relative flex justify-between items-center w-full z-20 px-6 pt-4 lg:fixed">
         <div class="flex justify-between items-center">
             <a href="/">
                 <picture>
@@ -221,11 +232,6 @@
     <!-- Vue app: main content, overdue badge, and overdue sheet -->
     <div id="app">
         <noscript>
-            <style>
-                #checkouts-loading {
-                    display: none;
-                }
-            </style>
             <div class="text-center text-gray-600 py-8">
                 This page requires JavaScript.
             </div>
