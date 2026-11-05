@@ -502,7 +502,7 @@ function unlockBodyScroll() {
 const SHEET_FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 // The page's focusable background, minus the sheet and its backdrop. inert
-// removes all three from the tab ring and the accessibility tree in one go;
+// removes all three from the tab order and the accessibility tree in one go;
 // aria-hidden on the sheet only covers assistive tech.
 const SHEET_BACKGROUND_IDS = ['page-header', 'board-content', 'overdue-badge'];
 
@@ -529,7 +529,7 @@ function getSheetFocusables() {
         .filter((element) => !isVisuallyHidden(element) && element.tabIndex >= 0);
 }
 
-// Keeps the tab ring inside the sheet: what the keyboard's own Tab does in
+// Keeps Tab inside the sheet: what the keyboard's own Tab does in
 // supporting browsers, made explicit for the ones that do not implement inert.
 function trapSheetTab(event) {
     if (!isOverdueSheetOpen || event.key !== 'Tab' || !dom.overdueSheet) return;
@@ -540,7 +540,7 @@ function trapSheetTab(event) {
         return;
     }
     // -1 means focus is on the sheet itself (tabindex="-1"), which sits outside
-    // the ring; treat it as the boundary in whichever direction was pressed.
+    // that sequence; treat it as the boundary in whichever direction was pressed.
     const index = focusable.indexOf(event.target);
     const atStart = index <= 0;
     const atEnd = index === -1 || index === focusable.length - 1;
@@ -1366,7 +1366,7 @@ document.addEventListener('DOMContentLoaded', function () {
                 void searchControls.offsetHeight;
                 searchControls.style.height = `${searchControls.scrollHeight}px`;
             } else {
-                // Collapsing around a focused control would blur it to <body>
+                // Collapsing around a focused control would drop focus to <body>
                 // once the ancestor goes inert; hand focus to the toggle first.
                 if (searchControls.contains(document.activeElement)) {
                     searchToggleButton.focus({ preventScroll: true });
