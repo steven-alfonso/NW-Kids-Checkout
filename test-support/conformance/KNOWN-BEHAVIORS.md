@@ -54,6 +54,17 @@ commit.
   page locks the background with inline fixed positioning; a replacement may
   use a class or another mechanism. Verify it manually after the migration.
   The existing unit suite covers the vanilla implementation.
+- **Modal focus containment is implementation-local.** The suite asserts the
+  sheet's `role`/`aria-modal`/`aria-hidden`/`inert` attributes and that closing
+  restores focus to the badge, but not the Tab wrap, the background `inert`
+  toggle, or the collapsed search panel's `inert` state. jsdom implements
+  neither `inert` nor native Tab, so those live in the vanilla browser suite
+  (`test-support/vanilla-app/`, run with `npm run test:app`). A replacement
+  must implement equivalent behavior and should carry its own browser spec.
+- **A failed `checkouts.js` load swaps the loading row for a message.** The
+  `<noscript>` copy only covers scripting disabled; a boot watchdog replaces
+  `Loading children data...` if the script never initializes. Not part of the
+  conformance contract: a replacement can fail visibly in its own way.
 - **`location_group_name` can render unfiltered for one poll.** The name is
   resolved against asynchronously loaded groups. On a cold load with only
   `?location_group_name=...`, the first render can show the full list; the

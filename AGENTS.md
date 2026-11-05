@@ -26,6 +26,10 @@ This file guides coding agents working in this repo. Keep changes small, follow 
   `make test-conformance`. First run needs `npx playwright install chromium`.
   The suite is black-box and must keep passing on both the vanilla page and a
   replacement implementation; see `test-support/conformance/README.md`.
+- Run the vanilla browser regressions: `npm run test:app`. These are
+  implementation-local Playwright checks (overdue focus trap, background
+  `inert`, collapsed search panel, Tab order) that jsdom cannot model. They use
+  the same server and fake API as the conformance suite.
 - CI runs `go test` directly rather than through `make test`: godotenv exits
   non-zero when `.env` is absent, and it is gitignored. No test reads a real
   `.env`; the ones that care about a variable set it with `t.Setenv`.

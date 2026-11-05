@@ -19,4 +19,5 @@ tmp/*
 
 # Playwright output
 test-results/
+test-results-app/
 playwright-report/
