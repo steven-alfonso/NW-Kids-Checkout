@@ -2,3 +2,6 @@
 * text=auto
 
 *.db binary
+
+# Generated Vite bundle; don't report its embedded runtime whitespace.
+internal/web/static/dist/** -whitespace
