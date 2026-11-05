@@ -129,7 +129,7 @@ specific selectors to the spec.
 Focus containment beyond the attributes above (Tab wrap, background `inert`
 while the sheet is open, the collapsed search panel's `inert`, and the
 script-load fallback) is implementation-local; see `KNOWN-BEHAVIORS.md` and
-`test-support/vanilla-app/`.
+`test-support/app-contract/`.
 
 ### Copy
 
