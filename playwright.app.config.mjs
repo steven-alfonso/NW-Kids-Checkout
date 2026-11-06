@@ -1,17 +1,11 @@
-// Real-browser checks that the cross-implementation conformance suite cannot
-// own: focus trapping, inert enforcement, and tab order. jsdom reflects the
-// attributes but implements neither inert nor native Tab, so these behaviors
-// need a browser even though they are vanilla-implementation details.
-const { defineConfig, devices } = require('@playwright/test');
+import { defineConfig, devices } from '@playwright/test';
 
 const pagePath =
   process.env.CHECKOUTS_PAGE || '/static/pages/checkoutsv1/checkouts.html';
 
-module.exports = defineConfig({
-  testDir: './test-support/vanilla-app',
-  testMatch: '**/*.spec.js',
-  // Separate from the conformance run's test-results/ so CI can upload both.
-  outputDir: 'test-results-app',
+export default defineConfig({
+  testDir: './test-support',
+  testMatch: '**/*.spec.mjs',
   timeout: 20_000,
   expect: { timeout: 5_000 },
   fullyParallel: false,
@@ -32,7 +26,14 @@ module.exports = defineConfig({
   },
   projects: [
     {
-      name: 'vanilla-app',
+      name: 'app',
+      testDir: './test-support/app-contract',
+      metadata: { pagePath },
+      use: { ...devices['Desktop Chrome'] }
+    },
+    {
+      name: 'preact',
+      testDir: './test-support/preact-app',
       metadata: { pagePath },
       use: { ...devices['Desktop Chrome'] }
     }

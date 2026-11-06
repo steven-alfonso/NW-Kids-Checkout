@@ -23,13 +23,9 @@ This file guides coding agents working in this repo. Keep changes small, follow 
 ### Tests
 - Run Go/unit tests: `make test` (runs `go test ./...` + `-tags dev ./...` + `npm test` via godotenv)
 - Run the checkouts browser conformance suite: `npm run test:conformance` or
-  `make test-conformance`. First run needs `npx playwright install chromium`.
+  `make test-conformance`; run `npm run test:app` for the app-level contract. First run needs `npx playwright install chromium`.
   The suite is black-box and must keep passing on both the vanilla page and a
   replacement implementation; see `test-support/conformance/README.md`.
-- Run the vanilla browser regressions: `npm run test:app`. These are
-  implementation-local Playwright checks (overdue focus trap, background
-  `inert`, collapsed search panel, Tab order) that jsdom cannot model. They use
-  the same server and fake API as the conformance suite.
 - CI runs `go test` directly rather than through `make test`: godotenv exits
   non-zero when `.env` is absent, and it is gitignored. No test reads a real
   `.env`; the ones that care about a variable set it with `t.Setenv`.
@@ -43,8 +39,12 @@ This file guides coding agents working in this repo. Keep changes small, follow 
 - Install the Playwright browser once: `npx playwright install chromium`
 - Watch CSS: `npm run watch:css`
 - Build CSS: `npm run build:css`
+- Build the Preact checkouts bundle: `npm run build:checkouts-preact`
+  (source in `internal/web/src/checkouts-preact`, output committed at
+  `internal/web/static/dist/preact/checkouts.js`).
+- Watch the checkouts bundle: `npm run watch:checkouts-preact`
 - `package-lock.json` is committed so CI and local installs resolve the same
-  Tailwind and Playwright versions.
+  Tailwind, Vite, and Playwright versions.
 
 ### Lint/format
 - Lint: no dedicated lint config found.
@@ -148,7 +148,9 @@ This file guides coding agents working in this repo. Keep changes small, follow 
 
 ### Frontend conventions
 - HTML templates live under `internal/web/static/pages`.
-- Page JS lives alongside the HTML in `internal/web/static/pages`.
+- Most page JS lives alongside the HTML in `internal/web/static/pages`.
+- The checkouts page is built by Vite from `internal/web/src/checkouts-preact`;
+  its committed bundle is `internal/web/static/dist/preact/checkouts.js`.
 - Shared JS libraries live in `internal/web/static/js`.
 - Images and icons live in `internal/web/static/img`.
 - Regenerate Tailwind output when UI changes touch utility classes.

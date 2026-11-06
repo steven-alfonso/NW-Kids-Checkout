@@ -58,9 +58,9 @@ commit.
   sheet's `role`/`aria-modal`/`aria-hidden`/`inert` attributes and that closing
   restores focus to the badge, but not the Tab wrap, the background `inert`
   toggle, or the collapsed search panel's `inert` state. jsdom implements
-  neither `inert` nor native Tab, so those live in the vanilla browser suite
-  (`test-support/vanilla-app/`, run with `npm run test:app`). A replacement
-  must implement equivalent behavior and should carry its own browser spec.
+  neither `inert` nor native Tab, so those live in the app browser suite
+  (`test-support/app-contract/`, run with `npm run test:app`). A replacement
+  must implement equivalent behavior.
 - **A failed `checkouts.js` load swaps the loading row for a message.** The
   `<noscript>` copy only covers scripting disabled; a boot watchdog replaces
   `Loading children data...` if the script never initializes. Not part of the
