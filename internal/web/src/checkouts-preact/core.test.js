@@ -2,25 +2,34 @@ import { describe, expect, it } from 'vitest';
 import {
   TIME_PILL_BASE_CLASS,
   TIME_PILL_OVERDUE_BASE_CLASS,
-  buildLocationGroupSearch,
-  calculateMinutesAgoFromTimestamp,
-  filterVisibleChildren,
   formatHeaderTime,
   formatMinutesAgo,
-  getChildId,
-  getChildSignature,
   getMinutesAgoFromTimestamp,
-  getOverdueChildren,
-  getOverdueGroupLabel,
-  getSelectAllLabel,
-  getSelectedFromURL,
   getTimePillClass,
   getTimePillClassFromMinutes,
-  isGroupSelected,
+  calculateMinutesAgoFromTimestamp,
+  getCheckedOutTimestamp
+} from './lib/time.js';
+import {
+  getChildId,
+  getChildSignature,
+  reconcileChildren
+} from './lib/identity.js';
+import {
   normalizeCheckoutsResponse,
   prepareChildren,
-  reconcileChildren
-} from './core.js';
+  getOverdueChildren
+} from './lib/api.js';
+import {
+  buildLocationGroupSearch,
+  filterVisibleChildren,
+  getSelectAllLabel,
+  getSelectedFromURL,
+  isGroupSelected
+} from './lib/selection.js';
+import {
+  getOverdueGroupLabel
+} from './lib/groups.js';
 
 function child(overrides = {}) {
   return {

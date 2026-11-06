@@ -13,24 +13,32 @@ import {
   FLASH_RESET_DELAY_MS,
   TIME_PILL_BASE_CLASS,
   TIME_PILL_OVERDUE_BASE_CLASS,
-  buildLocationGroupSearch,
-  compareByCheckoutId,
-  filterVisibleChildren,
   formatHeaderTime,
   formatMinutesAgo,
+  getMinutesAgoFromTimestamp,
+  getTimePillClassFromMinutes
+} from './lib/time.js';
+import {
+  compareByCheckoutId,
   getChildId,
   getChildSignature,
-  getLocationGroupColor,
-  getMinutesAgoFromTimestamp,
-  getOverdueChildren,
-  getOverdueGroupLabel,
+  reconcileChildren
+} from './lib/identity.js';
+import {
+  prepareChildren,
+  getOverdueChildren
+} from './lib/api.js';
+import {
+  buildLocationGroupSearch,
+  filterVisibleChildren,
   getSelectAllLabel,
   getSelectedFromURL,
-  getTimePillClassFromMinutes,
-  isGroupSelected,
-  prepareChildren,
-  reconcileChildren
-} from './core.js';
+  isGroupSelected
+} from './lib/selection.js';
+import {
+  getLocationGroupColor,
+  getOverdueGroupLabel
+} from './lib/groups.js';
 
 const CONFIRMED_ICON_SRC = '/static/img/confirmed-checkbox.svg';
 const MANUAL_STAR_ICON_SRC = '/static/img/star.svg';
