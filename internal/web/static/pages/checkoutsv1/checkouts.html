@@ -67,6 +67,23 @@
             transform: scaleY(1);
         }
 
+        /* The artwork is bottom-anchored to the viewport. Browsers that resize
+           the layout viewport for the on-screen keyboard would drag it up with
+           the keyboard, so remove it while the search field -- the only control
+           that opens the keyboard -- has focus. Hide without a transition so it
+           cannot visibly move for a frame; fade it back in on blur. */
+        #page-background {
+            transition: opacity 150ms ease-out;
+        }
+
+        @media (max-width: 1023px), (pointer: coarse) {
+            #page-background.is-keyboard-obscured {
+                opacity: 0;
+                visibility: hidden;
+                transition: none;
+            }
+        }
+
         @keyframes new-child-flash {
             0% {
                 background-color: #fef08a;
@@ -180,7 +197,7 @@
 
 <body class="min-h-screen overflow-y-auto bg-white lg:h-screen lg:overflow-hidden">
     <!-- Background images -->
-    <div class="fixed inset-0 z-0 overflow-hidden pointer-events-none">
+    <div id="page-background" class="fixed inset-0 z-0 overflow-hidden pointer-events-none">
         <img src="/static/img/bg-left.svg" alt=""
             class="absolute left-0 bottom-0 h-[300px] w-auto m:h-auto object-cover object-bottom lg:h-auto lg:w-[100%] z-10">
         <img src="/static/img/bg-right.svg" alt=""
