@@ -13,11 +13,28 @@
         body {
             font-family: system-ui, -apple-system, sans-serif;
         }
+
+        /* The artwork is bottom-anchored to the viewport. Browsers that resize
+           the layout viewport for the on-screen keyboard would drag it up with
+           the keyboard, so remove it while a login field has focus. Hide
+           without a transition so it cannot visibly move for a frame; fade it
+           back in on blur. */
+        #page-background {
+            transition: opacity 150ms ease-out;
+        }
+
+        @media (max-width: 1023px), (pointer: coarse) {
+            #page-background.is-keyboard-obscured {
+                opacity: 0;
+                visibility: hidden;
+                transition: none;
+            }
+        }
     </style>
 </head>
 <body class="min-h-screen bg-white">
     <!-- Background images -->
-    <div class="fixed inset-0 z-0 overflow-hidden">
+    <div id="page-background" class="fixed inset-0 z-0 overflow-hidden">
         <img src="/static/img/bg-left.svg" alt="" class="absolute left-0 bottom-0 h-[300px] w-auto m:h-auto object-cover object-bottom lg:h-auto lg:w-[100%] z-10">
         <img src="/static/img/bg-right.svg" alt="" class="absolute right-0 bottom-0 h-[200px] w-auto m:h-auto object-cover object-bottom lg:h-auto lg:w-[40%] z-0">
     </div>
@@ -77,6 +94,25 @@
     </div>
 
     <script>
+        // Keep the decorative artwork from following a keyboard-shrunken
+        // viewport. Focus fires before the keyboard animates, so hide first.
+        const loginForm = document.getElementById("login-form");
+        const pageBackground = document.getElementById("page-background");
+        if (loginForm && pageBackground) {
+            const opensKeyboard = (element) =>
+                Boolean(element?.matches?.("input, select, textarea"));
+            loginForm.addEventListener("focusin", (event) => {
+                if (opensKeyboard(event.target)) {
+                    pageBackground.classList.add("is-keyboard-obscured");
+                }
+            });
+            loginForm.addEventListener("focusout", (event) => {
+                if (!opensKeyboard(event.target)) return;
+                if (opensKeyboard(event.relatedTarget)) return;
+                pageBackground.classList.remove("is-keyboard-obscured");
+            });
+        }
+
         const params = new URLSearchParams(window.location.search);
         const error = params.get("error");
         if (error) {

@@ -97,3 +97,26 @@ test('keeps the collapsed search panel out of the tab order', async ({
   await expect(controls).toHaveAttribute('inert', '');
   await expect(controls).toHaveAttribute('aria-hidden', 'true');
 });
+
+test('keeps the decorative background out of the mobile keyboard viewport', async ({
+  page
+}, testInfo) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openBoard(page, testInfo);
+  const background = page.locator('#page-background');
+  await expect(background).toHaveCSS('opacity', '1');
+
+  // Focus lands before the keyboard animates in, so the artwork fades before
+  // a viewport-resizing browser can drag it upward.
+  await page.locator('#search-toggle-button').click();
+  await expect(page.locator('#search-input')).toBeFocused();
+  await expect(background).toHaveCSS('opacity', '0');
+
+  // Simulate a browser that shrinks the layout viewport for the keyboard.
+  await page.setViewportSize({ width: 390, height: 500 });
+  await expect(background).toHaveCSS('opacity', '0');
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.locator('#search-input').evaluate((input) => input.blur());
+  await expect(background).toHaveCSS('opacity', '1');
+});

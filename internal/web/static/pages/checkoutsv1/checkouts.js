@@ -1352,6 +1352,14 @@ document.addEventListener('DOMContentLoaded', function () {
     const searchInput = document.getElementById('search-input');
     if (searchInput) searchInput.addEventListener('input', () => setSearchQuery(searchInput.value));
 
+    // The decorative artwork must not chase a keyboard-shrunken viewport.
+    // Focus fires before the keyboard animates, so the fade starts first.
+    const pageBackground = document.getElementById('page-background');
+    if (pageBackground && searchInput) {
+        searchInput.addEventListener('focus', () => pageBackground.classList.add('is-keyboard-obscured'));
+        searchInput.addEventListener('blur', () => pageBackground.classList.remove('is-keyboard-obscured'));
+    }
+
     const hideConfirmedToggle = document.getElementById('hide-confirmed-toggle');
     if (hideConfirmedToggle) hideConfirmedToggle.addEventListener('change', () => setHideConfirmed(hideConfirmedToggle.checked));
 
