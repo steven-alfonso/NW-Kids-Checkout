@@ -1353,11 +1353,54 @@ document.addEventListener('DOMContentLoaded', function () {
     if (searchInput) searchInput.addEventListener('input', () => setSearchQuery(searchInput.value));
 
     // The decorative artwork must not chase a keyboard-shrunken viewport.
-    // Focus fires before the keyboard animates, so the fade starts first.
+    // Focus fires before the keyboard animates, so hide it immediately. Blur
+    // fires before the keyboard finishes closing, so hold the artwork back
+    // until the viewport grows back -- otherwise it fades in at the shrunken
+    // bottom and then drops when the keyboard is gone.
     const pageBackground = document.getElementById('page-background');
     if (pageBackground && searchInput) {
-        searchInput.addEventListener('focus', () => pageBackground.classList.add('is-keyboard-obscured'));
-        searchInput.addEventListener('blur', () => pageBackground.classList.remove('is-keyboard-obscured'));
+        const viewportHeight = () => window.visualViewport?.height || window.innerHeight || 0;
+        let restingHeight = viewportHeight();
+        let awaitingViewportRestore = false;
+        let fallbackRevealTimer = null;
+
+        const hideBackground = () => {
+            // Capture the resting height only before the keyboard opens; moving
+            // focus between fields happens while it is already up.
+            if (!pageBackground.classList.contains('is-keyboard-obscured')) {
+                restingHeight = viewportHeight();
+            }
+            awaitingViewportRestore = false;
+            clearTimeout(fallbackRevealTimer);
+            pageBackground.classList.add('is-keyboard-obscured');
+        };
+
+        const revealBackground = () => {
+            awaitingViewportRestore = false;
+            clearTimeout(fallbackRevealTimer);
+            pageBackground.classList.remove('is-keyboard-obscured');
+        };
+
+        const revealIfViewportRestored = () => {
+            if (awaitingViewportRestore && viewportHeight() >= restingHeight - 1) {
+                revealBackground();
+            }
+        };
+
+        searchInput.addEventListener('focus', hideBackground);
+        searchInput.addEventListener('blur', () => {
+            awaitingViewportRestore = true;
+            // Browsers that never shrank the viewport (desktop) have nothing
+            // to wait for.
+            revealIfViewportRestored();
+            if (awaitingViewportRestore) {
+                // A browser that restores the viewport without a resize event
+                // must not leave the artwork hidden forever.
+                fallbackRevealTimer = setTimeout(revealBackground, 500);
+            }
+        });
+        window.addEventListener('resize', revealIfViewportRestored);
+        window.visualViewport?.addEventListener('resize', revealIfViewportRestored);
     }
 
     const hideConfirmedToggle = document.getElementById('hide-confirmed-toggle');

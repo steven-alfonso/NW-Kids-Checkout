@@ -20,7 +20,12 @@ test('keeps the login artwork out of the mobile keyboard viewport', async ({
   await page.setViewportSize({ width: 390, height: 500 });
   await expect(background).toHaveCSS('opacity', '0');
 
-  await page.setViewportSize({ width: 390, height: 844 });
+  // Blur lands before the keyboard finishes closing (as it does when the Go
+  // key submits the form). Keep the artwork hidden until the viewport is back.
   await page.locator('#password').evaluate((input) => input.blur());
+  await page.waitForTimeout(300);
+  await expect(background).toHaveCSS('opacity', '0');
+
+  await page.setViewportSize({ width: 390, height: 844 });
   await expect(background).toHaveCSS('opacity', '1');
 });

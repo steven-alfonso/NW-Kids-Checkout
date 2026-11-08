@@ -116,7 +116,13 @@ test('keeps the decorative background out of the mobile keyboard viewport', asyn
   await page.setViewportSize({ width: 390, height: 500 });
   await expect(background).toHaveCSS('opacity', '0');
 
-  await page.setViewportSize({ width: 390, height: 844 });
+  // The keyboard's Go/checkmark blurs the field before the keyboard finishes
+  // closing. Keep the artwork hidden until the viewport is back, or it fades
+  // in at the shrunken bottom and then drops when the viewport restores.
   await page.locator('#search-input').evaluate((input) => input.blur());
+  await page.waitForTimeout(300);
+  await expect(background).toHaveCSS('opacity', '0');
+
+  await page.setViewportSize({ width: 390, height: 844 });
   await expect(background).toHaveCSS('opacity', '1');
 });
