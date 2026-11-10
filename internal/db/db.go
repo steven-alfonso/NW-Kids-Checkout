@@ -38,47 +38,64 @@ import (
 // path moves it once.
 const DefaultDBFile = "database/kids-checkin.db"
 
-// RegisterOTelDriver registers the sqlite3 driver wrapped with OpenTelemetry
-// instrumentation exactly once per process, bound to the given providers.
-// Call it before the first InitDB when telemetry is enabled; InitDB falls back
-// to the raw driver otherwise. Registration is a no-op after the first call,
-// so the initial providers win regardless of later invocations.
+// sqlite3Driver is the raw database/sql driver name for mattn/go-sqlite3.
+const sqlite3Driver = "sqlite3"
+
+// otelDriverName registers a sqlite3 driver wrapped with OpenTelemetry
+// instrumentation and returns its database/sql name. sql.Register panics on a
+// duplicate name, so registration happens once per process and the first
+// provider pair wins. Every read goes through otelDriverOnce, which is what
+// supplies the happens-before that publishes the two values below.
+//
+// The name is returned to the caller rather than held in a package global that
+// InitDB consults, because InitDB must be able to open the raw driver
+// unconditionally. A global made "register first, then open" the only correct
+// order, and one registration anywhere in a binary silently re-pointed every
+// later InitDB at the wrapped driver, tests included.
 var (
-	driverOnce  sync.Once
-	driverName  string
-	registerErr error
+	otelDriverOnce sync.Once
+	otelDriver     string
+	otelDriverErr  error
 )
 
-func RegisterOTelDriver(tp trace.TracerProvider, mp metric.MeterProvider) error {
-	driverOnce.Do(func() {
-		driverName, registerErr = otelsql.Register(
-			"sqlite3",
+func otelDriverName(tp trace.TracerProvider, mp metric.MeterProvider) (string, error) {
+	otelDriverOnce.Do(func() {
+		otelDriver, otelDriverErr = otelsql.Register(
+			sqlite3Driver,
 			otelsql.WithTracerProvider(tp),
 			otelsql.WithMeterProvider(mp),
 			otelsql.WithAttributes(semconv.DBSystemNameSQLite),
 		)
-		if registerErr != nil {
-			registerErr = fmt.Errorf("registering otel sqlite driver: %w", registerErr)
+		if otelDriverErr != nil {
+			otelDriverErr = fmt.Errorf("registering otel sqlite driver: %w", otelDriverErr)
 			return
 		}
-		slog.Debug("registered otel-instrumented sqlite driver", slog.String("driver_name", driverName))
+		slog.Debug("registered otel-instrumented sqlite driver", slog.String("driver_name", otelDriver))
 	})
-	return registerErr
+	return otelDriver, otelDriverErr
 }
 
-// InitDBInstrumented registers the OTel driver and opens an instrumented
-// database in one step, so callers cannot open the DB before registering and
-// silently run without instrumentation.
+// InitDB opens the database with the raw sqlite3 driver.
+func InitDB(dataSourceName string) (*sql.DB, error) {
+	return openDB(sqlite3Driver, dataSourceName)
+}
+
+// InitDBInstrumented opens the database with a sqlite3 driver wrapped in
+// OpenTelemetry instrumentation bound to the given providers. Registration and
+// the open happen in one step, so callers cannot open the database before
+// registering and silently run without instrumentation.
 func InitDBInstrumented(dataSourceName string, tp trace.TracerProvider, mp metric.MeterProvider) (*sql.DB, error) {
-	if err := RegisterOTelDriver(tp, mp); err != nil {
+	name, err := otelDriverName(tp, mp)
+	if err != nil {
 		return nil, err
 	}
-	return InitDB(dataSourceName)
+	return openDB(name, dataSourceName)
 }
 
-// InitDB initializes the database connection. It uses the OTel-instrumented
-// driver when RegisterOTelDriver has been called; the raw driver otherwise.
-func InitDB(dataSourceName string) (*sql.DB, error) {
+// openDB opens dataSourceName with the named driver and verifies the
+// connection. The driver is a parameter so the instrumented and raw paths
+// differ in exactly one value.
+func openDB(driver, dataSourceName string) (*sql.DB, error) {
 	dataSourceName = strings.TrimSpace(dataSourceName)
 	if dataSourceName == "" {
 		// A blank DB_FILE in the environment resolves to an empty flag value
@@ -117,12 +134,7 @@ func InitDB(dataSourceName string) (*sql.DB, error) {
 		dsn = ensureDSNParam(dsn, kv[0], kv[1])
 	}
 
-	name := "sqlite3"
-	if driverName != "" {
-		name = driverName
-	}
-
-	db, err := sql.Open(name, dsn)
+	db, err := sql.Open(driver, dsn)
 	if err != nil {
 		return nil, err
 	}

@@ -39,16 +39,18 @@ import (
 	fibersession "github.com/gofiber/fiber/v2/middleware/session"
 	"github.com/gofiber/storage/sqlite3"
 	"go.opentelemetry.io/contrib/instrumentation/runtime"
-	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	noopmetric "go.opentelemetry.io/otel/metric/noop"
 )
 
 const apiServiceName = "kids-checkin-api"
 
 func StartServer(ctx context.Context, port int, dbFilepath string) error {
-	tel, err := telemetry.Setup(context.Background(), apiServiceName)
+	tel, err := telemetry.Setup(ctx, apiServiceName)
 	if err != nil {
 		return fmt.Errorf("setting up telemetry: %w", err)
 	}
+	// A fresh context, not ctx: the caller has already cancelled ctx to ask for
+	// shutdown, and this is the flush that has to happen after that.
 	defer func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -75,6 +77,14 @@ func StartServer(ctx context.Context, port int, dbFilepath string) error {
 	if err != nil {
 		return fmt.Errorf("init db: %w", err)
 	}
+	// *sql.DB has no finalizer, so an explicit close is the only thing that
+	// releases the pool. The session store opens its own connection to the same
+	// file and is closed with the app below.
+	defer func() {
+		if closeErr := database.Close(); closeErr != nil {
+			slog.Warn("closing database", slog.String("error", closeErr.Error()))
+		}
+	}()
 
 	// The session store points at the same database file, using the same
 	// spelling so both connections name one file.
@@ -139,7 +149,7 @@ func StartServer(ctx context.Context, port int, dbFilepath string) error {
 	app.Get("manifest.webmanifest", func(c *fiber.Ctx) error {
 		f, err := static.EmbeddedFS.Open("manifest.webmanifest")
 		if err != nil {
-			middleware.GetLogger(c).WarnContext(c.UserContext(), "failed to open manifest.webmanifest", slog.String("error", err.Error()))
+			middleware.GetLogger(c).WarnContext(middleware.SpanCtx(c), "failed to open manifest.webmanifest", slog.String("error", err.Error()))
 			return fiber.ErrInternalServerError
 		}
 		defer f.Close()
@@ -151,7 +161,7 @@ func StartServer(ctx context.Context, port int, dbFilepath string) error {
 	app.Get("apple-touch-icon.png", func(c *fiber.Ctx) error {
 		f, err := static.EmbeddedFS.Open("img/apple-touch-icon.png")
 		if err != nil {
-			middleware.GetLogger(c).WarnContext(c.UserContext(), "failed to open apple-touch-icon.png", slog.String("error", err.Error()))
+			middleware.GetLogger(c).WarnContext(middleware.SpanCtx(c), "failed to open apple-touch-icon.png", slog.String("error", err.Error()))
 			return fiber.ErrInternalServerError
 		}
 		defer f.Close()
@@ -174,7 +184,7 @@ func StartServer(ctx context.Context, port int, dbFilepath string) error {
 	app.Get("favicon.ico", func(c *fiber.Ctx) error {
 		f, err := static.EmbeddedFS.Open("img/favicon.ico")
 		if err != nil {
-			middleware.GetLogger(c).WarnContext(c.UserContext(), "failed to open favicon.ico", slog.String("error", err.Error()))
+			middleware.GetLogger(c).WarnContext(middleware.SpanCtx(c), "failed to open favicon.ico", slog.String("error", err.Error()))
 			return fiber.ErrInternalServerError
 		}
 		defer f.Close()
@@ -251,21 +261,30 @@ func StartServer(ctx context.Context, port int, dbFilepath string) error {
 	return nil
 }
 
-// registerCoreMiddleware wires the request-scoped middleware. Recover runs
-// innermost so panics are converted into 500 responses before the tracing,
-// metrics, and access-log middleware read the result; any other order makes
-// panics skip those middleware entirely.
+// registerCoreMiddleware wires the request-scoped middleware.
+//
+// Recover appears twice, and both positions earn their place. Registered last it
+// is innermost, so a panic in a handler becomes a 500 on its way out and the
+// tracing, metrics, and access-log middleware all get to observe it. Registered
+// first it is outermost, so a panic inside the middleware above a handler --
+// Compress, the access logger, otelfiber -- cannot take the process down, which
+// fasthttp will not catch for us.
 func registerCoreMiddleware(app *fiber.App, tel *telemetry.Telemetry) error {
+	app.Use(recover.New())
 	app.Use(middleware.RequestLogger())
 	if tel.Enabled() {
-		// otelfiber exports its own http.server.* metrics by default; point
-		// it at a reader-less meter provider so HTTPMetrics below is the
-		// single source of HTTP metrics.
+		// otelfiber exports its own http.server.* metrics by default; a no-op
+		// meter provider silences them so HTTPMetrics below is the single
+		// source of HTTP metrics.
 		app.Use(otelfiber.Middleware(
 			otelfiber.WithTracerProvider(tel.TracerProvider),
-			otelfiber.WithMeterProvider(sdkmetric.NewMeterProvider()),
+			otelfiber.WithMeterProvider(noopmetric.NewMeterProvider()),
+			// The default names spans after c.Route().Path, which is "/" for
+			// every unmatched request, so scanner traffic would be
+			// indistinguishable from the home page in traces. otelfiber calls
+			// this after the handler runs, so the status is known here.
 			otelfiber.WithSpanNameFormatter(func(c *fiber.Ctx) string {
-				return c.Route().Path
+				return middleware.RouteLabel(c, c.Response().StatusCode())
 			}),
 		))
 		httpMetrics, err := middleware.HTTPMetrics(tel.Meter(apiServiceName))

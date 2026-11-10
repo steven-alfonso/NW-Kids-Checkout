@@ -1,7 +1,6 @@
 package middleware
 
 import (
-	"errors"
 	"log/slog"
 	"time"
 
@@ -40,20 +39,9 @@ func HTTPAccessLogger() fiber.Handler {
 		err := c.Next()
 		dur := time.Since(start)
 
-		status := c.Response().StatusCode()
-		// The fiber error handler runs after middleware unwinds, so the
-		// response status is not yet set for returned errors. Infer it the
-		// same way the app error handler does: unwrap with errors.As so a
-		// wrapped *fiber.Error keeps its own code; any other error (including
-		// one recovered from a panic) renders as 500.
-		var ferr *fiber.Error
-		if errors.As(err, &ferr) {
-			status = ferr.Code
-		} else if err != nil {
-			status = fiber.StatusInternalServerError
-		}
+		status := responseStatus(c, err)
 
-		GetLogger(c).InfoContext(c.UserContext(), "request",
+		GetLogger(c).InfoContext(SpanCtx(c), "request",
 			slog.String("method", c.Method()),
 			slog.String("path", c.Path()),
 			slog.Int("status", status),

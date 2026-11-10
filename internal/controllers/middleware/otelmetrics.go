@@ -1,9 +1,9 @@
 package middleware
 
 import (
-	"errors"
 	"time"
 
+	"github.com/gofiber/contrib/websocket"
 	"github.com/gofiber/fiber/v2"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
@@ -43,40 +43,27 @@ func HTTPMetrics(meter metric.Meter) (fiber.Handler, error) {
 	}
 
 	return func(c *fiber.Ctx) error {
-		start := time.Now()
-		err := c.Next()
-		status := c.Response().StatusCode()
-		// The fiber error handler runs after middleware unwinds, so the
-		// response status is not yet set for returned errors. Infer it the
-		// same way the app error handler does: unwrap with errors.As so a
-		// wrapped *fiber.Error keeps its own code; any other error renders
-		// as 500.
-		var ferr *fiber.Error
-		if errors.As(err, &ferr) {
-			status = ferr.Code
-		} else if err != nil {
-			status = fiber.StatusInternalServerError
-		}
-		route := c.Route().Path
-		// Unmatched requests keep c.route pointed at the outermost use-route
-		// (path "/") and fall back to raw paths in some cases; collapse them
-		// onto a single sentinel to bound label cardinality. A not-found or
-		// method-not-allowed response on the root path can only come from an
-		// unmatched request.
-		if route == "" || len(c.Route().Handlers) == 0 ||
-			((status == fiber.StatusNotFound || status == fiber.StatusMethodNotAllowed) && route == "/") {
-			route = "UNMATCHED"
+		// A websocket upgrade blocks the handler for the life of the socket.
+		// Recording it as one request would put a multi-hour sample in the
+		// duration histogram on every reconnect, so the connection's own
+		// lifecycle is the signal for this route instead.
+		if websocket.IsWebSocketUpgrade(c) {
+			return c.Next()
 		}
 
+		start := time.Now()
+		err := c.Next()
+		status := responseStatus(c, err)
 		attrs := metric.WithAttributes(
 			attribute.String("http.request.method", c.Method()),
-			attribute.String("http.route", route),
+			attribute.String("http.route", RouteLabel(c, status)),
 			attribute.Int("http.response.status_code", status),
 		)
-		duration.Record(c.UserContext(), time.Since(start).Seconds(), attrs)
-		requests.Add(c.UserContext(), 1, attrs)
+		ctx := SpanCtx(c)
+		duration.Record(ctx, time.Since(start).Seconds(), attrs)
+		requests.Add(ctx, 1, attrs)
 		if status >= fiber.StatusInternalServerError {
-			serverErrors.Add(c.UserContext(), 1, attrs)
+			serverErrors.Add(ctx, 1, attrs)
 		}
 		return err
 	}, nil

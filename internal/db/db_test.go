@@ -51,6 +51,16 @@ func Test_InitDBInstrumented_creates_otel_spans_for_queries(t *testing.T) {
 		}
 	}
 	assert.True(t, foundDBSystem, "expected a span carrying the db.system.name attribute")
+
+	// A plain InitDB must stay on the raw driver even though the OTel driver is
+	// registered in this process. Sharing the registration global with the open
+	// path silently instrumented every later InitDB, tests included.
+	spansBefore := len(exp.GetSpans())
+	raw, err := InitDB(filepath.Join(t.TempDir(), "raw.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	require.NoError(t, raw.QueryRowContext(t.Context(), "SELECT 1").Scan(&one))
+	assert.Len(t, exp.GetSpans(), spansBefore, "plain InitDB must not emit otel spans")
 }
 
 func Test_InitDB_rejects_empty_dsn(t *testing.T) {

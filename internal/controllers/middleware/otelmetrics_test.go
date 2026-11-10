@@ -235,3 +235,30 @@ func Test_HTTPMetrics_collapses_unmatched_routes(t *testing.T) {
 	assert.Equal(t, map[string]bool{"UNMATCHED": true}, routeLabels,
 		"both unmatched requests should share the single UNMATCHED route label")
 }
+
+// A websocket upgrade holds the handler for the life of the socket, so recording
+// it as one request would put a multi-hour sample in the duration histogram on
+// every reconnect. The connection's own lifecycle is the signal for that route.
+func Test_HTTPMetrics_skips_websocket_upgrades(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	t.Cleanup(func() { _ = mp.Shutdown(t.Context()) })
+
+	mw, err := HTTPMetrics(mp.Meter("test"))
+	require.NoError(t, err)
+
+	app := fiber.New()
+	app.Use(mw)
+	app.Get("/ws", func(c *fiber.Ctx) error {
+		return c.SendStatus(fiber.StatusSwitchingProtocols)
+	})
+
+	req := httptest.NewRequest(fiber.MethodGet, "/ws", nil)
+	req.Header.Set("Connection", "Upgrade")
+	req.Header.Set("Upgrade", "websocket")
+	_, err = app.Test(req)
+	require.NoError(t, err)
+
+	hist := collectMetric(t, reader, "http.server.request.duration")
+	assert.Empty(t, hist.Name, "a websocket upgrade must not record a request duration")
+}
