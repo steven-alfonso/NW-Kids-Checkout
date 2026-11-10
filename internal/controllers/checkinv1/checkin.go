@@ -31,7 +31,6 @@ import (
 
 	"github.com/gofiber/contrib/websocket"
 	"github.com/gofiber/fiber/v2"
-	"go.opentelemetry.io/otel/trace"
 )
 
 const defaultCheckedOutAfterDelta = -12 * time.Hour
@@ -166,14 +165,14 @@ func (controller *Controller) checkoutsWeb(c *fiber.Ctx) error {
 	}
 	manualFilter.Recent = true
 
-	checkins, err := controller.checkinRepo.ListCheckins(c.UserContext(), filter)
+	checkins, err := controller.checkinRepo.ListCheckins(middleware.SpanCtx(c), filter)
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
 	}
 
 	var manualCheckins []manualcheckin.ManualCheckin
 	if !isLocationGroupFilterEmpty(c, filter) {
-		manualCheckins, err = controller.manualRepo.ListManualCheckins(c.UserContext(), manualFilter)
+		manualCheckins, err = controller.manualRepo.ListManualCheckins(middleware.SpanCtx(c), manualFilter)
 		if err != nil {
 			return fiber.NewError(fiber.StatusInternalServerError, err.Error())
 		}
@@ -182,7 +181,7 @@ func (controller *Controller) checkoutsWeb(c *fiber.Ctx) error {
 
 	checkins = sortCheckins(checkins)
 
-	_, err = controller.locationRepo.ListLocations(c.UserContext(), location.LocationFilter{})
+	_, err = controller.locationRepo.ListLocations(middleware.SpanCtx(c), location.LocationFilter{})
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
 	}
@@ -258,13 +257,11 @@ func (controller *Controller) checkoutsWebsocket(c *fiber.Ctx) error {
 		controller.wsClients[webscocketConn] = &wsClient{
 			checkedOutAfterDelta: defaultCheckedOutAfterDelta,
 		}
-		// Span-aware but still request-cancelled: otelfiber keeps the span in
-		// UserContext (Background-derived, never cancels), while c.Context()
-		// (fasthttp ctx) stays valid until the socket closes and drives
-		// websocketQueryShouldBreak. Parenting the span onto the request
-		// context gives DB spans + trace-correlated logs without losing the
-		// fast teardown on disconnect.
-		wsCtx := trace.ContextWithSpan(c.Context(), trace.SpanFromContext(c.UserContext()))
+		// SpanCtx gives the loop a span for its DB queries and log lines while
+		// keeping the fasthttp cancellation that breaks the loop on shutdown.
+		// Disconnect teardown is not the ctx's job: it comes from ReadMessage
+		// returning once the peer goes away.
+		wsCtx := middleware.SpanCtx(c)
 		// c.Locals is added to the *websocket.Conn
 		slog.InfoContext(
 			wsCtx,
@@ -383,7 +380,7 @@ func (controller *Controller) PatchCheckedOutConfirmed(c *fiber.Ctx) error {
 	}
 	confirmed := *payload.Confirmed
 
-	updated, err := controller.checkinRepo.SetCheckedOutConfirmedAt(c.UserContext(), planningCenterID, confirmed)
+	updated, err := controller.checkinRepo.SetCheckedOutConfirmedAt(middleware.SpanCtx(c), planningCenterID, confirmed)
 	if err != nil {
 		if errors.Is(err, repo.ErrNotFound) {
 			return fiber.NewError(fiber.StatusNotFound, "checkin not found")

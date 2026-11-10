@@ -48,7 +48,7 @@ func (controller *Controller) GetEvents(c *fiber.Ctx) error {
 	log := middleware.GetLogger(c)
 
 	cursor := c.Query("cursor")
-	log.InfoContext(c.UserContext(), "fetching planning center events", slog.Bool("has_cursor", cursor != ""))
+	log.InfoContext(middleware.SpanCtx(c), "fetching planning center events", slog.Bool("has_cursor", cursor != ""))
 	var (
 		events  []planningcenter.Event
 		nextURL string
@@ -57,15 +57,15 @@ func (controller *Controller) GetEvents(c *fiber.Ctx) error {
 	if cursor != "" {
 		storedURL, fetchErr := controller.getNextURL(cursor)
 		if fetchErr != nil {
-			log.ErrorContext(c.UserContext(), "failed to resolve planning center cursor", slog.String("cursor", cursor), slog.String("error", fetchErr.Error()), slog.Any("err", fetchErr))
+			log.ErrorContext(middleware.SpanCtx(c), "failed to resolve planning center cursor", slog.String("cursor", cursor), slog.String("error", fetchErr.Error()), slog.Any("err", fetchErr))
 			return fetchErr
 		}
-		events, nextURL, err = controller.client.GetEventsFromNextURL(c.UserContext(), storedURL)
+		events, nextURL, err = controller.client.GetEventsFromNextURL(middleware.SpanCtx(c), storedURL)
 	} else {
-		events, nextURL, err = controller.client.GetEvents(c.UserContext())
+		events, nextURL, err = controller.client.GetEvents(middleware.SpanCtx(c))
 	}
 	if err != nil {
-		log.ErrorContext(c.UserContext(), "failed to fetch planning center events", slog.String("error", err.Error()), slog.Any("err", err))
+		log.ErrorContext(middleware.SpanCtx(c), "failed to fetch planning center events", slog.String("error", err.Error()), slog.Any("err", err))
 		return err
 	}
 
@@ -73,13 +73,13 @@ func (controller *Controller) GetEvents(c *fiber.Ctx) error {
 	if nextURL != "" {
 		cursorToken, storeErr := controller.storeNextURL(nextURL)
 		if storeErr != nil {
-			log.ErrorContext(c.UserContext(), "failed to store planning center cursor", slog.String("error", storeErr.Error()), slog.Any("err", storeErr))
+			log.ErrorContext(middleware.SpanCtx(c), "failed to store planning center cursor", slog.String("error", storeErr.Error()), slog.Any("err", storeErr))
 			return storeErr
 		}
 		responseNext = "/v1/admin/planningcenter/events?cursor=" + url.QueryEscape(cursorToken)
 	}
 
-	log.InfoContext(c.UserContext(), "fetched planning center events", slog.Int("events_count", len(events)), slog.Bool("has_next", nextURL != ""))
+	log.InfoContext(middleware.SpanCtx(c), "fetched planning center events", slog.Int("events_count", len(events)), slog.Bool("has_next", nextURL != ""))
 
 	return c.JSON(EventListResponse{
 		Events: eventsToOutput(events),
@@ -120,19 +120,19 @@ func (controller *Controller) GetLocationsForEvent(c *fiber.Ctx) error {
 
 	eventID := c.Params("id", "")
 	if eventID == "" {
-		log.InfoContext(c.UserContext(), "missing planning center event id")
+		log.InfoContext(middleware.SpanCtx(c), "missing planning center event id")
 		return fiber.NewError(fiber.StatusBadRequest, "event id is required")
 	}
 
-	log.InfoContext(c.UserContext(), "fetching planning center locations", slog.String("event_id", eventID))
+	log.InfoContext(middleware.SpanCtx(c), "fetching planning center locations", slog.String("event_id", eventID))
 
-	locations, err := controller.client.GetLocationsForEvent(c.UserContext(), eventID)
+	locations, err := controller.client.GetLocationsForEvent(middleware.SpanCtx(c), eventID)
 	if err != nil {
-		log.ErrorContext(c.UserContext(), "failed to fetch planning center locations", slog.String("event_id", eventID), slog.String("error", err.Error()), slog.Any("err", err))
+		log.ErrorContext(middleware.SpanCtx(c), "failed to fetch planning center locations", slog.String("event_id", eventID), slog.String("error", err.Error()), slog.Any("err", err))
 		return err
 	}
 
-	log.InfoContext(c.UserContext(), "fetched planning center locations", slog.String("event_id", eventID), slog.Int("locations_count", len(locations)))
+	log.InfoContext(middleware.SpanCtx(c), "fetched planning center locations", slog.String("event_id", eventID), slog.Int("locations_count", len(locations)))
 
 	return c.JSON(locationsToOutput(locations))
 }

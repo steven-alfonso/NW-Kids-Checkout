@@ -51,7 +51,7 @@ func (controller *Controller) PostCreateLocationGroup(c *fiber.Ctx) error {
 	if input.Name == "" {
 		return fiber.NewError(fiber.StatusBadRequest, "name is required")
 	}
-	created, err := controller.repo.CreateLocationGroup(c.UserContext(), location.LocationGroup{Name: input.Name})
+	created, err := controller.repo.CreateLocationGroup(middleware.SpanCtx(c), location.LocationGroup{Name: input.Name})
 	if err != nil {
 		return fmt.Errorf("creating location group: %w", err)
 	}
@@ -71,7 +71,7 @@ func (controller *Controller) PatchUpdateLocationGroup(c *fiber.Ctx) error {
 	if input.Name == "" {
 		return fiber.NewError(fiber.StatusBadRequest, "name is required")
 	}
-	if err := controller.repo.UpdateLocationGroup(c.UserContext(), location.LocationGroup{ID: int64(id), Name: input.Name}); err != nil {
+	if err := controller.repo.UpdateLocationGroup(middleware.SpanCtx(c), location.LocationGroup{ID: int64(id), Name: input.Name}); err != nil {
 		if errors.Is(err, repo.ErrNotFound) {
 			return fiber.NewError(fiber.StatusNotFound, "location group not found")
 		}
@@ -85,7 +85,7 @@ func (controller *Controller) DeleteLocationGroup(c *fiber.Ctx) error {
 	if err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "invalid location group id")
 	}
-	if err := controller.repo.DeleteLocationGroup(c.UserContext(), int64(id)); err != nil {
+	if err := controller.repo.DeleteLocationGroup(middleware.SpanCtx(c), int64(id)); err != nil {
 		if errors.Is(err, location.ErrLocationGroupInUse) {
 			return fiber.NewError(fiber.StatusBadRequest, "location group is in use")
 		}
@@ -109,7 +109,7 @@ func (controller *Controller) GetListLocationGroups(c *fiber.Ctx) error {
 		}
 	}
 
-	locationGroups, err := controller.repo.ListLocationGroups(c.UserContext(), location.LocationGroupFilter{
+	locationGroups, err := controller.repo.ListLocationGroups(middleware.SpanCtx(c), location.LocationGroupFilter{
 		ID:   id,
 		Name: c.Query("name"),
 	})

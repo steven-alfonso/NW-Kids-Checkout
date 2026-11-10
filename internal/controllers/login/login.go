@@ -58,7 +58,14 @@ func (controller *Controller) PostLogin(c *fiber.Ctx) error {
 
 	// 2. Compare Bcrypt hash
 	if err := bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(password)); err != nil {
-		middleware.GetLogger(c).WarnContext(c.UserContext(), "login failed: invalid credentials", slog.String("username", username))
+		// No username attribute here. This handler is unauthenticated and
+		// unthrottled, so anything logged here is attacker-chosen: it would let
+		// anyone flood the log with arbitrary strings, and the realistic worst
+		// case is a user who typed their password into the username field
+		// persisting that password to disk. The line itself is the signal --
+		// its count and timing still show credential stuffing -- and the
+		// trace_id correlates it with the rest of the request.
+		middleware.GetLogger(c).WarnContext(middleware.SpanCtx(c), "login failed: invalid credentials")
 		if redirectTo != "" {
 			return c.Redirect(fmt.Sprintf("/login?error=invalid&next=%s", url.QueryEscape(redirectTo)), http.StatusSeeOther)
 		}
@@ -76,7 +83,7 @@ func (controller *Controller) PostLogin(c *fiber.Ctx) error {
 	sess.Set("role", role)
 	err := sess.Save()
 	if err != nil {
-		middleware.GetLogger(c).ErrorContext(c.UserContext(), "login failed: could not save session", slog.String("username", username), slog.String("error", err.Error()))
+		middleware.GetLogger(c).ErrorContext(middleware.SpanCtx(c), "login failed: could not save session", slog.String("username", username), slog.String("error", err.Error()))
 		return c.Status(http.StatusInternalServerError).SendString("Could not create user session")
 	}
 
@@ -112,13 +119,13 @@ func isSameOriginPath(target string) bool {
 func (controller *Controller) GetLogout(c *fiber.Ctx) error {
 	sess, err := controller.sessionStore.Get(c)
 	if err != nil {
-		middleware.GetLogger(c).ErrorContext(c.UserContext(), "logout failed: could not load session", slog.String("error", err.Error()))
+		middleware.GetLogger(c).ErrorContext(middleware.SpanCtx(c), "logout failed: could not load session", slog.String("error", err.Error()))
 		return c.Status(http.StatusInternalServerError).SendString("Session error")
 	}
 
 	// This destroys the session in SQLite and clears the cookie on the client
 	if err := sess.Destroy(); err != nil {
-		middleware.GetLogger(c).ErrorContext(c.UserContext(), "logout failed: could not destroy session", slog.String("error", err.Error()))
+		middleware.GetLogger(c).ErrorContext(middleware.SpanCtx(c), "logout failed: could not destroy session", slog.String("error", err.Error()))
 		return c.Status(http.StatusInternalServerError).SendString("Could not log out")
 	}
 

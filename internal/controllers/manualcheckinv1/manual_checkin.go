@@ -60,7 +60,7 @@ func (controller *Controller) GetManualCheckins(c *fiber.Ctx) error {
 
 	filter.Recent = true
 
-	manualCheckins, err := controller.manualRepo.ListManualCheckins(c.UserContext(), filter)
+	manualCheckins, err := controller.manualRepo.ListManualCheckins(middleware.SpanCtx(c), filter)
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
 	}
@@ -102,7 +102,7 @@ func (controller *Controller) PostManualCheckin(c *fiber.Ctx) error {
 		manualCheckin.CheckedOutAt = time.Now().UTC()
 	}
 
-	created, err := controller.manualRepo.CreateManualCheckin(c.UserContext(), manualCheckin)
+	created, err := controller.manualRepo.CreateManualCheckin(middleware.SpanCtx(c), manualCheckin)
 	if err != nil {
 		if errors.Is(err, manualcheckin.ErrInvalidManualCheckin) {
 			return fiber.NewError(fiber.StatusBadRequest, err.Error())
@@ -143,7 +143,7 @@ func (controller *Controller) PatchManualCheckedOut(c *fiber.Ctx) error {
 	}
 	checkedOut := *payload.CheckedOut
 
-	manualCheckins, err := controller.manualRepo.ListManualCheckins(c.UserContext(), manualcheckin.Filter{
+	manualCheckins, err := controller.manualRepo.ListManualCheckins(middleware.SpanCtx(c), manualcheckin.Filter{
 		PublicID: publicID,
 		Limit:    1,
 	})
@@ -154,7 +154,7 @@ func (controller *Controller) PatchManualCheckedOut(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusNotFound, "manual checkin not found")
 	}
 
-	updated, err := controller.manualRepo.SetManualCheckedOutAt(c.UserContext(), manualCheckins[0].ID, checkedOut)
+	updated, err := controller.manualRepo.SetManualCheckedOutAt(middleware.SpanCtx(c), manualCheckins[0].ID, checkedOut)
 	if err != nil {
 		if errors.Is(err, repo.ErrNotFound) {
 			return fiber.NewError(fiber.StatusNotFound, "manual checkin not found")
@@ -195,7 +195,7 @@ func (controller *Controller) PatchManualCheckedOutConfirmed(c *fiber.Ctx) error
 	}
 	confirmed := *payload.Confirmed
 
-	manualCheckins, err := controller.manualRepo.ListManualCheckins(c.UserContext(), manualcheckin.Filter{
+	manualCheckins, err := controller.manualRepo.ListManualCheckins(middleware.SpanCtx(c), manualcheckin.Filter{
 		PublicID: publicID,
 		Limit:    1,
 	})
@@ -206,7 +206,7 @@ func (controller *Controller) PatchManualCheckedOutConfirmed(c *fiber.Ctx) error
 		return fiber.NewError(fiber.StatusNotFound, "manual checkin not found")
 	}
 
-	updated, err := controller.manualRepo.SetManualCheckedOutConfirmedAt(c.UserContext(), manualCheckins[0].ID, confirmed)
+	updated, err := controller.manualRepo.SetManualCheckedOutConfirmedAt(middleware.SpanCtx(c), manualCheckins[0].ID, confirmed)
 	if err != nil {
 		if errors.Is(err, repo.ErrNotFound) {
 			return fiber.NewError(fiber.StatusNotFound, "manual checkin not found")
