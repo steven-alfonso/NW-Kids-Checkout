@@ -42,7 +42,8 @@ This file guides coding agents working in this repo. Keep changes small, follow 
 - Build the Vue checkouts bundle: `npm run build:checkouts-vue`
   (watch: `npm run watch:checkouts-vue`). Source lives in
   `internal/web/src/checkouts-vue`; the committed output is
-  `internal/web/static/dist/vue/checkouts.js`.
+  `internal/web/static/dist/vue/checkouts.js` plus
+  `internal/web/static/dist/vue/checkouts.css`.
 - `package-lock.json` is committed so CI and local installs resolve the same
   Tailwind and Playwright versions.
 
@@ -150,10 +151,27 @@ This file guides coding agents working in this repo. Keep changes small, follow 
 - HTML templates live under `internal/web/static/pages`.
 - Most page JS lives alongside the HTML in `internal/web/static/pages`.
 - The checkouts page is built by Vite from `internal/web/src/checkouts-vue`;
-  its committed bundle is `internal/web/static/dist/vue/checkouts.js`.
+  its committed bundle is `internal/web/static/dist/vue/checkouts.js` and its
+  extracted component styles are
+  `internal/web/static/dist/vue/checkouts.css`.
 - Shared JS libraries live in `internal/web/static/js`.
 - Images and icons live in `internal/web/static/img`.
 - Regenerate Tailwind output when UI changes touch utility classes.
+
+### Component styles
+- A Vue component owns its styles in its own `<style scoped>` block. Keep
+  component CSS in the component so the component can be reused on another
+  page without carrying a second page's stylesheet along.
+- A page's inline `<style>` block holds only document-wide rules: `:root`
+  custom properties and `body` rules. Scoped styles cannot do either, because
+  Vue compiles `:root` and `body` into selectors that never match.
+- Tailwind utilities stay global on purpose. `internal/web/tailwind.input.css`
+  lists every scanned directory with `@source`, so a new Vue source directory
+  needs a `@source` line or its utility classes are silently dropped from the
+  shipped stylesheet.
+- Adding a `<style>` block to a Vue component changes the build output. Run
+  `npm run build:checkouts-vue` and commit `internal/web/static/dist/vue/`
+  alongside the source, or CI's bundle-freshness check fails.
 
 ### Assets and static files
 - Static pages are loaded from `internal/web/static` and embedded FS.

@@ -90,3 +90,23 @@ const barColor = computed(() =>
     </div>
   </div>
 </template>
+
+<style scoped>
+[data-confirmed-state='confirmed'] [data-confirmed-icon] {
+  filter: var(--confirmed-filter);
+}
+
+@keyframes new-child-flash {
+  0% {
+    background-color: #fef08a;
+  }
+
+  100% {
+    background-color: #ffffff;
+  }
+}
+
+.child-card-flash {
+  animation: new-child-flash 3s ease-out;
+}
+</style>

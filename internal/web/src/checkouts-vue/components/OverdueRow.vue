@@ -95,3 +95,9 @@ const groupLabel = computed(() =>
     </div>
   </div>
 </template>
+
+<style scoped>
+[data-confirmed-state='confirmed'] [data-confirmed-icon] {
+  filter: var(--confirmed-filter);
+}
+</style>

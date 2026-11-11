@@ -194,3 +194,31 @@ onBeforeUnmount(() => window.removeEventListener('resize', onResize));
     </div>
   </div>
 </template>
+
+<style scoped>
+#search-input::-webkit-search-cancel-button {
+  cursor: pointer;
+}
+
+#search-controls {
+  height: 0;
+  min-height: 0;
+  opacity: 0;
+  overflow: hidden;
+  transition: height 300ms ease-out, opacity 300ms ease-out;
+}
+
+#search-controls .search-controls-panel {
+  transform: scaleY(0);
+  transform-origin: top;
+  transition: transform 300ms ease-out;
+}
+
+#search-controls.is-expanded {
+  opacity: 1;
+}
+
+#search-controls.is-expanded .search-controls-panel {
+  transform: scaleY(1);
+}
+</style>

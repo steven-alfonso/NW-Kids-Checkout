@@ -14,7 +14,10 @@
     <!-- <script src="https://cdn.tailwindcss.com"></script> -->
     <!-- Tailwind local -->
     <link rel="stylesheet" href="/static/css/tailwind.css?v=dev">
+    <link rel="stylesheet" href="/static/dist/vue/checkouts.css?v=dev">
 
+    <!-- Only document-wide rules live here. Component styles ship with the
+         components in internal/web/src/checkouts-vue. -->
     <style>
         :root {
             --confirmed-filter: invert(48%) sepia(92%) saturate(453%) hue-rotate(88deg) brightness(94%) contrast(92%);
@@ -22,146 +25,6 @@
 
         body {
             font-family: system-ui, -apple-system, sans-serif;
-        }
-
-        /* Hide scrollbar for Chrome, Safari and Opera */
-        .hide-scrollbar::-webkit-scrollbar {
-            display: none;
-        }
-
-        /* Hide scrollbar for IE, Edge and Firefox */
-        .hide-scrollbar {
-            -ms-overflow-style: none;
-            /* IE and Edge */
-            scrollbar-width: none;
-            /* Firefox */
-        }
-
-        [data-confirmed-state="confirmed"] [data-confirmed-icon] {
-            filter: var(--confirmed-filter);
-        }
-
-        #search-input::-webkit-search-cancel-button {
-            cursor: pointer;
-        }
-
-        #search-controls {
-            height: 0;
-            min-height: 0;
-            opacity: 0;
-            overflow: hidden;
-            transition: height 300ms ease-out, opacity 300ms ease-out;
-        }
-
-        #search-controls .search-controls-panel {
-            transform: scaleY(0);
-            transform-origin: top;
-            transition: transform 300ms ease-out;
-        }
-
-        #search-controls.is-expanded {
-            opacity: 1;
-        }
-
-        #search-controls.is-expanded .search-controls-panel {
-            transform: scaleY(1);
-        }
-
-        @keyframes new-child-flash {
-            0% {
-                background-color: #fef08a;
-            }
-
-            100% {
-                background-color: #ffffff;
-            }
-        }
-
-        .child-card-flash {
-            animation: new-child-flash 3s ease-out;
-        }
-
-        #overdue-badge {
-            max-width: calc(100vw - 2rem);
-            white-space: nowrap;
-            width: max-content;
-        }
-
-        @keyframes overdue-badge-jiggle {
-
-            0%,
-            100% {
-                transform: translateX(0) scale(1);
-            }
-
-            8.33% {
-                transform: translateX(-3px) scale(1.02);
-            }
-
-            16.66% {
-                transform: translateX(3px) scale(1.05);
-            }
-
-            25% {
-                transform: translateX(-3px) scale(1.05);
-            }
-
-            33.33% {
-                transform: translateX(3px) scale(1.05);
-            }
-
-            41.66% {
-                transform: translateX(-3px) scale(1.05);
-            }
-
-            50% {
-                transform: translateX(3px) scale(1.05);
-            }
-
-            58.33% {
-                transform: translateX(-2px) scale(1.05);
-            }
-
-            66.66% {
-                transform: translateX(2px) scale(1.03);
-            }
-
-            75% {
-                transform: translateX(-1px) scale(1.02);
-            }
-
-            83.33% {
-                transform: translateX(1px) scale(1.01);
-            }
-
-            91.66% {
-                transform: translateX(-1px) scale(1.00);
-            }
-        }
-
-        .overdue-badge-jiggle {
-            animation: overdue-badge-jiggle 1s ease-out;
-        }
-
-        #overdue-sheet {
-            /* Height (live 80dvh) and the sync's max-height/bottom must ease
-               with the slide too: at close the toolbar reappears and an
-               untransitioned height snapped the drawer ~50-100px in a frame. */
-            transition: translate 300ms ease-out, transform 300ms ease-out,
-                height 300ms ease-out, max-height 300ms ease-out,
-                bottom 300ms ease-out;
-            /* dvh keeps the drawer off the whole screen where `vh` is the
-               large viewport; 80vh fallback where dvh is unsupported. */
-            height: 80vh;
-            height: 80dvh;
-            /* Also for the transition: the sync writes max-height inline, and
-               a first write from `none` cannot interpolate with a length. */
-            max-height: 80vh;
-            max-height: 80dvh;
-            /* The home indicator overlays the physical bottom edge once the
-               toolbar collapses, which would bury the last row of the list.
-               0 outside iOS-style notched viewports. */
-            padding-bottom: env(safe-area-inset-bottom, 0px);
         }
     </style>
 

@@ -188,7 +188,9 @@ npm run watch:checkouts-vue
 ```
 
 The production bundle lives at `internal/web/static/dist/vue/checkouts.js` and
-is committed so the Docker build does not need Node.
+is committed so the Docker build does not need Node. Component styles are
+extracted into `internal/web/static/dist/vue/checkouts.css`, which the page
+links alongside the bundle.
 
 ### Running tests
 

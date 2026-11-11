@@ -241,3 +241,87 @@ function childIdFor(child) {
     </div>
   </div>
 </template>
+
+<style scoped>
+#overdue-badge {
+  max-width: calc(100vw - 2rem);
+  white-space: nowrap;
+  width: max-content;
+}
+
+@keyframes overdue-badge-jiggle {
+  0%,
+  100% {
+    transform: translateX(0) scale(1);
+  }
+
+  8.33% {
+    transform: translateX(-3px) scale(1.02);
+  }
+
+  16.66% {
+    transform: translateX(3px) scale(1.05);
+  }
+
+  25% {
+    transform: translateX(-3px) scale(1.05);
+  }
+
+  33.33% {
+    transform: translateX(3px) scale(1.05);
+  }
+
+  41.66% {
+    transform: translateX(-3px) scale(1.05);
+  }
+
+  50% {
+    transform: translateX(3px) scale(1.05);
+  }
+
+  58.33% {
+    transform: translateX(-2px) scale(1.05);
+  }
+
+  66.66% {
+    transform: translateX(2px) scale(1.03);
+  }
+
+  75% {
+    transform: translateX(-1px) scale(1.02);
+  }
+
+  83.33% {
+    transform: translateX(1px) scale(1.01);
+  }
+
+  91.66% {
+    transform: translateX(-1px) scale(1.00);
+  }
+}
+
+.overdue-badge-jiggle {
+  animation: overdue-badge-jiggle 1s ease-out;
+}
+
+#overdue-sheet {
+  /* Height (live 80dvh) and the sync's max-height/bottom must ease
+     with the slide too: at close the toolbar reappears and an
+     untransitioned height snapped the drawer ~50-100px in a frame. */
+  transition: translate 300ms ease-out, transform 300ms ease-out,
+    height 300ms ease-out, max-height 300ms ease-out,
+    bottom 300ms ease-out;
+  /* dvh keeps the drawer off the whole screen where `vh` is the
+     large viewport; 80vh fallback where dvh is unsupported. */
+  height: 80vh;
+  height: 80dvh;
+  /* Also for the transition: the sync writes max-height inline, and
+     a first write from `none` cannot interpolate with a length. */
+  max-height: 80vh;
+  max-height: 80dvh;
+  /* The home indicator overlays the physical bottom edge once the
+     toolbar collapses, which would bury the last row of the list.
+     0 outside iOS-style notched viewports. */
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+</style>
