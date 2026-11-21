@@ -15,8 +15,8 @@ place until the vanilla implementation is removed.
 
 ## Why the existing tests cannot serve this purpose
 
-`internal/web/static/pages/checkoutsv1/checkouts.test.js` reads
-`checkouts.js` as text, evaluates it in jsdom, and exposes internals through a
+Before the spike, `internal/web/static/pages/checkoutsv1/checkouts.test.js`
+read `checkouts.js` as text, evaluated it in jsdom, and exposed internals through a
 test-only `window.__test` object. Those tests are coupled to the current file
 layout, function names, and module-level state. Any Vue/Svelte/Alpine rewrite
 breaks them by construction.

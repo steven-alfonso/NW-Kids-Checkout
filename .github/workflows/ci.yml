@@ -120,8 +120,9 @@ jobs:
       - uses: actions/checkout@v7
 
       # Neither Dockerfile installs Node, so the frontend suite is the only
-      # thing pinning a Node version and package.json declares no engines field.
-      # 22 is the current LTS line.
+      # thing pinning a Node version. jsdom 30 declares the narrowest engine
+      # range in the toolchain, and package.json mirrors it; 22 is the current
+      # LTS line and satisfies it.
       - uses: actions/setup-node@v7
         with:
           node-version: "22"
@@ -156,6 +157,20 @@ jobs:
             exit 1
           fi
 
+      # The checkouts page ships a committed Vite bundle. Docker has no Node
+      # stage, so a stale dist would ship old code with no build error. Rebuild
+      # and fail on any changed or untracked output, the same way the Tailwind
+      # check above works.
+      - name: Verify checkouts bundle is current
+        run: |
+          npm run build:checkouts-vue > /dev/null
+          if [ -n "$(git status --porcelain -- internal/web/static/dist/vue)" ]; then
+            echo "::error::internal/web/static/dist/vue is stale"
+            echo "Run: npm run build:checkouts-vue from a clean tree."
+            git status --short -- internal/web/static/dist/vue
+            exit 1
+          fi
+
       - name: Test
         run: npm test
 
@@ -177,10 +192,15 @@ jobs:
       - name: Install Chromium
         run: npx playwright install --with-deps chromium
 
+      # The conformance suite serves internal/web/static directly, so it must
+      # run against a bundle built from the current source, not a stale commit.
+      - name: Build checkouts bundle
+        run: npm run build:checkouts-vue
+
       - name: Run conformance suite
         run: npm run test:conformance
 
-      - name: Run vanilla browser regressions
+      - name: Run app contract suite
         run: npm run test:app
 
       - name: Upload Playwright artifacts
