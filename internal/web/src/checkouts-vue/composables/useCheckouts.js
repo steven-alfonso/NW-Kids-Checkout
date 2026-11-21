@@ -17,13 +17,13 @@ import {
   getChildId,
   normalizeCheckoutsResponse,
   sortCheckouts
-} from '../lib/checkouts.js';
+} from '../../shared/lib/checkouts.js';
 import {
   getSelectedFromURL,
   replaceSelectionInURL,
   replaceWithAllSelectionInURL,
   replaceWithEmptySelectionInURL
-} from '../lib/urlFilters.js';
+} from '../../shared/lib/urlFilters.js';
 
 const OVERDUE_CUTOFF_MS = OVERDUE_MINUTES * 60 * 1000;
 

@@ -1,6 +1,6 @@
 <script setup>
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { getLocationGroupColor } from '../lib/checkouts.js';
+import { getLocationGroupColor } from '../../shared/lib/checkouts.js';
 
 const props = defineProps({
   open: { type: Boolean, required: true },

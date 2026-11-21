@@ -5,7 +5,7 @@ import {
   getCheckedOutTimestamp,
   getLocationGroupColor,
   overdueGroupLabel
-} from '../lib/checkouts.js';
+} from '../../shared/lib/checkouts.js';
 
 const props = defineProps({
   child: { type: Object, required: true },

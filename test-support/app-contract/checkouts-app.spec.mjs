@@ -217,8 +217,12 @@ test('shows only the no-JS message when scripting is disabled', async ({
 test('moves the server-rendered menu into the kebab menu exactly once', async ({
   page
 }, testInfo) => {
+  // Derive the route from the project's pagePath so this same check works when
+  // pointed at a second page via CHECKOUTS_PAGE / CHECKOUTS_PAGE_NEXT.
+  const pagePath = new URL(testInfo.project.metadata.pagePath, 'http://localhost')
+    .pathname;
   await page.route(
-    /\/static\/pages\/checkoutsv1\/checkouts\.html(\?.*)?$/,
+    (url) => url.pathname === pagePath,
     async (route) => {
       const response = await route.fetch();
       const body = (await response.text()).replace(

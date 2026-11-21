@@ -2,10 +2,13 @@ import { fileURLToPath, URL } from 'node:url';
 import { defineConfig } from 'vite';
 import vue from '@vitejs/plugin-vue';
 
-// One fixed-name bundle per page implementation. The Go binary embeds
+// One bundle per page implementation, keyed by entry name. The Go binary embeds
 // internal/web/static, so the output is committed and no Node build stage is
 // needed in the Docker image. `emptyOutDir` keeps a deleted source module from
-// lingering in the shipped directory.
+// lingering in the shipped directory. Named entries and `[name]` output keep
+// checkouts.js where the page links it even when a second page is added;
+// hashed chunk names stay cache-safe under the immutable /static cache header.
+// The one shared stylesheet keeps its fixed name because the page links it.
 export default defineConfig({
   base: '/static/dist/vue/',
   plugins: [vue()],
@@ -27,12 +30,16 @@ export default defineConfig({
     license: { fileName: 'THIRD_PARTY_NOTICES.md' },
     target: 'es2020',
     rollupOptions: {
-      input: fileURLToPath(
-        new URL('./internal/web/src/checkouts-vue/main.js', import.meta.url)
-      ),
+      input: {
+        checkouts: fileURLToPath(
+          new URL('./internal/web/src/checkouts-vue/main.js', import.meta.url)
+        )
+      },
       output: {
-        entryFileNames: 'checkouts.js',
-        chunkFileNames: 'checkouts-[name].js',
+        entryFileNames: '[name].js',
+        chunkFileNames: '[name]-[hash].js',
+        // cssCodeSplit is off, so every entry shares one stylesheet. Its name
+        // is fixed because the page links /static/dist/vue/checkouts.css.
         assetFileNames: 'checkouts[extname]'
       }
     }

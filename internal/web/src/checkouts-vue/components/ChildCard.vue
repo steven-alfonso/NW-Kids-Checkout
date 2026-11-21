@@ -4,7 +4,7 @@ import TimePill from './TimePill.vue';
 import {
   getCheckedOutTimestamp,
   getLocationGroupColor
-} from '../lib/checkouts.js';
+} from '../../shared/lib/checkouts.js';
 
 const props = defineProps({
   child: { type: Object, required: true },

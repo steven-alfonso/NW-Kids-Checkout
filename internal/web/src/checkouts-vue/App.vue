@@ -4,9 +4,9 @@ import ChildCard from './components/ChildCard.vue';
 import ClockTime from './components/ClockTime.vue';
 import OverdueRow from './components/OverdueRow.vue';
 import SearchPanel from './components/SearchPanel.vue';
-import { CLOCK_KEY } from './composables/useClock.js';
+import { CLOCK_KEY } from '../shared/composables/useClock.js';
 import { useCheckouts } from './composables/useCheckouts.js';
-import { getChildId } from './lib/checkouts.js';
+import { getChildId } from '../shared/lib/checkouts.js';
 
 const {
   childrenList,

@@ -1,10 +1,10 @@
 <script setup>
 import { computed } from 'vue';
-import { useClock } from '../composables/useClock.js';
+import { useClock } from '../../shared/composables/useClock.js';
 import {
   calculateMinutesAgoFromTimestamp,
   getTimePillClass
-} from '../lib/checkouts.js';
+} from '../../shared/lib/checkouts.js';
 
 const props = defineProps({
   checkedOutAtMs: { type: Number, required: true },

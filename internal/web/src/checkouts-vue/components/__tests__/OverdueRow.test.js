@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { createApp, h, nextTick, ref } from 'vue';
 import OverdueRow from '../OverdueRow.vue';
-import { CLOCK_KEY } from '../../composables/useClock.js';
+import { CLOCK_KEY } from '../../../shared/composables/useClock.js';
 
 const BASE = Date.parse('2026-01-15T12:00:00Z');
 
