@@ -113,6 +113,45 @@ func TestStaticCacheControl(t *testing.T) {
 	})
 }
 
+func TestParseCookieSecure(t *testing.T) {
+	t.Run("empty defaults to false", func(t *testing.T) {
+		assert.False(t, parseCookieSecure(""))
+	})
+
+	t.Run("true enables it", func(t *testing.T) {
+		assert.True(t, parseCookieSecure("true"))
+	})
+
+	t.Run("uppercase true enables it", func(t *testing.T) {
+		assert.True(t, parseCookieSecure("TRUE"))
+	})
+
+	t.Run("surrounding whitespace is ignored", func(t *testing.T) {
+		assert.True(t, parseCookieSecure(" true "))
+	})
+
+	t.Run("false stays disabled", func(t *testing.T) {
+		assert.False(t, parseCookieSecure("false"))
+	})
+
+	t.Run("numeric one is not true", func(t *testing.T) {
+		assert.False(t, parseCookieSecure("1"))
+	})
+}
+
+func TestNewCookieSecureReadsEnvironmentOnce(t *testing.T) {
+	calls := 0
+	getenv := func(string) string {
+		calls++
+		return "true"
+	}
+	secure := newCookieSecure(getenv)
+
+	assert.True(t, secure())
+	assert.True(t, secure())
+	assert.Equal(t, 1, calls, "the environment must be read once")
+}
+
 func TestShouldSuppressListenError(t *testing.T) {
 	bindErr := errors.New("failed to listen: address already in use")
 	serveErr := errors.New("accept tcp: too many open files")

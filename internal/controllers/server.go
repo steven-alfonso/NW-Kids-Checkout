@@ -11,9 +11,11 @@ import (
 	"kids-checkin/internal/controllers/middleware"
 	"log/slog"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -63,7 +65,9 @@ func StartServer(ctx context.Context, port int, dbFilepath string) error {
 		Expiration:     180 * 24 * time.Hour, // 180-day TTL
 		CookieHTTPOnly: true,                 // Security: prevents JS from reading cookie
 		CookieSameSite: "Lax",
+		CookieSecure:   cookieSecure(),
 	})
+	slog.Info("session cookie", slog.Bool("secure", cookieSecure()))
 
 	app := fiber.New(fiber.Config{
 		// Override default error handler
@@ -227,6 +231,24 @@ func StartServer(ctx context.Context, port int, dbFilepath string) error {
 
 	slog.Info("server stopped")
 	return nil
+}
+
+// cookieSecure reports whether the session cookie carries the Secure flag.
+// It defaults to false so the current HTTP deployment keeps working. Set
+// COOKIE_SECURE=true only when every browser URL is https://. The environment
+// is read once, on the first call.
+var cookieSecure = newCookieSecure(os.Getenv)
+
+func newCookieSecure(getenv func(string) string) func() bool {
+	return sync.OnceValue(func() bool {
+		return parseCookieSecure(getenv("COOKIE_SECURE"))
+	})
+}
+
+// parseCookieSecure reports whether value enables the flag. Only the literal
+// true, case-insensitive and trimmed, does.
+func parseCookieSecure(value string) bool {
+	return strings.EqualFold(strings.TrimSpace(value), "true")
 }
 
 // shouldSuppressListenError reports whether a Listen error is a clean
