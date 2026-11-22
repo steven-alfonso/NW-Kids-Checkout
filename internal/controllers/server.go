@@ -110,6 +110,7 @@ func StartServer(ctx context.Context, port int, dbFilepath string) error {
 	// Registered before the routes and the /static mount so every response,
 	// including the chunked HTML pages, is compressed on the way out.
 	app.Use(middleware.Compress())
+	app.Use(middleware.NoIndex())
 
 	registerRoutes(app, database, store, storage)
 
