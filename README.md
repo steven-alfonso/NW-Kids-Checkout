@@ -261,6 +261,13 @@ Connect to a shell and run:
 migrate -source file:///app/db/migrations -database "sqlite3:///data/kids-checkin.db" up
 ```
 
+## Deployment
+
+The app runs as a Dokploy app behind Traefik. See
+[docs/expose-the-app-to-the-internet.md](docs/expose-the-app-to-the-internet.md)
+for exposing it to staff phones with a Cloudflare Tunnel, and for the app
+changes to make before it is reachable from the internet.
+
 ## API Endpoints
 
 The API is currently versioned under `/v1`.
