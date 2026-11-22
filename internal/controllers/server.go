@@ -44,10 +44,8 @@ import (
 // reads. A 5xx response carries a generic message; the detail goes to the log
 // so internal errors are not echoed to the client.
 func errorHandler(ctx *fiber.Ctx, err error) error {
-	// Status code defaults to 500
 	code := fiber.StatusInternalServerError
 
-	// Retrieve the custom status code if it's a *fiber.Error
 	message := ""
 	if e, ok := errors.AsType[*fiber.Error](err); ok {
 		message = e.Message
@@ -59,6 +57,11 @@ func errorHandler(ctx *fiber.Ctx, err error) error {
 	if code == fiber.StatusNotFound && wantsHTML {
 		f, openErr := static.EmbeddedFS.Open("pages/errors/404.html")
 		if openErr != nil {
+			middleware.GetLogger(ctx).ErrorContext(ctx.Context(), "failed to open 404 page",
+				slog.String("error", openErr.Error()),
+				slog.String("method", ctx.Method()),
+				slog.String("path", ctx.Path()),
+			)
 			return ctx.Status(fiber.StatusInternalServerError).SendString("Internal Server Error")
 		}
 		defer f.Close()
@@ -69,8 +72,9 @@ func errorHandler(ctx *fiber.Ctx, err error) error {
 	}
 
 	if code >= fiber.StatusInternalServerError {
-		slog.ErrorContext(ctx.Context(), "internal server error",
+		middleware.GetLogger(ctx).ErrorContext(ctx.Context(), "internal server error",
 			slog.String("error", err.Error()),
+			slog.Any("err", err),
 			slog.String("method", ctx.Method()),
 			slog.String("path", ctx.Path()),
 			slog.Int("status", code),
@@ -79,6 +83,7 @@ func errorHandler(ctx *fiber.Ctx, err error) error {
 	}
 
 	if writeErr := ctx.Status(code).JSON(fiber.Map{"sorry": message}); writeErr != nil {
+		// Defensive only: a two-key string map cannot fail to marshal.
 		_ = ctx.Status(fiber.StatusInternalServerError).SendString("Internal Server Error")
 	}
 	return nil
