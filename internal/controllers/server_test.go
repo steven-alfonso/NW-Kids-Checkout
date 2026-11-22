@@ -152,6 +152,81 @@ func TestNewCookieSecureReadsEnvironmentOnce(t *testing.T) {
 	assert.Equal(t, 1, calls, "the environment must be read once")
 }
 
+func TestErrorHandler(t *testing.T) {
+	newApp := func() *fiber.App {
+		return fiber.New(fiber.Config{ErrorHandler: errorHandler})
+	}
+
+	do := func(t *testing.T, app *fiber.App, path, accept string) (*http.Response, string) {
+		t.Helper()
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil)
+		if accept != "" {
+			req.Header.Set("Accept", accept)
+		}
+		resp, err := app.Test(req)
+		require.NoError(t, err)
+		body, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		return resp, string(body)
+	}
+
+	t.Run("5xx hides the message and returns JSON", func(t *testing.T) {
+		app := newApp()
+		app.Get("/boom", func(c *fiber.Ctx) error {
+			return fiber.NewError(fiber.StatusInternalServerError, "database exploded")
+		})
+
+		resp, body := do(t, app, "/boom", "")
+		assert.Equal(t, fiber.StatusInternalServerError, resp.StatusCode)
+		assert.Contains(t, resp.Header.Get("Content-Type"), "application/json")
+		assert.JSONEq(t, `{"sorry":"Internal Server Error"}`, body)
+		assert.NotContains(t, body, "database exploded")
+	})
+
+	t.Run("4xx keeps the message and returns JSON", func(t *testing.T) {
+		app := newApp()
+		app.Get("/bad", func(c *fiber.Ctx) error {
+			return fiber.NewError(fiber.StatusBadRequest, "bad input")
+		})
+
+		resp, body := do(t, app, "/bad", "")
+		assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
+		assert.Contains(t, resp.Header.Get("Content-Type"), "application/json")
+		assert.JSONEq(t, `{"sorry":"bad input"}`, body)
+	})
+
+	t.Run("plain error is a generic 500", func(t *testing.T) {
+		app := newApp()
+		app.Get("/raw", func(c *fiber.Ctx) error {
+			return errors.New("raw")
+		})
+
+		resp, body := do(t, app, "/raw", "")
+		assert.Equal(t, fiber.StatusInternalServerError, resp.StatusCode)
+		assert.JSONEq(t, `{"sorry":"Internal Server Error"}`, body)
+		assert.NotContains(t, body, "raw")
+	})
+
+	t.Run("unknown path with HTML accept serves the 404 page", func(t *testing.T) {
+		app := newApp()
+
+		resp, body := do(t, app, "/missing", "text/html")
+		assert.Equal(t, fiber.StatusNotFound, resp.StatusCode)
+		assert.Contains(t, resp.Header.Get("Content-Type"), "text/html")
+		assert.Contains(t, body, "Page not found")
+	})
+
+	t.Run("unknown path with JSON accept returns JSON", func(t *testing.T) {
+		app := newApp()
+
+		resp, body := do(t, app, "/missing", "application/json")
+		assert.Equal(t, fiber.StatusNotFound, resp.StatusCode)
+		assert.Contains(t, resp.Header.Get("Content-Type"), "application/json")
+		assert.Contains(t, body, `"sorry"`)
+		assert.NotContains(t, body, "<html")
+	})
+}
+
 func TestShouldSuppressListenError(t *testing.T) {
 	bindErr := errors.New("failed to listen: address already in use")
 	serveErr := errors.New("accept tcp: too many open files")
