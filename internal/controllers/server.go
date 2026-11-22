@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -233,9 +234,14 @@ func StartServer(ctx context.Context, port int, dbFilepath string) error {
 
 // cookieSecure reports whether the session cookie carries the Secure flag.
 // It defaults to false so the current HTTP deployment keeps working. Set
-// COOKIE_SECURE=true only when every access path is HTTPS.
-func cookieSecure() bool {
-	return strings.EqualFold(strings.TrimSpace(os.Getenv("COOKIE_SECURE")), "true")
+// COOKIE_SECURE=true only when every access path is HTTPS. The environment
+// is read once, on the first call.
+var cookieSecure = sync.OnceValue(func() bool {
+	return parseCookieSecure(os.Getenv("COOKIE_SECURE"))
+})
+
+func parseCookieSecure(value string) bool {
+	return strings.EqualFold(strings.TrimSpace(value), "true")
 }
 
 // shouldSuppressListenError reports whether a Listen error is a clean

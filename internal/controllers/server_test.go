@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"kids-checkin/internal/web/menu"
@@ -113,36 +114,45 @@ func TestStaticCacheControl(t *testing.T) {
 	})
 }
 
-func TestCookieSecure(t *testing.T) {
-	t.Run("unset defaults to false", func(t *testing.T) {
-		t.Setenv("COOKIE_SECURE", "")
-		assert.False(t, cookieSecure())
+func TestParseCookieSecure(t *testing.T) {
+	t.Run("empty defaults to false", func(t *testing.T) {
+		assert.False(t, parseCookieSecure(""))
 	})
 
 	t.Run("true enables it", func(t *testing.T) {
-		t.Setenv("COOKIE_SECURE", "true")
-		assert.True(t, cookieSecure())
+		assert.True(t, parseCookieSecure("true"))
 	})
 
 	t.Run("uppercase true enables it", func(t *testing.T) {
-		t.Setenv("COOKIE_SECURE", "TRUE")
-		assert.True(t, cookieSecure())
+		assert.True(t, parseCookieSecure("TRUE"))
 	})
 
 	t.Run("surrounding whitespace is ignored", func(t *testing.T) {
-		t.Setenv("COOKIE_SECURE", " true ")
-		assert.True(t, cookieSecure())
+		assert.True(t, parseCookieSecure(" true "))
 	})
 
 	t.Run("false stays disabled", func(t *testing.T) {
-		t.Setenv("COOKIE_SECURE", "false")
-		assert.False(t, cookieSecure())
+		assert.False(t, parseCookieSecure("false"))
 	})
 
 	t.Run("numeric one is not true", func(t *testing.T) {
-		t.Setenv("COOKIE_SECURE", "1")
-		assert.False(t, cookieSecure())
+		assert.False(t, parseCookieSecure("1"))
 	})
+}
+
+func TestMemoizedCookieSecure(t *testing.T) {
+	// A local OnceValue, not the package variable, so test order cannot leak
+	// a cached value into the real configuration.
+	var value string
+	memoized := sync.OnceValue(func() bool {
+		return parseCookieSecure(value)
+	})
+
+	value = "true"
+	assert.True(t, memoized(), "first call reads the value")
+
+	value = "false"
+	assert.True(t, memoized(), "the cached result is returned without re-reading")
 }
 
 func TestShouldSuppressListenError(t *testing.T) {
