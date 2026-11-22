@@ -3,6 +3,7 @@ package login
 import (
 	"bytes"
 	"encoding/gob"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -71,6 +72,26 @@ func findSessionCookie(resp *http.Response) *http.Cookie {
 		}
 	}
 	return nil
+}
+
+func TestGetLoginDoesNotListUsernames(t *testing.T) {
+	controller := NewController(fibersession.New(fibersession.Config{}))
+
+	app := fiber.New()
+	app.Get("/login", controller.GetLogin)
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/login", nil)
+	resp, err := app.Test(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+	assert.Contains(t, string(body), `name="username"`)
+	assert.NotContains(t, string(body), "<select")
+	assert.NotContains(t, string(body), `value="admin"`)
 }
 
 func TestPostLogin_regeneratesSessionID(t *testing.T) {
