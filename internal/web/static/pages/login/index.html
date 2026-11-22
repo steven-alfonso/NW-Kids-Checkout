@@ -42,16 +42,16 @@
             <form id="login-form" class="space-y-6" method="POST" action="/login">
                 <div>
                     <label for="username" class="block text-sm font-semibold text-gray-700">Username</label>
-                    <select
+                    <input
                         id="username"
                         name="username"
+                        type="text"
                         autocomplete="username"
+                        autocapitalize="none"
+                        spellcheck="false"
                         required
                         class="mt-2 block w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
-                    >
-                        <option value="user" selected>user</option>
-                        <option value="admin">admin</option>
-                    </select>
+                    />
                 </div>
 
                 <div>
