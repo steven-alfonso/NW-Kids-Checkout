@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"kids-checkin/internal/controllers/middleware"
 	"kids-checkin/internal/web/menu"
 
 	"github.com/gofiber/fiber/v2"
@@ -295,6 +296,26 @@ func TestErrorHandlerLogs5xx(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
 	assert.NotContains(t, buf.String(), "level=ERROR")
+}
+
+func TestErrorHandlerLogsRequestID(t *testing.T) {
+	var buf bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	app := fiber.New(fiber.Config{ErrorHandler: errorHandler})
+	app.Use(middleware.RequestLogger())
+	app.Get("/boom", func(c *fiber.Ctx) error {
+		return fiber.NewError(fiber.StatusInternalServerError, "database exploded")
+	})
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/boom", nil)
+	req.Header.Set("X-Request-ID", "review-request-id")
+	resp, err := app.Test(req)
+	require.NoError(t, err)
+	assert.Equal(t, fiber.StatusInternalServerError, resp.StatusCode)
+	assert.Contains(t, buf.String(), "request_id=review-request-id")
 }
 
 func TestShouldSuppressListenError(t *testing.T) {

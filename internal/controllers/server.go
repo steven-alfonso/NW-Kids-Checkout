@@ -62,7 +62,7 @@ func errorHandler(ctx *fiber.Ctx, err error) error {
 				slog.String("method", ctx.Method()),
 				slog.String("path", ctx.Path()),
 			)
-			return ctx.Status(fiber.StatusInternalServerError).SendString("Internal Server Error")
+			return ctx.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"sorry": "Internal Server Error"})
 		}
 		defer f.Close()
 
@@ -74,7 +74,6 @@ func errorHandler(ctx *fiber.Ctx, err error) error {
 	if code >= fiber.StatusInternalServerError {
 		middleware.GetLogger(ctx).ErrorContext(ctx.Context(), "internal server error",
 			slog.String("error", err.Error()),
-			slog.Any("err", err),
 			slog.String("method", ctx.Method()),
 			slog.String("path", ctx.Path()),
 			slog.Int("status", code),
@@ -83,7 +82,7 @@ func errorHandler(ctx *fiber.Ctx, err error) error {
 	}
 
 	if writeErr := ctx.Status(code).JSON(fiber.Map{"sorry": message}); writeErr != nil {
-		// Defensive only: a two-key string map cannot fail to marshal.
+		// Defensive only: a single-key map cannot fail to marshal.
 		_ = ctx.Status(fiber.StatusInternalServerError).SendString("Internal Server Error")
 	}
 	return nil
