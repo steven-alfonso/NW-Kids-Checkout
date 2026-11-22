@@ -21,7 +21,7 @@ func RequestLogger() fiber.Handler {
 		c.Locals("request_id", rid)
 
 		log := slog.With(slog.String("request_id", rid))
-		c.Locals(loggerKey, &log)
+		c.Locals(loggerKey, log)
 
 		return c.Next()
 	}
