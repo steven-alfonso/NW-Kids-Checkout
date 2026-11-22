@@ -43,21 +43,6 @@ func newLoginTestApp(t *testing.T) (*fiber.App, *fibersession.Store) {
 	controller := NewController(store)
 
 	app := fiber.New()
-	app.Use(func(c *fiber.Ctx) error {
-		sess, err := store.Get(c)
-		if err != nil {
-			return err
-		}
-		defer func() {
-			// PostLogin saves its own session. Saving this pre-login session
-			// too would write the old ID back into the response cookie and
-			// undo the regeneration under test.
-			if len(c.Response().Header.PeekCookie("session_id")) == 0 {
-				_ = sess.Save()
-			}
-		}()
-		return c.Next()
-	})
 	app.Post("/login", controller.PostLogin)
 
 	return app, store
@@ -103,10 +88,19 @@ func TestPostLogin_regeneratesSessionID(t *testing.T) {
 	require.NotNil(t, cookie, "login must set a session cookie")
 	assert.NotEqual(t, fixatedID, cookie.Value)
 
-	// Regeneration also deletes the attacker-supplied session from storage.
-	raw, err := store.Storage.Get(fixatedID)
+	raw, err := store.Storage.Get(cookie.Value)
 	require.NoError(t, err)
-	assert.Nil(t, raw)
+	require.NotNil(t, raw, "the new session must be stored")
+
+	var data map[string]any
+	require.NoError(t, gob.NewDecoder(bytes.NewReader(raw)).Decode(&data))
+	assert.Equal(t, true, data["authenticated"])
+	assert.Equal(t, testUsername, data["username"])
+
+	// Regeneration also deletes the attacker-supplied session from storage.
+	old, err := store.Storage.Get(fixatedID)
+	require.NoError(t, err)
+	assert.Nil(t, old)
 }
 
 func TestPostLogin_wrongPasswordDoesNotCreateAuthenticatedSession(t *testing.T) {
@@ -118,19 +112,13 @@ func TestPostLogin_wrongPasswordDoesNotCreateAuthenticatedSession(t *testing.T) 
 	require.Equal(t, fiber.StatusSeeOther, resp.StatusCode)
 	assert.Equal(t, "/login?error=invalid", resp.Header.Get("Location"))
 
-	for _, cookie := range resp.Cookies() {
-		if cookie.Name != "session_id" {
-			continue
-		}
+	assert.Nil(t, findSessionCookie(resp), "a failed login must not issue a session cookie")
 
-		raw, err := store.Storage.Get(cookie.Value)
-		require.NoError(t, err)
-		if raw == nil {
-			continue
-		}
+	raw, err := store.Storage.Get(fixatedID)
+	require.NoError(t, err)
+	require.NotNil(t, raw, "the seeded session must remain")
 
-		var data map[string]any
-		require.NoError(t, gob.NewDecoder(bytes.NewReader(raw)).Decode(&data))
-		assert.NotEqual(t, true, data["authenticated"], "wrong password must not authenticate the session")
-	}
+	var data map[string]any
+	require.NoError(t, gob.NewDecoder(bytes.NewReader(raw)).Decode(&data))
+	assert.NotContains(t, data, "authenticated", "wrong password must not authenticate the session")
 }

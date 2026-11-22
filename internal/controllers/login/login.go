@@ -70,9 +70,11 @@ func (controller *Controller) PostLogin(c *fiber.Ctx) error {
 	// 3. Create Session
 	sess, err := controller.sessionStore.Get(c)
 	if err != nil {
-		return c.Status(http.StatusInternalServerError).SendString("Could not create user session")
+		slog.ErrorContext(c.Context(), "could not load session", slog.String("error", err.Error()))
+		return c.Status(http.StatusInternalServerError).SendString("Could not load user session")
 	}
 	if err := sess.Regenerate(); err != nil {
+		slog.ErrorContext(c.Context(), "could not regenerate session", slog.String("error", err.Error()))
 		return c.Status(http.StatusInternalServerError).SendString("Could not create user session")
 	}
 	sess.Set("authenticated", true)
