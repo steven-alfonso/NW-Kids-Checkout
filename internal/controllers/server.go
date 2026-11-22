@@ -67,6 +67,7 @@ func StartServer(ctx context.Context, port int, dbFilepath string) error {
 		CookieSameSite: "Lax",
 		CookieSecure:   cookieSecure(),
 	})
+	slog.Info("session cookie", slog.Bool("secure", cookieSecure()))
 
 	app := fiber.New(fiber.Config{
 		// Override default error handler
@@ -234,12 +235,18 @@ func StartServer(ctx context.Context, port int, dbFilepath string) error {
 
 // cookieSecure reports whether the session cookie carries the Secure flag.
 // It defaults to false so the current HTTP deployment keeps working. Set
-// COOKIE_SECURE=true only when every access path is HTTPS. The environment
+// COOKIE_SECURE=true only when every browser URL is https://. The environment
 // is read once, on the first call.
-var cookieSecure = sync.OnceValue(func() bool {
-	return parseCookieSecure(os.Getenv("COOKIE_SECURE"))
-})
+var cookieSecure = newCookieSecure(os.Getenv)
 
+func newCookieSecure(getenv func(string) string) func() bool {
+	return sync.OnceValue(func() bool {
+		return parseCookieSecure(getenv("COOKIE_SECURE"))
+	})
+}
+
+// parseCookieSecure reports whether value enables the flag. Only the literal
+// true, case-insensitive and trimmed, does.
 func parseCookieSecure(value string) bool {
 	return strings.EqualFold(strings.TrimSpace(value), "true")
 }

@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync"
 	"testing"
 
 	"kids-checkin/internal/web/menu"
@@ -140,19 +139,17 @@ func TestParseCookieSecure(t *testing.T) {
 	})
 }
 
-func TestMemoizedCookieSecure(t *testing.T) {
-	// A local OnceValue, not the package variable, so test order cannot leak
-	// a cached value into the real configuration.
-	var value string
-	memoized := sync.OnceValue(func() bool {
-		return parseCookieSecure(value)
-	})
+func TestNewCookieSecureReadsEnvironmentOnce(t *testing.T) {
+	calls := 0
+	getenv := func(string) string {
+		calls++
+		return "true"
+	}
+	secure := newCookieSecure(getenv)
 
-	value = "true"
-	assert.True(t, memoized(), "first call reads the value")
-
-	value = "false"
-	assert.True(t, memoized(), "the cached result is returned without re-reading")
+	assert.True(t, secure())
+	assert.True(t, secure())
+	assert.Equal(t, 1, calls, "the environment must be read once")
 }
 
 func TestShouldSuppressListenError(t *testing.T) {
