@@ -113,6 +113,38 @@ func TestStaticCacheControl(t *testing.T) {
 	})
 }
 
+func TestCookieSecure(t *testing.T) {
+	t.Run("unset defaults to false", func(t *testing.T) {
+		t.Setenv("COOKIE_SECURE", "")
+		assert.False(t, cookieSecure())
+	})
+
+	t.Run("true enables it", func(t *testing.T) {
+		t.Setenv("COOKIE_SECURE", "true")
+		assert.True(t, cookieSecure())
+	})
+
+	t.Run("uppercase true enables it", func(t *testing.T) {
+		t.Setenv("COOKIE_SECURE", "TRUE")
+		assert.True(t, cookieSecure())
+	})
+
+	t.Run("surrounding whitespace is ignored", func(t *testing.T) {
+		t.Setenv("COOKIE_SECURE", " true ")
+		assert.True(t, cookieSecure())
+	})
+
+	t.Run("false stays disabled", func(t *testing.T) {
+		t.Setenv("COOKIE_SECURE", "false")
+		assert.False(t, cookieSecure())
+	})
+
+	t.Run("numeric one is not true", func(t *testing.T) {
+		t.Setenv("COOKIE_SECURE", "1")
+		assert.False(t, cookieSecure())
+	})
+}
+
 func TestShouldSuppressListenError(t *testing.T) {
 	bindErr := errors.New("failed to listen: address already in use")
 	serveErr := errors.New("accept tcp: too many open files")

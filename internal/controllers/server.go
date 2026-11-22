@@ -11,6 +11,7 @@ import (
 	"kids-checkin/internal/controllers/middleware"
 	"log/slog"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -63,6 +64,7 @@ func StartServer(ctx context.Context, port int, dbFilepath string) error {
 		Expiration:     180 * 24 * time.Hour, // 180-day TTL
 		CookieHTTPOnly: true,                 // Security: prevents JS from reading cookie
 		CookieSameSite: "Lax",
+		CookieSecure:   cookieSecure(),
 	})
 
 	app := fiber.New(fiber.Config{
@@ -227,6 +229,13 @@ func StartServer(ctx context.Context, port int, dbFilepath string) error {
 
 	slog.Info("server stopped")
 	return nil
+}
+
+// cookieSecure reports whether the session cookie carries the Secure flag.
+// It defaults to false so the current HTTP deployment keeps working. Set
+// COOKIE_SECURE=true only when every access path is HTTPS.
+func cookieSecure() bool {
+	return strings.EqualFold(strings.TrimSpace(os.Getenv("COOKIE_SECURE")), "true")
 }
 
 // shouldSuppressListenError reports whether a Listen error is a clean
