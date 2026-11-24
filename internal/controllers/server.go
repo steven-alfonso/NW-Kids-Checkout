@@ -40,6 +40,54 @@ import (
 	"github.com/gofiber/storage/sqlite3"
 )
 
+// errorHandler renders errors as JSON, keeping the "sorry" key the frontend
+// reads. A 5xx response carries a generic message; the detail goes to the log
+// so internal errors are not echoed to the client.
+func errorHandler(ctx *fiber.Ctx, err error) error {
+	code := fiber.StatusInternalServerError
+
+	message := ""
+	if e, ok := errors.AsType[*fiber.Error](err); ok {
+		message = e.Message
+		code = e.Code
+	}
+
+	acceptsHTML := ctx.Accepts("html") != ""
+	wantsHTML := acceptsHTML || strings.HasSuffix(ctx.Path(), ".html")
+	if code == fiber.StatusNotFound && wantsHTML {
+		f, openErr := static.EmbeddedFS.Open("pages/errors/404.html")
+		if openErr != nil {
+			middleware.GetLogger(ctx).ErrorContext(ctx.Context(), "failed to open 404 page",
+				slog.String("error", openErr.Error()),
+				slog.String("method", ctx.Method()),
+				slog.String("path", ctx.Path()),
+			)
+			return ctx.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"sorry": "Internal Server Error"})
+		}
+		defer f.Close()
+
+		ctx.Status(code)
+		ctx.Type("html")
+		return ctx.SendStream(f)
+	}
+
+	if code >= fiber.StatusInternalServerError {
+		middleware.GetLogger(ctx).ErrorContext(ctx.Context(), "internal server error",
+			slog.String("error", err.Error()),
+			slog.String("method", ctx.Method()),
+			slog.String("path", ctx.Path()),
+			slog.Int("status", code),
+		)
+		message = "Internal Server Error"
+	}
+
+	if writeErr := ctx.Status(code).JSON(fiber.Map{"sorry": message}); writeErr != nil {
+		// Defensive only: a single-key map cannot fail to marshal.
+		_ = ctx.Status(fiber.StatusInternalServerError).SendString("Internal Server Error")
+	}
+	return nil
+}
+
 func StartServer(ctx context.Context, port int, dbFilepath string) error {
 	// One spelling for both connections: InitDB only logs the absolute path
 	// and opens the given spelling, so trim once here. Otherwise a padded
@@ -70,43 +118,7 @@ func StartServer(ctx context.Context, port int, dbFilepath string) error {
 	slog.Info("session cookie", slog.Bool("secure", cookieSecure()))
 
 	app := fiber.New(fiber.Config{
-		// Override default error handler
-		ErrorHandler: func(ctx *fiber.Ctx, err error) error {
-			// Status code defaults to 500
-			code := fiber.StatusInternalServerError
-
-			// Retrieve the custom status code if it's a *fiber.Error
-
-			message := ""
-			if e, ok := errors.AsType[*fiber.Error](err); ok {
-				message = e.Message
-				code = e.Code
-			}
-
-			acceptsHTML := ctx.Accepts("html") != ""
-			wantsHTML := acceptsHTML || strings.HasSuffix(ctx.Path(), ".html")
-			if code == fiber.StatusNotFound && wantsHTML {
-				f, openErr := static.EmbeddedFS.Open("pages/errors/404.html")
-				if openErr != nil {
-					return ctx.Status(fiber.StatusInternalServerError).SendString("Internal Server Error")
-				}
-				defer f.Close()
-
-				ctx.Status(code)
-				ctx.Type("html")
-				return ctx.SendStream(f)
-			}
-
-			// Send custom error page
-			err = ctx.Status(code).SendString(fmt.Sprintf(`{"sorry":"%s"}`, message))
-			if err != nil {
-				// In case the SendFile fails
-				return ctx.Status(fiber.StatusInternalServerError).SendString("Internal Server Error")
-			}
-
-			// Return from handler
-			return nil
-		},
+		ErrorHandler: errorHandler,
 	})
 	app.Use(middleware.RequestLogger())
 	app.Use(middleware.HTTPAccessLogger())

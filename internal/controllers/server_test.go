@@ -1,13 +1,16 @@
 package controllers
 
 import (
+	"bytes"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"kids-checkin/internal/controllers/middleware"
 	"kids-checkin/internal/web/menu"
 
 	"github.com/gofiber/fiber/v2"
@@ -150,6 +153,169 @@ func TestNewCookieSecureReadsEnvironmentOnce(t *testing.T) {
 	assert.True(t, secure())
 	assert.True(t, secure())
 	assert.Equal(t, 1, calls, "the environment must be read once")
+}
+
+func TestErrorHandler(t *testing.T) {
+	newApp := func() *fiber.App {
+		return fiber.New(fiber.Config{ErrorHandler: errorHandler})
+	}
+
+	do := func(t *testing.T, app *fiber.App, path, accept string) (*http.Response, string) {
+		t.Helper()
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil)
+		if accept != "" {
+			req.Header.Set("Accept", accept)
+		}
+		resp, err := app.Test(req)
+		require.NoError(t, err)
+		body, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		return resp, string(body)
+	}
+
+	t.Run("5xx hides the message and returns JSON", func(t *testing.T) {
+		app := newApp()
+		app.Get("/boom", func(c *fiber.Ctx) error {
+			return fiber.NewError(fiber.StatusInternalServerError, "database exploded")
+		})
+
+		resp, body := do(t, app, "/boom", "")
+		assert.Equal(t, fiber.StatusInternalServerError, resp.StatusCode)
+		assert.Contains(t, resp.Header.Get("Content-Type"), "application/json")
+		assert.JSONEq(t, `{"sorry":"Internal Server Error"}`, body)
+		assert.NotContains(t, body, "database exploded")
+	})
+
+	t.Run("5xx with HTML accept still returns JSON", func(t *testing.T) {
+		app := newApp()
+		app.Get("/boom-html", func(c *fiber.Ctx) error {
+			return fiber.NewError(fiber.StatusInternalServerError, "database exploded")
+		})
+
+		resp, body := do(t, app, "/boom-html", "text/html")
+		assert.Equal(t, fiber.StatusInternalServerError, resp.StatusCode)
+		assert.Contains(t, resp.Header.Get("Content-Type"), "application/json")
+		assert.JSONEq(t, `{"sorry":"Internal Server Error"}`, body)
+		assert.NotContains(t, body, "database exploded")
+	})
+
+	t.Run("4xx keeps the message and returns JSON", func(t *testing.T) {
+		app := newApp()
+		app.Get("/bad", func(c *fiber.Ctx) error {
+			return fiber.NewError(fiber.StatusBadRequest, "bad input")
+		})
+
+		resp, body := do(t, app, "/bad", "")
+		assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
+		assert.Contains(t, resp.Header.Get("Content-Type"), "application/json")
+		assert.JSONEq(t, `{"sorry":"bad input"}`, body)
+	})
+
+	t.Run("plain error is a generic 500", func(t *testing.T) {
+		app := newApp()
+		app.Get("/raw", func(c *fiber.Ctx) error {
+			return errors.New("raw")
+		})
+
+		resp, body := do(t, app, "/raw", "")
+		assert.Equal(t, fiber.StatusInternalServerError, resp.StatusCode)
+		assert.JSONEq(t, `{"sorry":"Internal Server Error"}`, body)
+		assert.NotContains(t, body, "raw")
+	})
+
+	t.Run("unknown path with HTML accept serves the 404 page", func(t *testing.T) {
+		app := newApp()
+
+		resp, body := do(t, app, "/missing", "text/html")
+		assert.Equal(t, fiber.StatusNotFound, resp.StatusCode)
+		assert.Contains(t, resp.Header.Get("Content-Type"), "text/html")
+		assert.Contains(t, body, "Page not found")
+	})
+
+	t.Run("unknown path with .html suffix serves the 404 page without accept", func(t *testing.T) {
+		app := newApp()
+
+		resp, body := do(t, app, "/missing.html", "")
+		assert.Equal(t, fiber.StatusNotFound, resp.StatusCode)
+		assert.Contains(t, resp.Header.Get("Content-Type"), "text/html")
+		assert.Contains(t, body, "Page not found")
+	})
+
+	t.Run("unknown path with JSON accept returns JSON", func(t *testing.T) {
+		app := newApp()
+
+		resp, body := do(t, app, "/missing", "application/json")
+		assert.Equal(t, fiber.StatusNotFound, resp.StatusCode)
+		assert.Contains(t, resp.Header.Get("Content-Type"), "application/json")
+		assert.JSONEq(t, `{"sorry":"Cannot GET /missing"}`, body)
+		assert.NotContains(t, body, "<html")
+	})
+
+	t.Run("fiber.ErrNotFound keeps its message as JSON", func(t *testing.T) {
+		app := newApp()
+		app.Get("/gone", func(c *fiber.Ctx) error {
+			return fiber.ErrNotFound
+		})
+
+		resp, body := do(t, app, "/gone", "application/json")
+		assert.Equal(t, fiber.StatusNotFound, resp.StatusCode)
+		assert.Contains(t, resp.Header.Get("Content-Type"), "application/json")
+		assert.JSONEq(t, `{"sorry":"Not Found"}`, body)
+	})
+}
+
+func TestErrorHandlerLogs5xx(t *testing.T) {
+	var buf bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	app := fiber.New(fiber.Config{ErrorHandler: errorHandler})
+	app.Get("/boom", func(c *fiber.Ctx) error {
+		return fiber.NewError(fiber.StatusInternalServerError, "database exploded")
+	})
+	app.Get("/bad", func(c *fiber.Ctx) error {
+		return fiber.NewError(fiber.StatusBadRequest, "bad input")
+	})
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/boom", nil)
+	resp, err := app.Test(req)
+	require.NoError(t, err)
+	assert.Equal(t, fiber.StatusInternalServerError, resp.StatusCode)
+
+	logged := buf.String()
+	assert.Contains(t, logged, "level=ERROR")
+	assert.Contains(t, logged, "database exploded")
+	assert.Contains(t, logged, "method=GET")
+	assert.Contains(t, logged, "path=/boom")
+	assert.Contains(t, logged, "status=500")
+
+	buf.Reset()
+	req = httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/bad", nil)
+	resp, err = app.Test(req)
+	require.NoError(t, err)
+	assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
+	assert.NotContains(t, buf.String(), "level=ERROR")
+}
+
+func TestErrorHandlerLogsRequestID(t *testing.T) {
+	var buf bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	app := fiber.New(fiber.Config{ErrorHandler: errorHandler})
+	app.Use(middleware.RequestLogger())
+	app.Get("/boom", func(c *fiber.Ctx) error {
+		return fiber.NewError(fiber.StatusInternalServerError, "database exploded")
+	})
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/boom", nil)
+	req.Header.Set("X-Request-ID", "review-request-id")
+	resp, err := app.Test(req)
+	require.NoError(t, err)
+	assert.Equal(t, fiber.StatusInternalServerError, resp.StatusCode)
+	assert.Contains(t, buf.String(), "request_id=review-request-id")
 }
 
 func TestShouldSuppressListenError(t *testing.T) {
