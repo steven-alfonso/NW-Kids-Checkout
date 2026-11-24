@@ -294,10 +294,10 @@ func Test_checkedOutAfterAllowed(t *testing.T) {
 	now := time.Date(2026, 11, 24, 12, 0, 0, 0, time.UTC)
 
 	tests := []struct {
-		name     string
-		t        time.Time
-		bypassed bool
-		want     bool
+		name            string
+		checkedOutAfter time.Time
+		bypassed        bool
+		want            bool
 	}{
 		{"zero time means omitted", time.Time{}, false, true},
 		{"future time", now.Add(time.Hour), false, true},
@@ -310,7 +310,7 @@ func Test_checkedOutAfterAllowed(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, tc.want, checkedOutAfterAllowed(tc.t, now, tc.bypassed))
+			assert.Equal(t, tc.want, checkedOutAfterAllowed(tc.checkedOutAfter, now, tc.bypassed))
 		})
 	}
 }
@@ -685,6 +685,12 @@ func TestController_Checkouts_filter_validation(t *testing.T) {
 	t.Run("future checked_out_after returns 200", func(t *testing.T) {
 		status, _ := pollCheckouts(t, "/v1/checkins/checkouts?checked_out_after=1h")
 		assert.Equal(t, fiber.StatusOK, status)
+	})
+
+	t.Run("malformed checked_out_after returns 400", func(t *testing.T) {
+		status, body := pollCheckouts(t, "/v1/checkins/checkouts?checked_out_after=garbage")
+		assert.Equal(t, fiber.StatusBadRequest, status)
+		assert.Contains(t, body, "cannot parse checked_out_after")
 	})
 }
 
