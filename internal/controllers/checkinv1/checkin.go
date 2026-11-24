@@ -65,7 +65,8 @@ func NewController(db *sql.DB, sessionStore session.Storer) *Controller {
 }
 
 func (controller *Controller) RegisterRoutes(app *fiber.App) {
-	// Use per-route auth so each route declares its own role.
+	// Use per-route auth rather than group middleware, so no prefix catches an
+	// unlisted route.
 	authRequired := middleware.AuthRequired(controller.sessionStore, "")
 	app.Get("/v1/checkins/checkouts", authRequired, controller.Checkouts)
 	app.Patch("/v1/checkins/:planning_center_id/checked_out_confirmed", authRequired, controller.PatchCheckedOutConfirmed)

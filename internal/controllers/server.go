@@ -359,7 +359,8 @@ func registerRoutes(app *fiber.App, db *sql.DB, sessionStore *fibersession.Store
 	// Guest check-in is disabled, so /guest-checkin,
 	// /v1/checkins/guest-submissions*, and /admin/guest-entries are not
 	// registered. Re-enable only with an Access bypass for the public paths and
-	// a Turnstile check on the form; see docs/expose-the-app-to-the-internet.md.
+	// a Turnstile check on the form; see the runbook for the full revival list
+	// (docs/expose-the-app-to-the-internet.md).
 
 	locationV1Controller := locationv1.NewController(db, sessionStore)
 	locationV1Controller.RegisterRoutes(app)
