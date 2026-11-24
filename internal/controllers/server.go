@@ -21,7 +21,6 @@ import (
 
 	"kids-checkin/internal/controllers/checkinv1"
 	"kids-checkin/internal/controllers/eventv1"
-	"kids-checkin/internal/controllers/guestcheckinv1"
 	"kids-checkin/internal/controllers/locationgroupv1"
 	"kids-checkin/internal/controllers/locationv1"
 	"kids-checkin/internal/controllers/manualcheckinv1"
@@ -357,8 +356,10 @@ func registerRoutes(app *fiber.App, db *sql.DB, sessionStore *fibersession.Store
 	manualCheckinController := manualcheckinv1.NewController(db, sessionStore)
 	manualCheckinController.RegisterRoutes(app)
 
-	guestCheckinController := guestcheckinv1.NewController(db, sessionStore)
-	guestCheckinController.RegisterRoutes(app)
+	// Guest check-in is disabled, so /guest-checkin,
+	// /v1/checkins/guest-submissions*, and /admin/guest-entries are not
+	// registered. Re-enable only with an Access bypass for the public paths and
+	// a Turnstile check on the form; see docs/expose-the-app-to-the-internet.md.
 
 	locationV1Controller := locationv1.NewController(db, sessionStore)
 	locationV1Controller.RegisterRoutes(app)
