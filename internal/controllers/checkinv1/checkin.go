@@ -34,13 +34,15 @@ import (
 
 const defaultCheckedOutAfterDelta = -12 * time.Hour
 
-// Ceiling on an explicit ?limit=, well above the 100 the UI asks for. The repo
-// skips its LIMIT clause when filter.Limit is 0, so an unbounded caller gets
-// the whole table -- every child's name, security_code, and checkout time.
-//
-// Only an explicit limit is capped. Omitting ?limit= is still unbounded,
-// which is what manual-checkins.js relies on today.
-const maxCheckoutsLimit = 1000
+// The repo skips its LIMIT clause when filter.Limit is 0, so an unbounded
+// caller gets the whole table -- every child's name, security_code, and
+// checkout time. Bound both an omitted ?limit= and an explicit one, and keep
+// checked_out_after within a shift's worth of history.
+const (
+	defaultCheckoutsLimit = 100 // matches the checkouts page poll; bounds an omitted limit
+	maxCheckoutsLimit     = 1000
+	maxCheckoutsWindow    = 24 * time.Hour
+)
 
 type Controller struct {
 	checkinRepo  checkin.Repo
@@ -394,6 +396,7 @@ func buildFilter(c *fiber.Ctx) (checkin.Filter, error) {
 		PlanningCenterID:  c.Query("planning_center_id"),
 		FirstName:         c.Query("first_name"),
 		LastName:          c.Query("last_name"),
+		Limit:             defaultCheckoutsLimit,
 	}
 
 	if idStr := c.Query("id"); idStr != "" {
@@ -455,6 +458,12 @@ func buildFilter(c *fiber.Ctx) (checkin.Filter, error) {
 			if err != nil {
 				return checkin.Filter{}, errors.New("cannot parse checked_out_after")
 			}
+		}
+
+		// Future timestamps are fine; only windows reaching further back
+		// than a shift are rejected.
+		if !filter.CheckedOutAtAfter.IsZero() && filter.CheckedOutAtAfter.Before(time.Now().Add(-maxCheckoutsWindow)) {
+			return checkin.Filter{}, errors.New("checked_out_after must be within the last 24 hours")
 		}
 	}
 

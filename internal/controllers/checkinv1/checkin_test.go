@@ -601,14 +601,67 @@ func TestController_Checkouts_filter_validation(t *testing.T) {
 		assert.Equal(t, fiber.StatusOK, resp.StatusCode)
 	})
 
-	// manual-checkins.js omits limit and is unbounded today; bounding the
-	// default is out of scope, so pin the current behavior.
-	t.Run("omitted limit stays accepted", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/v1/checkins/checkouts", nil)
+	// buildFilter is unexported but this package can exercise it directly.
+	filterApp := fiber.New()
+	filterApp.Get("/filter", func(c *fiber.Ctx) error {
+		f, err := buildFilter(c)
+		if err != nil {
+			return err
+		}
+		return c.JSON(fiber.Map{"limit": f.Limit})
+	})
+	decodeLimit := func(t *testing.T, target string) int {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, target, nil)
+		resp, err := filterApp.Test(req)
+		require.NoError(t, err)
+		require.Equal(t, fiber.StatusOK, resp.StatusCode)
+		defer resp.Body.Close()
+
+		var payload struct {
+			Limit int `json:"limit"`
+		}
+		require.NoError(t, json.NewDecoder(resp.Body).Decode(&payload))
+		return payload.Limit
+	}
+
+	// checkoutsv1/checkouts.js sends limit=100 on every poll; an omitted limit
+	// must get the same bound rather than the whole table.
+	t.Run("omitted limit defaults to 100", func(t *testing.T) {
+		assert.Equal(t, defaultCheckoutsLimit, decodeLimit(t, "/filter"))
+	})
+
+	t.Run("explicit limit overrides the default", func(t *testing.T) {
+		assert.Equal(t, 5, decodeLimit(t, "/filter?limit=5"))
+	})
+
+	pollCheckouts := func(t *testing.T, target string) (int, string) {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, target, nil)
 		req.Header.Set("Accept", "application/json")
 		resp, err := app.Test(req)
 		require.NoError(t, err)
-		assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+		defer resp.Body.Close()
+		body, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		return resp.StatusCode, string(body)
+	}
+
+	t.Run("checked_out_after within 24 hours returns 200", func(t *testing.T) {
+		status, _ := pollCheckouts(t, "/v1/checkins/checkouts?checked_out_after=-31m")
+		assert.Equal(t, fiber.StatusOK, status)
+	})
+
+	t.Run("checked_out_after older than 24 hours returns 400", func(t *testing.T) {
+		status, body := pollCheckouts(t, "/v1/checkins/checkouts?checked_out_after=-100000h")
+		assert.Equal(t, fiber.StatusBadRequest, status)
+		assert.Contains(t, body, "checked_out_after must be within the last 24 hours")
+	})
+
+	t.Run("checked_out_after RFC3339 timestamp far in the past returns 400", func(t *testing.T) {
+		status, body := pollCheckouts(t, "/v1/checkins/checkouts?checked_out_after=2000-01-01T00:00:00Z")
+		assert.Equal(t, fiber.StatusBadRequest, status)
+		assert.Contains(t, body, "checked_out_after must be within the last 24 hours")
 	})
 }
 
