@@ -57,8 +57,8 @@ func AuthRequired(sessionStore session.Storer, allowedRoles ...string) fiber.Han
 			return redirectToLogin(c)
 		}
 
-		if username, ok := sess.Get("username").(string); ok && username != "" {
-			c.Locals("username", username)
+		if username, ok := sess.Get(usernameKey).(string); ok && username != "" {
+			c.Locals(usernameKey, username)
 		}
 
 		userRole, ok := sess.Get("role").(string)

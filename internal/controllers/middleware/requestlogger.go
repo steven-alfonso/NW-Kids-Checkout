@@ -9,7 +9,10 @@ import (
 	"github.com/google/uuid"
 )
 
-const loggerKey = "logger"
+const (
+	loggerKey   = "logger"
+	usernameKey = "username"
+)
 
 func RequestLogger() fiber.Handler {
 	return func(c *fiber.Ctx) error {
@@ -57,7 +60,7 @@ func HTTPAccessLogger() fiber.Handler {
 		}
 		switch c.Method() {
 		case fiber.MethodPost, fiber.MethodPatch, fiber.MethodPut, fiber.MethodDelete:
-			if username, ok := c.Locals("username").(string); ok && username != "" {
+			if username, ok := c.Locals(usernameKey).(string); ok && username != "" {
 				attrs = append(attrs, slog.String("username", username))
 			}
 		}
