@@ -274,7 +274,7 @@ The API is currently versioned under `/v1`.
 
 ### Check-ins
 
-- `GET /v1/checkins/checkouts/:location`: Get a list of checkouts for a specific location.
+- `GET /v1/checkins/checkouts`: Get a list of checkouts, filtered by query parameters such as `location_group_name` and `checked_out_after`.
 
 ### Locations
 
