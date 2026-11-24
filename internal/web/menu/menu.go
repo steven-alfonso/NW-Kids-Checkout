@@ -23,8 +23,9 @@ type Item struct {
 // check-ins are always visible. Log In is only shown to anonymous users; Log
 // Out only to authenticated users; Admin only to admin users.
 //
-// The guest check-in kiosk (/guest-checkin) is intentionally absent here: it is
-// reached by direct URL or QR code, not through the shared menu.
+// The guest check-in kiosk (/guest-checkin) is intentionally absent here: the
+// kiosk is not registered (see server.go), and if revived it would be reached by
+// direct URL or QR code rather than the shared menu.
 func For(authenticated bool, role string) []Item {
 	items := []Item{
 		{ID: "manual-checkins-link", Label: "Manual Check-Ins", Href: "/manual-checkins"},
