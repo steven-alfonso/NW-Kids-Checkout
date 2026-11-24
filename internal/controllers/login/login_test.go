@@ -1,12 +1,16 @@
 package login
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/gob"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httputil"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -49,6 +53,49 @@ func newLoginTestApp(t *testing.T) (*fiber.App, *fibersession.Store) {
 	return app, store
 }
 
+// testConnWithRemoteAddr mirrors Fiber's test connection but reports the
+// request's RemoteAddr. app.Test hard-codes 0.0.0.0, which would put every
+// request into one limiter bucket.
+type testConnWithRemoteAddr struct {
+	r    bytes.Buffer
+	w    bytes.Buffer
+	addr net.Addr
+}
+
+func (c *testConnWithRemoteAddr) Read(b []byte) (int, error)       { return c.r.Read(b) }
+func (c *testConnWithRemoteAddr) Write(b []byte) (int, error)      { return c.w.Write(b) }
+func (c *testConnWithRemoteAddr) Close() error                     { return nil }
+func (c *testConnWithRemoteAddr) LocalAddr() net.Addr              { return &net.TCPAddr{IP: net.IPv4zero} }
+func (c *testConnWithRemoteAddr) RemoteAddr() net.Addr             { return c.addr }
+func (c *testConnWithRemoteAddr) SetDeadline(time.Time) error      { return nil }
+func (c *testConnWithRemoteAddr) SetReadDeadline(time.Time) error  { return nil }
+func (c *testConnWithRemoteAddr) SetWriteDeadline(time.Time) error { return nil }
+
+// testAppRequest serves req through app while preserving its RemoteAddr, so
+// the limiter sees the intended connection IP.
+func testAppRequest(t *testing.T, app *fiber.App, req *http.Request) *http.Response {
+	t.Helper()
+
+	if req.Body != http.NoBody && req.Header.Get("Content-Length") == "" {
+		req.Header.Set("Content-Length", strconv.Itoa(int(req.ContentLength)))
+	}
+	dump, err := httputil.DumpRequest(req, true)
+	require.NoError(t, err)
+
+	addr, err := net.ResolveTCPAddr("tcp", req.RemoteAddr)
+	require.NoError(t, err)
+	conn := &testConnWithRemoteAddr{addr: addr}
+	_, err = conn.r.Write(dump)
+	require.NoError(t, err)
+
+	app.Handler() // build the route tree before serving the connection
+	require.NoError(t, app.Server().ServeConn(conn))
+
+	resp, err := http.ReadResponse(bufio.NewReader(&conn.w), req)
+	require.NoError(t, err)
+	return resp
+}
+
 func postLogin(t *testing.T, app *fiber.App, password string) *http.Response {
 	return postLoginFromIP(t, app, password, "")
 }
@@ -69,12 +116,10 @@ func postLoginWithAccept(t *testing.T, app *fiber.App, password, clientIP, accep
 	req.Header.Set("Accept", accept)
 	req.Header.Set("Cookie", "session_id="+fixatedID)
 	if clientIP != "" {
-		req.Header.Set("CF-Connecting-IP", clientIP)
+		req.RemoteAddr = clientIP + ":12345"
 	}
 
-	resp, err := app.Test(req)
-	require.NoError(t, err)
-	return resp
+	return testAppRequest(t, app, req)
 }
 
 func findSessionCookie(resp *http.Response) *http.Cookie {
@@ -160,7 +205,7 @@ func TestPostLogin_rateLimitsPerClient(t *testing.T) {
 	app, _ := newLoginTestApp(t)
 
 	const clientIP = "198.51.100.10"
-	for attempt := 1; attempt <= 20; attempt++ {
+	for attempt := 1; attempt <= loginAttemptLimit; attempt++ {
 		resp := postLoginFromIP(t, app, "not the password", clientIP)
 		resp.Body.Close()
 		assert.NotEqual(t, fiber.StatusTooManyRequests, resp.StatusCode, "attempt %d should be under the limit", attempt)
@@ -179,39 +224,29 @@ func TestPostLogin_rateLimitsPerClient(t *testing.T) {
 	assert.NotEqual(t, fiber.StatusTooManyRequests, other.StatusCode, "a different client key has its own budget")
 }
 
-func TestPostLogin_invalidClientIPHeaderFallsBackToConnectionIP(t *testing.T) {
-	app, _ := newLoginTestApp(t)
-
-	const bogusIP = "not-an-ip"
-	for attempt := 1; attempt <= 20; attempt++ {
-		resp := postLoginFromIP(t, app, "not the password", bogusIP)
-		resp.Body.Close()
-		assert.NotEqual(t, fiber.StatusTooManyRequests, resp.StatusCode, "attempt %d should be under the limit", attempt)
-	}
-
-	resp := postLoginFromIP(t, app, "not the password", bogusIP)
-	defer resp.Body.Close()
-	require.Equal(t, fiber.StatusTooManyRequests, resp.StatusCode, "a bogus header must not buy a fresh budget")
-
-	body, err := io.ReadAll(resp.Body)
-	require.NoError(t, err)
-	assert.JSONEq(t, `{"error":"too many login attempts"}`, string(body))
-}
-
 func TestPostLogin_rateLimitRedirectsBrowser(t *testing.T) {
 	app, _ := newLoginTestApp(t)
 
 	const clientIP = "203.0.113.10"
-	for attempt := 1; attempt <= 20; attempt++ {
+	for attempt := 1; attempt <= loginAttemptLimit; attempt++ {
 		resp := postLoginWithAccept(t, app, "not the password", clientIP, "text/html")
 		resp.Body.Close()
 		assert.Equal(t, "/login?error=invalid", resp.Header.Get("Location"), "attempt %d should still reach the handler", attempt)
 	}
 
-	resp := postLoginWithAccept(t, app, "not the password", clientIP, "text/html")
+	form := url.Values{
+		"username": {testUsername},
+		"password": {"not the password"},
+	}
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/login?next=/manual-checkins", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "text/html")
+	req.RemoteAddr = clientIP + ":12345"
+
+	resp := testAppRequest(t, app, req)
 	defer resp.Body.Close()
 	require.Equal(t, fiber.StatusSeeOther, resp.StatusCode)
-	assert.Equal(t, "/login?error=ratelimited", resp.Header.Get("Location"))
+	assert.Equal(t, "/login?error=ratelimited&next="+url.QueryEscape("/manual-checkins"), resp.Header.Get("Location"))
 }
 
 func TestGetLoginShowsRateLimitMessage(t *testing.T) {

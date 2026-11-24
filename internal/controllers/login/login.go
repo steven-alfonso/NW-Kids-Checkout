@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"kids-checkin/internal/web/static"
 	"log/slog"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -20,7 +19,7 @@ import (
 )
 
 const (
-	loginAttemptLimit = 20
+	loginAttemptLimit = 100
 	loginWindow       = 5 * time.Minute
 )
 
@@ -37,25 +36,26 @@ func NewController(sessionStore session.Storer) *Controller {
 
 func (controller *Controller) RegisterRoutes(app *fiber.App) {
 	app.Get("/login", controller.GetLogin)
+	// The app currently runs behind Traefik, so every client reaches the origin
+	// from the same proxy peer address. This in-memory limiter is therefore a
+	// coarse backstop, not per-client protection: one busy client can consume
+	// the shared budget. Do not read CF-Connecting-IP or X-Forwarded-For here,
+	// and do not set Fiber's global ProxyHeader; neither header is validated at
+	// this boundary. Cloudflare Access and the edge rate-limit rule are the
+	// real external gates for per-client throttling once the tunnel migration
+	// is done; treat this in-memory limiter as defense in depth only.
 	app.Post("/login", limiter.New(limiter.Config{
 		Max:        loginAttemptLimit,
 		Expiration: loginWindow,
-		KeyGenerator: func(c *fiber.Ctx) string {
-			// Per the deployment runbook, Cloudflare is the only internet-facing
-			// path and sets this header; direct origin access is firewalled. If
-			// that changes, validate the socket peer here too.
-			if ip := c.Get("CF-Connecting-IP"); ip != "" {
-				if parsed := net.ParseIP(ip); parsed != nil {
-					return parsed.String()
-				}
-			}
-			return c.IP()
-		},
 		LimitReached: func(c *fiber.Ctx) error {
 			if strings.Contains(strings.ToLower(c.Get("Accept")), "text/html") {
-				// Deliberately reset the flow: a rate-limited visitor starts
-				// again at /login instead of carrying next through the error.
-				return c.Redirect("/login?error=ratelimited", fiber.StatusSeeOther)
+				// Browser form posts go back to the login page with a message.
+				// Carry a validated next target along so the user lands where they meant to.
+				target := "/login?error=ratelimited"
+				if n := c.Query("next"); n != "" && isSameOriginPath(n) {
+					target += "&next=" + url.QueryEscape(n)
+				}
+				return c.Redirect(target, fiber.StatusSeeOther)
 			}
 			return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{"error": "too many login attempts"})
 		},
