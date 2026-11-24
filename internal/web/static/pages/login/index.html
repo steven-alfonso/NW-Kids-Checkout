@@ -82,6 +82,9 @@
         if (error) {
             const banner = document.getElementById("login-error");
             if (banner) {
+                if (error === "ratelimited") {
+                    banner.textContent = "Too many login attempts. Please wait a few minutes and try again.";
+                }
                 banner.classList.remove("hidden");
             }
         }

@@ -8,12 +8,19 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"time"
 
 	"kids-checkin/internal/controllers/session"
 	"kids-checkin/internal/repo/location"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/limiter"
 	"golang.org/x/crypto/bcrypt"
+)
+
+const (
+	loginAttemptLimit = 100
+	loginWindow       = 5 * time.Minute
 )
 
 type Controller struct {
@@ -29,7 +36,30 @@ func NewController(sessionStore session.Storer) *Controller {
 
 func (controller *Controller) RegisterRoutes(app *fiber.App) {
 	app.Get("/login", controller.GetLogin)
-	app.Post("/login", controller.PostLogin)
+	// The app currently runs behind Traefik, so every client reaches the origin
+	// from the same proxy peer address. This in-memory limiter is therefore a
+	// coarse backstop, not per-client protection: one busy client can consume
+	// the shared budget. Do not read CF-Connecting-IP or X-Forwarded-For here,
+	// and do not set Fiber's global ProxyHeader; neither header is validated at
+	// this boundary. Cloudflare Access and the edge rate-limit rule are the
+	// real external gates for per-client throttling once the tunnel migration
+	// is done; treat this in-memory limiter as defense in depth only.
+	app.Post("/login", limiter.New(limiter.Config{
+		Max:        loginAttemptLimit,
+		Expiration: loginWindow,
+		LimitReached: func(c *fiber.Ctx) error {
+			if strings.Contains(strings.ToLower(c.Get("Accept")), "text/html") {
+				// Browser form posts go back to the login page with a message.
+				// Carry a validated next target along so the user lands where they meant to.
+				target := "/login?error=ratelimited"
+				if n := c.Query("next"); n != "" && isSameOriginPath(n) {
+					target += "&next=" + url.QueryEscape(n)
+				}
+				return c.Redirect(target, fiber.StatusSeeOther)
+			}
+			return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{"error": "too many login attempts"})
+		},
+	}), controller.PostLogin)
 	app.Get("/logout", controller.GetLogout)
 	slog.Info("registering login routes")
 }
