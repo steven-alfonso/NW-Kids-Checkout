@@ -310,6 +310,19 @@ func Test_parseBypassCheckedOutAfterLimit(t *testing.T) {
 	}
 }
 
+func Test_newCheckedOutAfterLimitBypass(t *testing.T) {
+	calls := 0
+	getenv := func(string) string {
+		calls++
+		return "true"
+	}
+	bypass := newCheckedOutAfterLimitBypass(getenv)
+
+	assert.True(t, bypass())
+	assert.True(t, bypass())
+	assert.Equal(t, 1, calls, "the environment must be read only once")
+}
+
 func TestController_Checkouts_conditionalPolling(t *testing.T) {
 	app, store := setupAuthedApp()
 	testDB, cleanup, err := db.PrepareTestDB()
@@ -550,7 +563,9 @@ func Test_etagMatches(t *testing.T) {
 
 func TestController_Checkouts_filter_validation(t *testing.T) {
 	// Pin the default-false behavior even if the developer's shell enables it.
-	t.Setenv("BYPASS_CHECKED_OUT_AFTER_LIMIT", "false")
+	originalBypass := bypassCheckedOutAfterLimit
+	bypassCheckedOutAfterLimit = func() bool { return false }
+	t.Cleanup(func() { bypassCheckedOutAfterLimit = originalBypass })
 
 	app, store := setupAuthedApp()
 	testDB, cleanup, err := db.PrepareTestDB()
@@ -698,13 +713,19 @@ func TestController_Checkouts_filter_validation(t *testing.T) {
 	})
 
 	t.Run("dev bypass allows a duration older than 24 hours", func(t *testing.T) {
-		t.Setenv("BYPASS_CHECKED_OUT_AFTER_LIMIT", "true")
+		originalBypass := bypassCheckedOutAfterLimit
+		bypassCheckedOutAfterLimit = func() bool { return true }
+		t.Cleanup(func() { bypassCheckedOutAfterLimit = originalBypass })
+
 		status, _ := pollCheckouts(t, "/v1/checkins/checkouts?checked_out_after=-100000h")
 		assert.Equal(t, fiber.StatusOK, status)
 	})
 
 	t.Run("dev bypass allows a far-past RFC3339 timestamp", func(t *testing.T) {
-		t.Setenv("BYPASS_CHECKED_OUT_AFTER_LIMIT", "true")
+		originalBypass := bypassCheckedOutAfterLimit
+		bypassCheckedOutAfterLimit = func() bool { return true }
+		t.Cleanup(func() { bypassCheckedOutAfterLimit = originalBypass })
+
 		status, _ := pollCheckouts(t, "/v1/checkins/checkouts?checked_out_after=2000-01-01T00:00:00Z")
 		assert.Equal(t, fiber.StatusOK, status)
 	})

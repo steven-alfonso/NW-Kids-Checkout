@@ -17,6 +17,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	fibersession "github.com/gofiber/fiber/v2/middleware/session"
@@ -387,10 +388,14 @@ func parseBypassCheckedOutAfterLimit(value string) bool {
 	return strings.EqualFold(strings.TrimSpace(value), "true")
 }
 
-// Read on each call so tests can vary the value with t.Setenv; do not memoize.
-func bypassCheckedOutAfterLimit() bool {
-	return parseBypassCheckedOutAfterLimit(os.Getenv("BYPASS_CHECKED_OUT_AFTER_LIMIT"))
+func newCheckedOutAfterLimitBypass(getenv func(string) string) func() bool {
+	return sync.OnceValue(func() bool {
+		return parseBypassCheckedOutAfterLimit(getenv("BYPASS_CHECKED_OUT_AFTER_LIMIT"))
+	})
 }
+
+// The environment is read once, on first use.
+var bypassCheckedOutAfterLimit = newCheckedOutAfterLimitBypass(os.Getenv)
 
 func buildFilter(c *fiber.Ctx) (checkin.Filter, error) {
 	locationGroupName := c.Query("location_group_name", "")
