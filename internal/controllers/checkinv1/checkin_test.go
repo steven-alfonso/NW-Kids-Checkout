@@ -414,6 +414,10 @@ func TestController_Checkouts_conditionalPolling(t *testing.T) {
 			"the validator should be echoed so a conditional client can keep using it")
 		assert.Equal(t, "private, no-store", second.Header.Get("Cache-Control"),
 			"a 304 still updates cache metadata, so it must repeat the no-store directive")
+		assert.True(t, varyHas(second.Header.Get("Vary"), fiber.HeaderAcceptEncoding),
+			"a 304 varies on the encoding it selected")
+		assert.True(t, varyHas(second.Header.Get("Vary"), fiber.HeaderAccept),
+			"a 304 varies on the representation it selected")
 	})
 
 	t.Run("changed data returns 200 with a new validator", func(t *testing.T) {

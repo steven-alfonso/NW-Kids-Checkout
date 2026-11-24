@@ -143,7 +143,7 @@ func (controller *Controller) checkoutsWeb(c *fiber.Ctx) error {
 		// after logout. It content-negotiates with the JSON branch on the same
 		// path, so Accept is a selection variable.
 		c.Set(fiber.HeaderCacheControl, "private, no-store")
-		c.Vary(fiber.HeaderAccept)
+		c.Vary(fiber.HeaderAcceptEncoding, fiber.HeaderAccept)
 		c.Type("html")
 		return c.SendStream(htmlStream)
 	}

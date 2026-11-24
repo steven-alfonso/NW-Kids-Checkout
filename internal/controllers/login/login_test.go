@@ -292,6 +292,8 @@ func TestGetLogoutClearsCachedResponses(t *testing.T) {
 	resp := testAppRequest(t, app, req)
 	defer resp.Body.Close()
 
+	assert.Equal(t, fiber.StatusFound, resp.StatusCode)
+	assert.Equal(t, "/login", resp.Header.Get("Location"))
 	assert.Equal(t, `"cache"`, resp.Header.Get("Clear-Site-Data"),
 		"logout must evict a checkouts body cached before the no-store change")
 }
