@@ -174,6 +174,25 @@ func TestPostLogin_rateLimitsPerClient(t *testing.T) {
 	assert.NotEqual(t, fiber.StatusTooManyRequests, other.StatusCode, "a different client key has its own budget")
 }
 
+func TestPostLogin_invalidClientIPHeaderFallsBackToConnectionIP(t *testing.T) {
+	app, _ := newLoginTestApp(t)
+
+	const bogusIP = "not-an-ip"
+	for attempt := 1; attempt <= 20; attempt++ {
+		resp := postLoginFromIP(t, app, "not the password", bogusIP)
+		resp.Body.Close()
+		assert.NotEqual(t, fiber.StatusTooManyRequests, resp.StatusCode, "attempt %d should be under the limit", attempt)
+	}
+
+	resp := postLoginFromIP(t, app, "not the password", bogusIP)
+	defer resp.Body.Close()
+	require.Equal(t, fiber.StatusTooManyRequests, resp.StatusCode, "a bogus header must not buy a fresh budget")
+
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"error":"too many login attempts"}`, string(body))
+}
+
 func TestPostLogin_successStillRedirectsUnderLimit(t *testing.T) {
 	app, _ := newLoginTestApp(t)
 

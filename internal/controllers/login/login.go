@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"kids-checkin/internal/web/static"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -40,12 +41,13 @@ func (controller *Controller) RegisterRoutes(app *fiber.App) {
 		Max:        loginAttemptLimit,
 		Expiration: loginWindow,
 		KeyGenerator: func(c *fiber.Ctx) string {
-			// Cloudflare is the only internet-facing path to the app and it
-			// sets CF-Connecting-IP, so this is the real client behind the
-			// tunnel. Direct origin access is blocked by the firewall, so the
-			// fallback only applies to trusted/local callers.
+			// Per the deployment runbook, Cloudflare is the only internet-facing
+			// path and sets this header; direct origin access is firewalled. If
+			// that changes, validate the socket peer here too.
 			if ip := c.Get("CF-Connecting-IP"); ip != "" {
-				return ip
+				if parsed := net.ParseIP(ip); parsed != nil {
+					return parsed.String()
+				}
 			}
 			return c.IP()
 		},
