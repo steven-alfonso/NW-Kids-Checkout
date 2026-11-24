@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -156,6 +157,15 @@ func TestController_CheckoutsWeb_PreviewTag(t *testing.T) {
 	})
 }
 
+func varyHas(vary, token string) bool {
+	for _, part := range strings.Split(vary, ",") {
+		if strings.EqualFold(strings.TrimSpace(part), token) {
+			return true
+		}
+	}
+	return false
+}
+
 func TestController_CheckoutsWeb_cacheHeaders(t *testing.T) {
 	app, store := setupAuthedApp()
 	NewController(nil, store).RegisterRoutes(app)
@@ -169,7 +179,7 @@ func TestController_CheckoutsWeb_cacheHeaders(t *testing.T) {
 
 	assert.Equal(t, "private, no-store", resp.Header.Get("Cache-Control"),
 		"the page is an authenticated view of child data and must not be stored on a shared device")
-	assert.Contains(t, resp.Header.Get("Vary"), fiber.HeaderAccept,
+	assert.True(t, varyHas(resp.Header.Get("Vary"), fiber.HeaderAccept),
 		"the same path serves HTML or JSON depending on Accept")
 }
 
@@ -381,9 +391,9 @@ func TestController_Checkouts_conditionalPolling(t *testing.T) {
 		assert.Equal(t, "private, no-store", resp.Header.Get("Cache-Control"),
 			"the body is PII and must not survive in a shared device's cache; "+
 				"no-cache would let the browser keep it and only force revalidation")
-		assert.Contains(t, resp.Header.Get("Vary"), fiber.HeaderAcceptEncoding,
+		assert.True(t, varyHas(resp.Header.Get("Vary"), fiber.HeaderAcceptEncoding),
 			"the body varies once compression is applied")
-		assert.Contains(t, resp.Header.Get("Vary"), fiber.HeaderAccept,
+		assert.True(t, varyHas(resp.Header.Get("Vary"), fiber.HeaderAccept),
 			"this route content-negotiates on Accept, so that is a selection variable too")
 	})
 
@@ -402,6 +412,8 @@ func TestController_Checkouts_conditionalPolling(t *testing.T) {
 		assert.Empty(t, body, "a 304 must not resend the payload")
 		assert.Equal(t, etag, second.Header.Get("ETag"),
 			"the validator should be echoed so a conditional client can keep using it")
+		assert.Equal(t, "private, no-store", second.Header.Get("Cache-Control"),
+			"a 304 still updates cache metadata, so it must repeat the no-store directive")
 	})
 
 	t.Run("changed data returns 200 with a new validator", func(t *testing.T) {

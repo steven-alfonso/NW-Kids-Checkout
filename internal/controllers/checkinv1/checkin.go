@@ -138,10 +138,10 @@ func (controller *Controller) checkoutsWeb(c *fiber.Ctx) error {
 			)))
 		}
 
-		// The page embeds nothing from the session yet, but it is the same
-		// authenticated route as the poll and a shared tablet must not keep it
-		// in its HTTP cache after logout. It content-negotiates with the JSON
-		// branch on the same path, so Accept is a selection variable.
+		// The page embeds no child data, but it is the same authenticated route
+		// as the poll and a shared tablet must not keep it in its HTTP cache
+		// after logout. It content-negotiates with the JSON branch on the same
+		// path, so Accept is a selection variable.
 		c.Set(fiber.HeaderCacheControl, "private, no-store")
 		c.Vary(fiber.HeaderAccept)
 		c.Type("html")
