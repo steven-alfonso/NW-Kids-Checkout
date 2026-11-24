@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"kids-checkin/internal/controllers/middleware"
 	"kids-checkin/internal/controllers/session"
 	"kids-checkin/internal/repo/location"
 
@@ -148,6 +149,12 @@ func (controller *Controller) GetLogout(c *fiber.Ctx) error {
 	sess, err := controller.sessionStore.Get(c)
 	if err != nil {
 		return c.Status(http.StatusInternalServerError).SendString("Session error")
+	}
+
+	// This is a GET, so the access logger does not add the username. Log it
+	// here before the session is gone so the audit trail records who logged out.
+	if username, ok := sess.Get("username").(string); ok && username != "" {
+		middleware.GetLogger(c).InfoContext(c.Context(), "logout", slog.String("username", username))
 	}
 
 	// This destroys the session in SQLite and clears the cookie on the client
