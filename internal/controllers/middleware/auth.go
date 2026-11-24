@@ -57,6 +57,10 @@ func AuthRequired(sessionStore session.Storer, allowedRoles ...string) fiber.Han
 			return redirectToLogin(c)
 		}
 
+		if username, ok := sess.Get("username").(string); ok && username != "" {
+			c.Locals("username", username)
+		}
+
 		userRole, ok := sess.Get("role").(string)
 		if !ok {
 			return c.Status(http.StatusInternalServerError).SendString("Internal Server Error: Failed to fetch user role")

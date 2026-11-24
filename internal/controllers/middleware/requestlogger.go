@@ -47,14 +47,21 @@ func HTTPAccessLogger() fiber.Handler {
 			}
 		}
 
-		GetLogger(c).InfoContext(c.Context(), "request",
+		attrs := []any{
 			slog.String("method", c.Method()),
 			slog.String("path", c.Path()),
 			slog.Int("status", status),
 			slog.Int64("duration_ms", dur.Milliseconds()),
 			slog.String("ip", c.IP()),
 			slog.String("user_agent", c.Get("User-Agent")),
-		)
+		}
+		switch c.Method() {
+		case fiber.MethodPost, fiber.MethodPatch, fiber.MethodPut, fiber.MethodDelete:
+			if username, ok := c.Locals("username").(string); ok && username != "" {
+				attrs = append(attrs, slog.String("username", username))
+			}
+		}
+		GetLogger(c).InfoContext(c.Context(), "request", attrs...)
 		return err
 	}
 }
