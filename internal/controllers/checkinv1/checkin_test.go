@@ -628,7 +628,7 @@ func TestController_Checkouts_filter_validation(t *testing.T) {
 	// checkoutsv1/checkouts.js sends limit=100 on every poll; an omitted limit
 	// must get the same bound rather than the whole table.
 	t.Run("omitted limit defaults to 100", func(t *testing.T) {
-		assert.Equal(t, defaultCheckoutsLimit, decodeLimit(t, "/filter"))
+		assert.Equal(t, 100, decodeLimit(t, "/filter"))
 	})
 
 	t.Run("explicit limit overrides the default", func(t *testing.T) {
@@ -649,6 +649,16 @@ func TestController_Checkouts_filter_validation(t *testing.T) {
 
 	t.Run("checked_out_after within 24 hours returns 200", func(t *testing.T) {
 		status, _ := pollCheckouts(t, "/v1/checkins/checkouts?checked_out_after=-31m")
+		assert.Equal(t, fiber.StatusOK, status)
+	})
+
+	t.Run("checked_out_after at the 24 hour boundary returns 200", func(t *testing.T) {
+		status, _ := pollCheckouts(t, "/v1/checkins/checkouts?checked_out_after=-24h")
+		assert.Equal(t, fiber.StatusOK, status)
+	})
+
+	t.Run("future checked_out_after returns 200", func(t *testing.T) {
+		status, _ := pollCheckouts(t, "/v1/checkins/checkouts?checked_out_after=1h")
 		assert.Equal(t, fiber.StatusOK, status)
 	})
 

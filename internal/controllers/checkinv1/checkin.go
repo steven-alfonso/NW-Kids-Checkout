@@ -37,7 +37,7 @@ const defaultCheckedOutAfterDelta = -12 * time.Hour
 // The repo skips its LIMIT clause when filter.Limit is 0, so an unbounded
 // caller gets the whole table -- every child's name, security_code, and
 // checkout time. Bound both an omitted ?limit= and an explicit one, and keep
-// checked_out_after within a shift's worth of history.
+// checked_out_after within the last 24 hours.
 const (
 	defaultCheckoutsLimit = 100 // matches the checkouts page poll; bounds an omitted limit
 	maxCheckoutsLimit     = 1000
@@ -383,6 +383,9 @@ func (controller *Controller) PatchCheckedOutConfirmed(c *fiber.Ctx) error {
 func buildFilter(c *fiber.Ctx) (checkin.Filter, error) {
 	locationGroupName := c.Query("location_group_name", "")
 	var err error
+	// One anchor for both duration params and the window cutoff, so exactly
+	// -24h sits on the boundary instead of just outside it.
+	now := time.Now()
 
 	if locationGroupName != "" {
 		locationGroupName, err = url.QueryUnescape(locationGroupName)
@@ -440,7 +443,7 @@ func buildFilter(c *fiber.Ctx) (checkin.Filter, error) {
 		// try time.ParseDuration
 		ago, err := time.ParseDuration(cobStr)
 		if err == nil {
-			filter.CheckedOutAtBefore = time.Now().Add(ago)
+			filter.CheckedOutAtBefore = now.Add(ago)
 		} else {
 			filter.CheckedOutAtBefore, err = time.ParseInLocation(time.RFC3339, cobStr, time.UTC)
 			if err != nil {
@@ -452,7 +455,7 @@ func buildFilter(c *fiber.Ctx) (checkin.Filter, error) {
 	if coaStr := c.Query("checked_out_after"); coaStr != "" {
 		ago, err := time.ParseDuration(coaStr)
 		if err == nil {
-			filter.CheckedOutAtAfter = time.Now().Add(ago)
+			filter.CheckedOutAtAfter = now.Add(ago)
 		} else {
 			filter.CheckedOutAtAfter, err = time.ParseInLocation(time.RFC3339, coaStr, time.UTC)
 			if err != nil {
@@ -460,9 +463,11 @@ func buildFilter(c *fiber.Ctx) (checkin.Filter, error) {
 			}
 		}
 
-		// Future timestamps are fine; only windows reaching further back
-		// than a shift are rejected.
-		if !filter.CheckedOutAtAfter.IsZero() && filter.CheckedOutAtAfter.Before(time.Now().Add(-maxCheckoutsWindow)) {
+		// A zero time is Go's zero value, so it reads as omitted: the handler
+		// applies its own default, so it is intentionally not rejected here.
+		// Future timestamps are fine; only windows reaching further back than
+		// 24 hours are rejected.
+		if !filter.CheckedOutAtAfter.IsZero() && filter.CheckedOutAtAfter.Before(now.Add(-maxCheckoutsWindow)) {
 			return checkin.Filter{}, errors.New("checked_out_after must be within the last 24 hours")
 		}
 	}
