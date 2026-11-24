@@ -3,7 +3,6 @@ package middleware
 import (
 	"strings"
 
-	"github.com/gofiber/contrib/websocket"
 	"github.com/gofiber/fiber/v2"
 	fibercompress "github.com/gofiber/fiber/v2/middleware/compress"
 )
@@ -14,11 +13,6 @@ import (
 func Compress() fiber.Handler {
 	return fibercompress.New(fibercompress.Config{
 		Next: func(c *fiber.Ctx) bool {
-			// The WebSocket upgrade hijacks the connection and writes raw frames
-			// to the net.Conn, so the response must be left untouched.
-			if websocket.IsWebSocketUpgrade(c) {
-				return true
-			}
 			// Everything under img/ is already-compressed raster data. fasthttp's
 			// compressible set covers text/*, application/*, image/svg+xml,
 			// image/x-icon and font/*, so the .svg and the two icon handlers

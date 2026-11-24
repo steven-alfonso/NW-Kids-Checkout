@@ -1,6 +1,6 @@
 # Project Overview
 
-This project is a web service for managing kids' check-ins and check-outs, likely for a church or similar organization, given the references to "Planning Center". It's built in Go and uses the Fiber web framework. The service exposes a RESTful API and also uses websockets for real-time updates. The data is stored in a SQLite database.
+This project is a web service for managing kids' check-ins and check-outs, likely for a church or similar organization, given the references to "Planning Center". It's built in Go and uses the Fiber web framework. The service exposes a RESTful API. The data is stored in a SQLite database.
 
 The project is structured as a command-line application with commands:
 - `apiserver`: Starts the web server.
@@ -274,7 +274,7 @@ The API is currently versioned under `/v1`.
 
 ### Check-ins
 
-- `GET /v1/checkins/checkouts/:location`: Get a list of checkouts for a specific location. This endpoint can also be upgraded to a websocket connection for real-time updates.
+- `GET /v1/checkins/checkouts`: Get a list of checkouts, filtered by query parameters such as `location_group_name` and `checked_out_after`.
 
 ### Locations
 

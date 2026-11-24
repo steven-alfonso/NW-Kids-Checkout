@@ -128,7 +128,6 @@ This file guides coding agents working in this repo. Keep changes small, follow 
 - Use `session.Store` for auth middleware and session state.
 - For JSON endpoints, validate content type with `mime.ParseMediaType` and `fiber.MIMEApplicationJSON`.
 - Prefer `c.JSON(...)` for API responses and `c.SendStream(...)` for embedded HTML.
-- Websocket endpoints use `github.com/gofiber/contrib/websocket` and log connect/read/write issues.
 
 ### Logging
 - Prefer structured logging (`log/slog`) where present; include key fields (IDs, params).
