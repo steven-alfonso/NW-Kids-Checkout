@@ -52,7 +52,9 @@ func (controller *Controller) RegisterRoutes(app *fiber.App) {
 			return c.IP()
 		},
 		LimitReached: func(c *fiber.Ctx) error {
-			if strings.Contains(c.Get("Accept"), "text/html") {
+			if strings.Contains(strings.ToLower(c.Get("Accept")), "text/html") {
+				// Deliberately reset the flow: a rate-limited visitor starts
+				// again at /login instead of carrying next through the error.
 				return c.Redirect("/login?error=ratelimited", fiber.StatusSeeOther)
 			}
 			return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{"error": "too many login attempts"})
