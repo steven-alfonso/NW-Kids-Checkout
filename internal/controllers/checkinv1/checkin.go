@@ -13,9 +13,11 @@ import (
 	"log/slog"
 	"mime"
 	"net/url"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	fibersession "github.com/gofiber/fiber/v2/middleware/session"
@@ -34,13 +36,22 @@ import (
 
 const defaultCheckedOutAfterDelta = -12 * time.Hour
 
-// Ceiling on an explicit ?limit=, well above the 100 the UI asks for. The repo
-// skips its LIMIT clause when filter.Limit is 0, so an unbounded caller gets
-// the whole table -- every child's name, security_code, and checkout time.
-//
-// Only an explicit limit is capped. Omitting ?limit= is still unbounded,
-// which is what manual-checkins.js relies on today.
-const maxCheckoutsLimit = 1000
+// The repo skips its LIMIT clause when filter.Limit is 0, so an unbounded
+// caller gets the whole table -- every child's name, security_code, and
+// checkout time. Bound both an omitted ?limit= and an explicit one, and keep
+// checked_out_after within the last 24 hours.
+const (
+	defaultCheckoutsLimit = 100 // matches the checkouts page poll; bounds an omitted limit
+	maxCheckoutsLimit     = 1000
+	maxCheckoutsWindow    = 24 * time.Hour
+)
+
+// checkedOutAfterAllowed reports whether t is within the allowed window.
+// A zero time means omitted, future times are fine, and the dev bypass
+// accepts anything.
+func checkedOutAfterAllowed(t, now time.Time, bypassed bool) bool {
+	return bypassed || t.IsZero() || !t.Before(now.Add(-maxCheckoutsWindow))
+}
 
 type Controller struct {
 	checkinRepo  checkin.Repo
@@ -378,9 +389,17 @@ func (controller *Controller) PatchCheckedOutConfirmed(c *fiber.Ctx) error {
 	return c.JSON(repoCheckinToOutput(updated))
 }
 
+// The dev bypass is read once, on first use. Leave it unset in production.
+var checkedOutAfterBypassed = sync.OnceValue(func() bool {
+	return strings.EqualFold(strings.TrimSpace(os.Getenv("BYPASS_CHECKED_OUT_AFTER_LIMIT")), "true")
+})
+
 func buildFilter(c *fiber.Ctx) (checkin.Filter, error) {
 	locationGroupName := c.Query("location_group_name", "")
 	var err error
+	// One anchor for both duration params and the window cutoff, so exactly
+	// -24h sits on the boundary instead of just outside it.
+	now := time.Now()
 
 	if locationGroupName != "" {
 		locationGroupName, err = url.QueryUnescape(locationGroupName)
@@ -394,6 +413,7 @@ func buildFilter(c *fiber.Ctx) (checkin.Filter, error) {
 		PlanningCenterID:  c.Query("planning_center_id"),
 		FirstName:         c.Query("first_name"),
 		LastName:          c.Query("last_name"),
+		Limit:             defaultCheckoutsLimit,
 	}
 
 	if idStr := c.Query("id"); idStr != "" {
@@ -437,7 +457,7 @@ func buildFilter(c *fiber.Ctx) (checkin.Filter, error) {
 		// try time.ParseDuration
 		ago, err := time.ParseDuration(cobStr)
 		if err == nil {
-			filter.CheckedOutAtBefore = time.Now().Add(ago)
+			filter.CheckedOutAtBefore = now.Add(ago)
 		} else {
 			filter.CheckedOutAtBefore, err = time.ParseInLocation(time.RFC3339, cobStr, time.UTC)
 			if err != nil {
@@ -449,12 +469,16 @@ func buildFilter(c *fiber.Ctx) (checkin.Filter, error) {
 	if coaStr := c.Query("checked_out_after"); coaStr != "" {
 		ago, err := time.ParseDuration(coaStr)
 		if err == nil {
-			filter.CheckedOutAtAfter = time.Now().Add(ago)
+			filter.CheckedOutAtAfter = now.Add(ago)
 		} else {
 			filter.CheckedOutAtAfter, err = time.ParseInLocation(time.RFC3339, coaStr, time.UTC)
 			if err != nil {
 				return checkin.Filter{}, errors.New("cannot parse checked_out_after")
 			}
+		}
+
+		if !checkedOutAfterAllowed(filter.CheckedOutAtAfter, now, checkedOutAfterBypassed()) {
+			return checkin.Filter{}, errors.New("checked_out_after must be within the last 24 hours")
 		}
 	}
 
