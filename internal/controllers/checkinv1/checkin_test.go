@@ -290,37 +290,29 @@ func Test_buildFilter_location_group_id(t *testing.T) {
 	}
 }
 
-func Test_parseBypassCheckedOutAfterLimit(t *testing.T) {
+func Test_checkedOutAfterAllowed(t *testing.T) {
+	now := time.Date(2026, 11, 24, 12, 0, 0, 0, time.UTC)
+
 	tests := []struct {
-		value string
-		want  bool
+		name     string
+		t        time.Time
+		bypassed bool
+		want     bool
 	}{
-		{"", false},
-		{"false", false},
-		{"1", false},
-		{"true", true},
-		{"TRUE", true},
-		{" true ", true},
+		{"zero time means omitted", time.Time{}, false, true},
+		{"future time", now.Add(time.Hour), false, true},
+		{"within the window", now.Add(-31 * time.Minute), false, true},
+		{"exactly 24 hours ago", now.Add(-maxCheckoutsWindow), false, true},
+		{"just older than 24 hours", now.Add(-maxCheckoutsWindow - time.Nanosecond), false, false},
+		{"far past", now.Add(-100000 * time.Hour), false, false},
+		{"far past with bypass", now.Add(-100000 * time.Hour), true, true},
 	}
 
 	for _, tc := range tests {
-		t.Run(tc.value, func(t *testing.T) {
-			assert.Equal(t, tc.want, parseBypassCheckedOutAfterLimit(tc.value))
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, checkedOutAfterAllowed(tc.t, now, tc.bypassed))
 		})
 	}
-}
-
-func TestNewCheckedOutAfterLimitBypassReadsEnvironmentOnce(t *testing.T) {
-	calls := 0
-	getenv := func(string) string {
-		calls++
-		return "true"
-	}
-	bypass := newCheckedOutAfterLimitBypass(getenv)
-
-	assert.True(t, bypass())
-	assert.True(t, bypass())
-	assert.Equal(t, 1, calls, "the environment must be read only once")
 }
 
 func TestController_Checkouts_conditionalPolling(t *testing.T) {
@@ -561,17 +553,7 @@ func Test_etagMatches(t *testing.T) {
 	}
 }
 
-func stubBypass(t *testing.T, value bool) {
-	t.Helper()
-	original := bypassCheckedOutAfterLimit
-	bypassCheckedOutAfterLimit = func() bool { return value }
-	t.Cleanup(func() { bypassCheckedOutAfterLimit = original })
-}
-
 func TestController_Checkouts_filter_validation(t *testing.T) {
-	// Pin the default-false behavior even if the developer's shell enables it.
-	stubBypass(t, false)
-
 	app, store := setupAuthedApp()
 	testDB, cleanup, err := db.PrepareTestDB()
 	require.NoError(t, err)
@@ -702,32 +684,6 @@ func TestController_Checkouts_filter_validation(t *testing.T) {
 
 	t.Run("future checked_out_after returns 200", func(t *testing.T) {
 		status, _ := pollCheckouts(t, "/v1/checkins/checkouts?checked_out_after=1h")
-		assert.Equal(t, fiber.StatusOK, status)
-	})
-
-	t.Run("checked_out_after older than 24 hours returns 400", func(t *testing.T) {
-		status, body := pollCheckouts(t, "/v1/checkins/checkouts?checked_out_after=-100000h")
-		assert.Equal(t, fiber.StatusBadRequest, status)
-		assert.Contains(t, body, "checked_out_after must be within the last 24 hours")
-	})
-
-	t.Run("checked_out_after RFC3339 timestamp far in the past returns 400", func(t *testing.T) {
-		status, body := pollCheckouts(t, "/v1/checkins/checkouts?checked_out_after=2000-01-01T00:00:00Z")
-		assert.Equal(t, fiber.StatusBadRequest, status)
-		assert.Contains(t, body, "checked_out_after must be within the last 24 hours")
-	})
-
-	t.Run("dev bypass allows a duration older than 24 hours", func(t *testing.T) {
-		stubBypass(t, true)
-
-		status, _ := pollCheckouts(t, "/v1/checkins/checkouts?checked_out_after=-100000h")
-		assert.Equal(t, fiber.StatusOK, status)
-	})
-
-	t.Run("dev bypass allows a far-past RFC3339 timestamp", func(t *testing.T) {
-		stubBypass(t, true)
-
-		status, _ := pollCheckouts(t, "/v1/checkins/checkouts?checked_out_after=2000-01-01T00:00:00Z")
 		assert.Equal(t, fiber.StatusOK, status)
 	})
 }

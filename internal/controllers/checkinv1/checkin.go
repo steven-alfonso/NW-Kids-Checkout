@@ -46,6 +46,13 @@ const (
 	maxCheckoutsWindow    = 24 * time.Hour
 )
 
+// checkedOutAfterAllowed reports whether t is within the allowed window.
+// A zero time means omitted, future times are fine, and the dev bypass
+// accepts anything.
+func checkedOutAfterAllowed(t, now time.Time, bypassed bool) bool {
+	return bypassed || t.IsZero() || !t.Before(now.Add(-maxCheckoutsWindow))
+}
+
 type Controller struct {
 	checkinRepo  checkin.Repo
 	manualRepo   manualcheckin.Repo
@@ -382,20 +389,10 @@ func (controller *Controller) PatchCheckedOutConfirmed(c *fiber.Ctx) error {
 	return c.JSON(repoCheckinToOutput(updated))
 }
 
-// parseBypassCheckedOutAfterLimit reports whether value enables the dev bypass.
-// Only the literal true, case-insensitive and trimmed, does.
-func parseBypassCheckedOutAfterLimit(value string) bool {
-	return strings.EqualFold(strings.TrimSpace(value), "true")
-}
-
-func newCheckedOutAfterLimitBypass(getenv func(string) string) func() bool {
-	return sync.OnceValue(func() bool {
-		return parseBypassCheckedOutAfterLimit(getenv("BYPASS_CHECKED_OUT_AFTER_LIMIT"))
-	})
-}
-
-// The environment is read once, on first use.
-var bypassCheckedOutAfterLimit = newCheckedOutAfterLimitBypass(os.Getenv)
+// The dev bypass is read once, on first use. Leave it unset in production.
+var checkedOutAfterBypassed = sync.OnceValue(func() bool {
+	return strings.EqualFold(strings.TrimSpace(os.Getenv("BYPASS_CHECKED_OUT_AFTER_LIMIT")), "true")
+})
 
 func buildFilter(c *fiber.Ctx) (checkin.Filter, error) {
 	locationGroupName := c.Query("location_group_name", "")
@@ -480,11 +477,7 @@ func buildFilter(c *fiber.Ctx) (checkin.Filter, error) {
 			}
 		}
 
-		// A zero time is Go's zero value, so it reads as omitted: the handler
-		// applies its own default, so it is intentionally not rejected here.
-		// Future timestamps are fine; only windows reaching further back than
-		// 24 hours are rejected, unless the dev bypass is enabled.
-		if !bypassCheckedOutAfterLimit() && !filter.CheckedOutAtAfter.IsZero() && filter.CheckedOutAtAfter.Before(now.Add(-maxCheckoutsWindow)) {
+		if !checkedOutAfterAllowed(filter.CheckedOutAtAfter, now, checkedOutAfterBypassed()) {
 			return checkin.Filter{}, errors.New("checked_out_after must be within the last 24 hours")
 		}
 	}
