@@ -13,7 +13,7 @@ The project is structured as a command-line application with commands:
 - [Golang](https://go.dev/) 1.27.3+
 - [SQLite](https://www.sqlite.org/) 3.37+ (should be on macOS by default). If not, install via Brew.
 - [GNU make](https://www.gnu.org/software/make/) (should be on macOS by default)
-- [Node.js](https://nodejs.org/) 20+ (required for frontend assets and JS tests; CI uses 22)
+- [Node.js](https://nodejs.org/) 22.22.2+, 24.15+, or 26+ (required for frontend assets and JS tests; CI uses the latest 22.x)
 - [godotenv](https://github.com/joho/godotenv). Install via `go install github.com/joho/godotenv/cmd/godotenv@latest` once Golang is installed.
 
 ## Quick Start
@@ -175,12 +175,33 @@ Build the tailwind.css file:
 npm run build:css
 ```
 
+### Checkouts Svelte bundle
+
+The checkouts page is a Svelte 5 app built by Vite. Build the committed bundle:
+```shell
+npm run build:checkouts-svelte
+```
+
+Watch it while developing:
+```shell
+npm run watch:checkouts-svelte
+```
+
+The production bundle lives at `internal/web/static/dist/svelte/checkouts.js`
+and is committed so the Docker build does not need Node.
+
 ### Running tests
 
 To run the test suite, use the `test` target:
 
 ```sh
 make test       # go test, then -tags dev, then npm test
+```
+
+Run the app-level checkouts contract (body scroll lock, menu handoff, failed-poll badge, groups failure, dev preview):
+
+```sh
+npm run test:app
 ```
 
 The checkouts page also has a browser-level conformance suite. It is

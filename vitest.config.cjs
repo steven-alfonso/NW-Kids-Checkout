@@ -8,7 +8,7 @@ module.exports = {
             '**/worktrees/**',
             '.worktrees/**',
             'test-support/conformance/**',
-            'test-support/vanilla-app/**',
+            'test-support/app-contract/**',
             'test-results/**'
         ]
     }
