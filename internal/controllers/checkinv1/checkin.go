@@ -387,6 +387,7 @@ func parseBypassCheckedOutAfterLimit(value string) bool {
 	return strings.EqualFold(strings.TrimSpace(value), "true")
 }
 
+// Read on each call so tests can vary the value with t.Setenv; do not memoize.
 func bypassCheckedOutAfterLimit() bool {
 	return parseBypassCheckedOutAfterLimit(os.Getenv("BYPASS_CHECKED_OUT_AFTER_LIMIT"))
 }
