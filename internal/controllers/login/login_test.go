@@ -44,12 +44,16 @@ func newLoginTestApp(t *testing.T) (*fiber.App, *fibersession.Store) {
 	controller := NewController(store)
 
 	app := fiber.New()
-	app.Post("/login", controller.PostLogin)
+	controller.RegisterRoutes(app)
 
 	return app, store
 }
 
 func postLogin(t *testing.T, app *fiber.App, password string) *http.Response {
+	return postLoginFromIP(t, app, password, "")
+}
+
+func postLoginFromIP(t *testing.T, app *fiber.App, password, clientIP string) *http.Response {
 	t.Helper()
 
 	form := url.Values{
@@ -59,6 +63,9 @@ func postLogin(t *testing.T, app *fiber.App, password string) *http.Response {
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/login", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Cookie", "session_id="+fixatedID)
+	if clientIP != "" {
+		req.Header.Set("CF-Connecting-IP", clientIP)
+	}
 
 	resp, err := app.Test(req)
 	require.NoError(t, err)
@@ -142,4 +149,38 @@ func TestPostLogin_wrongPasswordDoesNotCreateAuthenticatedSession(t *testing.T) 
 	var data map[string]any
 	require.NoError(t, gob.NewDecoder(bytes.NewReader(raw)).Decode(&data))
 	assert.NotContains(t, data, "authenticated", "wrong password must not authenticate the session")
+}
+
+func TestPostLogin_rateLimitsPerClient(t *testing.T) {
+	app, _ := newLoginTestApp(t)
+
+	const clientIP = "198.51.100.10"
+	for attempt := 1; attempt <= 20; attempt++ {
+		resp := postLoginFromIP(t, app, "not the password", clientIP)
+		resp.Body.Close()
+		assert.NotEqual(t, fiber.StatusTooManyRequests, resp.StatusCode, "attempt %d should be under the limit", attempt)
+	}
+
+	resp := postLoginFromIP(t, app, "not the password", clientIP)
+	defer resp.Body.Close()
+	require.Equal(t, fiber.StatusTooManyRequests, resp.StatusCode)
+
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"error":"too many login attempts"}`, string(body))
+
+	other := postLoginFromIP(t, app, "not the password", "198.51.100.11")
+	defer other.Body.Close()
+	assert.NotEqual(t, fiber.StatusTooManyRequests, other.StatusCode, "a different client key has its own budget")
+}
+
+func TestPostLogin_successStillRedirectsUnderLimit(t *testing.T) {
+	app, _ := newLoginTestApp(t)
+
+	resp := postLoginFromIP(t, app, testPassword, "198.51.100.20")
+	defer resp.Body.Close()
+
+	require.Equal(t, fiber.StatusFound, resp.StatusCode)
+	assert.Equal(t, "/", resp.Header.Get("Location"))
+	assert.NotNil(t, findSessionCookie(resp), "a successful login must still set a session cookie")
 }

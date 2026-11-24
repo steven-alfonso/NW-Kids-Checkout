@@ -34,10 +34,12 @@ require (
 	github.com/molecule-man/go-brrr v1.0.1 // indirect
 	github.com/pelletier/go-toml v1.9.5 // indirect
 	github.com/pelletier/go-toml/v2 v2.2.4 // indirect
+	github.com/philhofer/fwd v1.1.3-0.20240916144458-20a13a1f6b7c // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/spf13/afero v1.14.0 // indirect
 	github.com/spf13/cast v1.9.2 // indirect
 	github.com/tdewolff/parse/v2 v2.8.3 // indirect
+	github.com/tinylib/msgp v1.2.5 // indirect
 	github.com/valyala/bytebufferpool v1.0.0 // indirect
 	github.com/valyala/fasthttp v1.74.0 // indirect
 	golang.org/x/net v0.59.0 // indirect

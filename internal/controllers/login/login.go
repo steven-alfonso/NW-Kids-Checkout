@@ -8,12 +8,19 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"time"
 
 	"kids-checkin/internal/controllers/session"
 	"kids-checkin/internal/repo/location"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/limiter"
 	"golang.org/x/crypto/bcrypt"
+)
+
+const (
+	loginAttemptLimit = 20
+	loginWindow       = 5 * time.Minute
 )
 
 type Controller struct {
@@ -29,7 +36,23 @@ func NewController(sessionStore session.Storer) *Controller {
 
 func (controller *Controller) RegisterRoutes(app *fiber.App) {
 	app.Get("/login", controller.GetLogin)
-	app.Post("/login", controller.PostLogin)
+	app.Post("/login", limiter.New(limiter.Config{
+		Max:        loginAttemptLimit,
+		Expiration: loginWindow,
+		KeyGenerator: func(c *fiber.Ctx) string {
+			// Cloudflare is the only internet-facing path to the app and it
+			// sets CF-Connecting-IP, so this is the real client behind the
+			// tunnel. Direct origin access is blocked by the firewall, so the
+			// fallback only applies to trusted/local callers.
+			if ip := c.Get("CF-Connecting-IP"); ip != "" {
+				return ip
+			}
+			return c.IP()
+		},
+		LimitReached: func(c *fiber.Ctx) error {
+			return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{"error": "too many login attempts"})
+		},
+	}), controller.PostLogin)
 	app.Get("/logout", controller.GetLogout)
 	slog.Info("registering login routes")
 }
