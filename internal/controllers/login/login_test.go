@@ -54,6 +54,10 @@ func postLogin(t *testing.T, app *fiber.App, password string) *http.Response {
 }
 
 func postLoginFromIP(t *testing.T, app *fiber.App, password, clientIP string) *http.Response {
+	return postLoginWithAccept(t, app, password, clientIP, "application/json")
+}
+
+func postLoginWithAccept(t *testing.T, app *fiber.App, password, clientIP, accept string) *http.Response {
 	t.Helper()
 
 	form := url.Values{
@@ -62,6 +66,7 @@ func postLoginFromIP(t *testing.T, app *fiber.App, password, clientIP string) *h
 	}
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/login", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", accept)
 	req.Header.Set("Cookie", "session_id="+fixatedID)
 	if clientIP != "" {
 		req.Header.Set("CF-Connecting-IP", clientIP)
@@ -191,6 +196,39 @@ func TestPostLogin_invalidClientIPHeaderFallsBackToConnectionIP(t *testing.T) {
 	body, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
 	assert.JSONEq(t, `{"error":"too many login attempts"}`, string(body))
+}
+
+func TestPostLogin_rateLimitRedirectsBrowser(t *testing.T) {
+	app, _ := newLoginTestApp(t)
+
+	const clientIP = "203.0.113.10"
+	for attempt := 1; attempt <= 20; attempt++ {
+		resp := postLoginWithAccept(t, app, "not the password", clientIP, "text/html")
+		resp.Body.Close()
+		assert.Equal(t, "/login?error=invalid", resp.Header.Get("Location"), "attempt %d should still reach the handler", attempt)
+	}
+
+	resp := postLoginWithAccept(t, app, "not the password", clientIP, "text/html")
+	defer resp.Body.Close()
+	require.Equal(t, fiber.StatusSeeOther, resp.StatusCode)
+	assert.Equal(t, "/login?error=ratelimited", resp.Header.Get("Location"))
+}
+
+func TestGetLoginShowsRateLimitMessage(t *testing.T) {
+	controller := NewController(fibersession.New(fibersession.Config{}))
+	app := fiber.New()
+	controller.RegisterRoutes(app)
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/login?error=ratelimited", nil)
+	resp, err := app.Test(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	assert.Contains(t, string(body), "Too many login attempts. Please wait a few minutes and try again.")
+	assert.Contains(t, string(body), `error === "ratelimited"`)
 }
 
 func TestPostLogin_successStillRedirectsUnderLimit(t *testing.T) {

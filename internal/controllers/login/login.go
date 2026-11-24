@@ -52,6 +52,9 @@ func (controller *Controller) RegisterRoutes(app *fiber.App) {
 			return c.IP()
 		},
 		LimitReached: func(c *fiber.Ctx) error {
+			if strings.Contains(c.Get("Accept"), "text/html") {
+				return c.Redirect("/login?error=ratelimited", fiber.StatusSeeOther)
+			}
 			return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{"error": "too many login attempts"})
 		},
 	}), controller.PostLogin)
