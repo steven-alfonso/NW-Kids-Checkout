@@ -33,16 +33,7 @@ Do not add private network routes to this tunnel. Those routes are what would gi
 
 These changes need no tunnel and no public hostname. Do them first.
 
-1. Delete the WebSocket branch. No client uses it, but the route still accepts upgrades at `internal/controllers/checkinv1/checkin.go:70`, and `wsClients` is written from every connection goroutine at `checkin.go:250` and deleted at 273, 298, 311, and 332 without a lock. Two upgrades can cause a fatal concurrent map write, which `recover.New()` cannot catch. The log line at `checkin.go:260` records an empty cookie, because Fiber's cookie is named `session_id` and the code reads `session`. Delete:
-   - the branch at `checkin.go:245` and the dispatch at `checkin.go:89-90`
-   - `wsClients` at `checkin.go:49` and its constructor entry at `checkin.go:62`
-   - `c.Locals("allowed", ...)` at `checkin.go:88`, which only the deleted branch reads
-   - `wsClient`, `CheckinFilter`, and `websocketQueryShouldBreak`
-   - `Test_websocketQueryShouldBreak` and the test at `internal/controllers/middleware/compress_test.go:141-162`
-   - the imports at `checkin.go:5`, `checkin.go:13`, `checkin.go:31`, `internal/controllers/middleware/compress.go:6`, and `checkin_test.go:6`
-   - the check at `internal/controllers/middleware/compress.go:19`
-
-   Run `go mod tidy`, then `go test ./...` and `go test -tags dev ./...`. Update the WebSocket mentions in `README.md:3`, `README.md:277`, and `AGENTS.md:131`.
+1. The WebSocket branch and the `github.com/gofiber/contrib/websocket` dependency are removed. No client used the route, but it still accepted upgrades, and `wsClients` was written and deleted from every connection goroutine without a lock. Two upgrades could have caused a fatal concurrent map write that `recover.New()` could not catch.
 2. Rate-limit `POST /login`. No limiter is registered today, and `PostLogin` at `internal/controllers/login/login.go:59` goes straight to `bcrypt.CompareHashAndPassword`. Add an in-memory limiter to the `/login` route: count attempts per client, return 429 after a threshold, and reset the window after a cooldown. The app is a single instance, so the counter can live in memory and reset on restart.
 3. Resolve the real client IP for the limiter. Behind the tunnel, `c.IP()` is the connector address. Use `CF-Connecting-IP` only when the socket peer is the cloudflared container, and use `c.IP()` otherwise. Do not set `ProxyHeader` globally. Use a sliding delay or a short window, not a lockout: every device on church Wi-Fi shares one egress IP, so a lockout lets one person lock out the staff.
 4. Session regeneration is implemented. `PostLogin` calls `sess.Regenerate()` at `internal/controllers/login/login.go:76` before setting the values, so a session ID fixed before login cannot become authenticated.

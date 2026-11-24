@@ -138,29 +138,6 @@ func TestCompress(t *testing.T) {
 		}
 	})
 
-	t.Run("leaves a websocket upgrade alone", func(t *testing.T) {
-		app := newApp()
-		app.Get("/ws", func(c *fiber.Ctx) error {
-			// Stand in for the hijack: the upgrade handler writes to the raw
-			// connection, so the response must not be re-encoded underneath it.
-			c.Set("Upgrade", "websocket")
-			c.Set("Connection", "Upgrade")
-			return c.Status(fiber.StatusSwitchingProtocols).SendString(payload)
-		})
-
-		req := httptest.NewRequest(http.MethodGet, "/ws", nil)
-		req.Header.Set("Accept-Encoding", "gzip")
-		req.Header.Set("Connection", "Upgrade")
-		req.Header.Set("Upgrade", "websocket")
-		resp, err := app.Test(req)
-		require.NoError(t, err)
-		defer resp.Body.Close()
-
-		assert.Equal(t, fiber.StatusSwitchingProtocols, resp.StatusCode)
-		assert.Empty(t, resp.Header.Get("Content-Encoding"),
-			"compressing a hijacked connection would corrupt the websocket frames")
-	})
-
 	t.Run("sends nothing compressed when the client cannot accept it", func(t *testing.T) {
 		app := newApp()
 		app.Get("/data", func(c *fiber.Ctx) error {
