@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"mime"
 	"net/url"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -380,6 +381,16 @@ func (controller *Controller) PatchCheckedOutConfirmed(c *fiber.Ctx) error {
 	return c.JSON(repoCheckinToOutput(updated))
 }
 
+// parseBypassCheckedOutAfterLimit reports whether value enables the dev bypass.
+// Only the literal true, case-insensitive and trimmed, does.
+func parseBypassCheckedOutAfterLimit(value string) bool {
+	return strings.EqualFold(strings.TrimSpace(value), "true")
+}
+
+func bypassCheckedOutAfterLimit() bool {
+	return parseBypassCheckedOutAfterLimit(os.Getenv("BYPASS_CHECKED_OUT_AFTER_LIMIT"))
+}
+
 func buildFilter(c *fiber.Ctx) (checkin.Filter, error) {
 	locationGroupName := c.Query("location_group_name", "")
 	var err error
@@ -466,8 +477,8 @@ func buildFilter(c *fiber.Ctx) (checkin.Filter, error) {
 		// A zero time is Go's zero value, so it reads as omitted: the handler
 		// applies its own default, so it is intentionally not rejected here.
 		// Future timestamps are fine; only windows reaching further back than
-		// 24 hours are rejected.
-		if !filter.CheckedOutAtAfter.IsZero() && filter.CheckedOutAtAfter.Before(now.Add(-maxCheckoutsWindow)) {
+		// 24 hours are rejected, unless the dev bypass is enabled.
+		if !bypassCheckedOutAfterLimit() && !filter.CheckedOutAtAfter.IsZero() && filter.CheckedOutAtAfter.Before(now.Add(-maxCheckoutsWindow)) {
 			return checkin.Filter{}, errors.New("checked_out_after must be within the last 24 hours")
 		}
 	}

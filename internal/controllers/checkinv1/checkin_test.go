@@ -290,6 +290,26 @@ func Test_buildFilter_location_group_id(t *testing.T) {
 	}
 }
 
+func Test_parseBypassCheckedOutAfterLimit(t *testing.T) {
+	tests := []struct {
+		value string
+		want  bool
+	}{
+		{"", false},
+		{"false", false},
+		{"1", false},
+		{"true", true},
+		{"TRUE", true},
+		{" true ", true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.value, func(t *testing.T) {
+			assert.Equal(t, tc.want, parseBypassCheckedOutAfterLimit(tc.value))
+		})
+	}
+}
+
 func TestController_Checkouts_conditionalPolling(t *testing.T) {
 	app, store := setupAuthedApp()
 	testDB, cleanup, err := db.PrepareTestDB()
@@ -529,6 +549,9 @@ func Test_etagMatches(t *testing.T) {
 }
 
 func TestController_Checkouts_filter_validation(t *testing.T) {
+	// Pin the default-false behavior even if the developer's shell enables it.
+	t.Setenv("BYPASS_CHECKED_OUT_AFTER_LIMIT", "false")
+
 	app, store := setupAuthedApp()
 	testDB, cleanup, err := db.PrepareTestDB()
 	require.NoError(t, err)
@@ -672,6 +695,18 @@ func TestController_Checkouts_filter_validation(t *testing.T) {
 		status, body := pollCheckouts(t, "/v1/checkins/checkouts?checked_out_after=2000-01-01T00:00:00Z")
 		assert.Equal(t, fiber.StatusBadRequest, status)
 		assert.Contains(t, body, "checked_out_after must be within the last 24 hours")
+	})
+
+	t.Run("dev bypass allows a duration older than 24 hours", func(t *testing.T) {
+		t.Setenv("BYPASS_CHECKED_OUT_AFTER_LIMIT", "true")
+		status, _ := pollCheckouts(t, "/v1/checkins/checkouts?checked_out_after=-100000h")
+		assert.Equal(t, fiber.StatusOK, status)
+	})
+
+	t.Run("dev bypass allows a far-past RFC3339 timestamp", func(t *testing.T) {
+		t.Setenv("BYPASS_CHECKED_OUT_AFTER_LIMIT", "true")
+		status, _ := pollCheckouts(t, "/v1/checkins/checkouts?checked_out_after=2000-01-01T00:00:00Z")
+		assert.Equal(t, fiber.StatusOK, status)
 	})
 }
 
