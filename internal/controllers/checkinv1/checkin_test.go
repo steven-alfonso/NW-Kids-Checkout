@@ -383,14 +383,14 @@ func TestController_Checkouts_conditionalPolling(t *testing.T) {
 		return resp
 	}
 
-	t.Run("200 carries a validator but forbids storing the body", func(t *testing.T) {
+	t.Run("200 carries a validator and tells the browser to revalidate", func(t *testing.T) {
 		resp := poll(t, "")
 		require.Equal(t, fiber.StatusOK, resp.StatusCode)
 		assert.NotEmpty(t, resp.Header.Get("ETag"),
 			"a conditional client still gets a validator to revalidate with")
-		assert.Equal(t, "private, no-store", resp.Header.Get("Cache-Control"),
-			"the body is PII and must not survive in a shared device's cache; "+
-				"no-cache would let the browser keep it and only force revalidation")
+		assert.Equal(t, "private, no-cache", resp.Header.Get("Cache-Control"),
+			"the browser may keep the body but must revalidate it on every poll, "+
+				"so an unchanged list collapses to a 304 instead of a full payload")
 		assert.True(t, varyHas(resp.Header.Get("Vary"), fiber.HeaderAcceptEncoding),
 			"the body varies once compression is applied")
 		assert.True(t, varyHas(resp.Header.Get("Vary"), fiber.HeaderAccept),
@@ -412,8 +412,8 @@ func TestController_Checkouts_conditionalPolling(t *testing.T) {
 		assert.Empty(t, body, "a 304 must not resend the payload")
 		assert.Equal(t, etag, second.Header.Get("ETag"),
 			"the validator should be echoed so a conditional client can keep using it")
-		assert.Equal(t, "private, no-store", second.Header.Get("Cache-Control"),
-			"a 304 still updates cache metadata, so it must repeat the no-store directive")
+		assert.Equal(t, "private, no-cache", second.Header.Get("Cache-Control"),
+			"a 304 still updates cache metadata, so it must repeat the revalidation directive")
 		assert.True(t, varyHas(second.Header.Get("Vary"), fiber.HeaderAcceptEncoding),
 			"a 304 varies on the encoding it selected")
 		assert.True(t, varyHas(second.Header.Get("Vary"), fiber.HeaderAccept),

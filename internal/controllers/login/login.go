@@ -157,9 +157,9 @@ func (controller *Controller) GetLogout(c *fiber.Ctx) error {
 		middleware.GetLogger(c).InfoContext(c.Context(), "logout", slog.String("username", username))
 	}
 
-	// Evict any checkouts or manual check-in body a tablet cached before the
-	// no-store change. Clear-Site-Data is ignored on plain HTTP, so this takes
-	// effect once TLS is in front of the app.
+	// Evict cached checkouts and manual check-in bodies on logout.
+	// Clear-Site-Data is ignored on plain HTTP, so this takes effect once TLS
+	// is in front of the app.
 	c.Set(fiber.HeaderClearSiteData, `"cache"`)
 
 	// This destroys the session in SQLite and clears the cookie on the client

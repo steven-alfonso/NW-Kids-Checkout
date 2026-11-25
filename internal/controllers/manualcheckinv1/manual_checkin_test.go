@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -187,7 +188,7 @@ func TestController_GetManualCheckins(t *testing.T) {
 	assert.Equal(t, "manual", payload[1].Source)
 }
 
-func TestController_GetManualCheckins_cacheHeaders(t *testing.T) {
+func TestController_GetManualCheckins_conditionalPolling(t *testing.T) {
 	app, store := setupAuthedApp()
 
 	testDB, cleanup, err := db.PrepareTestDB()
@@ -197,15 +198,129 @@ func TestController_GetManualCheckins_cacheHeaders(t *testing.T) {
 	controller := NewController(testDB, store)
 	controller.RegisterRoutes(app)
 
-	req := httptest.NewRequest(http.MethodGet, "/v1/checkins/manual-checkins", nil)
-	req.Header.Set("Accept", "application/json")
-	resp, err := app.Test(req)
+	_, err = squirrel.Delete("manual_checkins").RunWith(testDB).ExecContext(t.Context())
 	require.NoError(t, err)
-	t.Cleanup(func() { resp.Body.Close() })
-	require.Equal(t, fiber.StatusOK, resp.StatusCode)
 
-	assert.Equal(t, "private, no-store", resp.Header.Get("Cache-Control"),
-		"the body is PII and must not survive in a shared device's cache")
+	manualRepo := manualcheckin.NewRepo(testDB)
+	create := func(t *testing.T, publicID string) {
+		t.Helper()
+		_, err := manualRepo.CreateManualCheckin(t.Context(), manualcheckin.ManualCheckin{
+			PublicID:     publicID,
+			FirstName:    "sam",
+			LastName:     "alpha",
+			CheckedOutAt: time.Now().UTC().Add(-time.Minute),
+		})
+		require.NoError(t, err)
+	}
+	create(t, "manual-cache-1")
+
+	poll := func(t *testing.T, ifNoneMatch string) *http.Response {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "/v1/checkins/manual-checkins", nil)
+		req.Header.Set("Accept", "application/json")
+		if ifNoneMatch != "" {
+			req.Header.Set("If-None-Match", ifNoneMatch)
+		}
+		resp, err := app.Test(req)
+		require.NoError(t, err)
+		return resp
+	}
+
+	t.Run("200 carries a validator and tells the browser to revalidate", func(t *testing.T) {
+		resp := poll(t, "")
+		defer resp.Body.Close()
+		require.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+		assert.NotEmpty(t, resp.Header.Get("ETag"),
+			"a conditional client gets a validator to revalidate with")
+		assert.Equal(t, "private, no-cache", resp.Header.Get("Cache-Control"),
+			"the browser may keep the body but must revalidate it, so an unchanged list collapses to a 304")
+		assert.Equal(t, fiber.MIMEApplicationJSON, resp.Header.Get("Content-Type"),
+			"the poll is a JSON API; anything sniffing the content type depends on this")
+		assert.True(t, varyHas(resp.Header.Get("Vary"), fiber.HeaderAcceptEncoding),
+			"the body varies once compression is applied")
+	})
+
+	t.Run("matching validator returns 304 with no body", func(t *testing.T) {
+		first := poll(t, "")
+		etag := first.Header.Get("ETag")
+		require.NotEmpty(t, etag)
+		first.Body.Close()
+
+		second := poll(t, etag)
+		defer second.Body.Close()
+		assert.Equal(t, fiber.StatusNotModified, second.StatusCode)
+
+		body, err := io.ReadAll(second.Body)
+		require.NoError(t, err)
+		assert.Empty(t, body, "a 304 must not resend the payload")
+		assert.Equal(t, etag, second.Header.Get("ETag"),
+			"the validator should be echoed so the client can keep using it")
+		assert.Equal(t, "private, no-cache", second.Header.Get("Cache-Control"),
+			"a 304 still updates cache metadata, so it must repeat the revalidation directive")
+		assert.True(t, varyHas(second.Header.Get("Vary"), fiber.HeaderAcceptEncoding),
+			"a 304 varies on the encoding it selected")
+	})
+
+	t.Run("changed data returns 200 with a new validator", func(t *testing.T) {
+		before := poll(t, "")
+		beforeETag := before.Header.Get("ETag")
+		before.Body.Close()
+
+		create(t, "manual-cache-2")
+
+		after := poll(t, beforeETag)
+		defer after.Body.Close()
+		assert.Equal(t, fiber.StatusOK, after.StatusCode,
+			"a newly arrived manual check-in must not be hidden behind a stale validator")
+		assert.NotEqual(t, beforeETag, after.Header.Get("ETag"))
+
+		var payload []Checkin
+		require.NoError(t, json.NewDecoder(after.Body).Decode(&payload))
+		assert.Len(t, payload, 2)
+	})
+}
+
+func varyHas(vary, token string) bool {
+	for _, part := range strings.Split(vary, ",") {
+		if strings.EqualFold(strings.TrimSpace(part), token) {
+			return true
+		}
+	}
+	return false
+}
+
+func Test_etagMatches(t *testing.T) {
+	const etag = `W/"abc123"`
+
+	tests := []struct {
+		name        string
+		ifNoneMatch string
+		want        bool
+	}{
+		{"absent", "", false},
+		{"exact weak match", `W/"abc123"`, true},
+		{"strong form of the same opaque tag", `"abc123"`, true},
+		{"one of several", `"other", W/"abc123"`, true},
+		{"several, match last", `"a", "b", W/"abc123"`, true},
+		{"wildcard", "*", true},
+		{"wildcard with padding", " * ", true},
+		{"padding around the tag", `  W/"abc123"  `, true},
+		{"trailing comma", `W/"abc123",`, true},
+		{"different tag", `W/"other"`, false},
+		{"prefix of the tag", `W/"abc12"`, false},
+		{"tag with trailing junk", `"abc123"junk`, false},
+		{"unquoted", `abc123`, false},
+		{"quoted wildcard", `"*"`, false},
+		{"lowercase weak prefix is a different token", `w/"abc123"`, false},
+		{"uppercase hex does not match", `W/"ABC123"`, false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, etagMatches(tc.ifNoneMatch, etag))
+		})
+	}
 }
 
 func TestController_PatchManualCheckedOutConfirmed(t *testing.T) {
