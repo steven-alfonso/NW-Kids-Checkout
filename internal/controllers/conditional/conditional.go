@@ -1,5 +1,6 @@
 // Package conditional writes JSON responses with a weak ETag and a cache
-// policy that lets a browser store and revalidate them.
+// policy that keeps them out of the HTTP cache while letting the page
+// revalidate them from memory.
 package conditional
 
 import (

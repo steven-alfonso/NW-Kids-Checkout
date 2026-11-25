@@ -1104,15 +1104,16 @@ async function fetchChildrenData() {
             headers['If-None-Match'] = checkoutsEtag;
         }
 
-        const response = await fetch(`${API_URL}/v1/checkins/checkouts/?${outParams.toString()}`, {
-            signal: controller.signal,
-            headers
-        });
+        const result = await globalThis.fetchJsonWithETag(
+            `${API_URL}/v1/checkins/checkouts/?${outParams.toString()}`,
+            {
+                signal: controller.signal,
+                headers
+            }
+        );
+        if (result.etag) checkoutsEtag = result.etag;
 
-        const nextEtag = response.headers ? (response.headers.get('ETag') || '') : '';
-        if (nextEtag) checkoutsEtag = nextEtag;
-
-        if (response.status === 304) {
+        if (result.notModified) {
             // The HTTP cache is disabled (no-store), so the page holds the
             // validator. Reuse the current data, but re-apply filters and
             // refresh the relative timestamps the 304 did not resend.
@@ -1130,11 +1131,8 @@ async function fetchChildrenData() {
             }
             return;
         }
-        if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
-        }
 
-        const data = await response.json();
+        const data = result.data;
         const combined = normalizeCheckoutsResponse(data).map((child) => {
             const checkedOutAtMs = getCheckedOutTimestamp(child.checked_out_at);
             return {
@@ -1186,6 +1184,12 @@ async function fetchChildrenData() {
     } catch (error) {
         if (error?.name === 'AbortError') return;
         console.error('Error fetching children data:', error);
+        if (error instanceof window.SessionExpiredError) {
+            window.location.href = '/login?next=' + encodeURIComponent(
+                window.location.pathname + window.location.search
+            );
+            return;
+        }
         // The data is discarded below, so the old validator no longer matches
         // anything we can render. Fetch a full body on the next poll.
         checkoutsEtag = null;

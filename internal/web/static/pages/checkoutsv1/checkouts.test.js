@@ -6,6 +6,8 @@ import { stubJsdomGaps } from '../../../../../test-support/jsdom-shims.js';
 
 const scriptPath = path.resolve(process.cwd(), 'internal/web/static/pages/checkoutsv1/checkouts.js');
 const script = fs.readFileSync(scriptPath, 'utf8');
+const apiScriptPath = path.resolve(process.cwd(), 'internal/web/static/js/api.js');
+const apiScript = fs.readFileSync(apiScriptPath, 'utf8');
 const morphdomScriptPath = path.resolve(process.cwd(), 'internal/web/static/js/morphdom-umd.min.js');
 const morphdomScript = fs.readFileSync(morphdomScriptPath, 'utf8');
 const exposeInternals = `
@@ -49,6 +51,7 @@ function loadWindow({ html, url = 'http://localhost/', fetchImpl } = {}) {
     // every time the overdue sheet opens or closes.
     stubJsdomGaps(dom);
     dom.window.eval(morphdomScript);
+    dom.window.eval(apiScript);
     dom.window.eval(`${script}\n${exposeInternals}`);
     return dom.window;
 }

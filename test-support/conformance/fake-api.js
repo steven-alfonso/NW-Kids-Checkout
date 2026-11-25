@@ -1,5 +1,6 @@
 // Mutable fake of the checkouts API. Every test gets its own state, so polls,
 // confirmations, and simulated failures are isolated.
+import { createHash } from 'node:crypto';
 import { BASE_TIME, GROUPS, defaultChildren, childKey } from './fixtures.js';
 
 export function createState(overrides = {}) {
@@ -95,7 +96,8 @@ export async function installFakeApi(page, initialState = createState()) {
       method: request.method(),
       path,
       search: url.search,
-      body
+      body,
+      headers: request.headers()
     });
 
     if (path === '/v1/location_groups') {
@@ -149,10 +151,26 @@ export async function installFakeApi(page, initialState = createState()) {
         state.groups,
         state.ignoreLimit
       );
+      const payload = JSON.stringify(listPayload(filtered));
+      const etag = `W/"${createHash('sha256').update(payload).digest('hex').slice(0, 32)}"`;
+      if (request.headers()['if-none-match'] === etag) {
+        await route.fulfill({
+          status: 304,
+          headers: {
+            ETag: etag,
+            'Cache-Control': 'private, no-store'
+          }
+        });
+        return;
+      }
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify(listPayload(filtered))
+        headers: {
+          ETag: etag,
+          'Cache-Control': 'private, no-store'
+        },
+        body: payload
       });
       return;
     }

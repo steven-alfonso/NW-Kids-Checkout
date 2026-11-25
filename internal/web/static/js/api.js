@@ -63,19 +63,72 @@ async function fetchJson(url, options = {}) {
 /**
  * Fetch JSON while preserving the ETag and treating 304 as "no changes".
  * The caller holds the validator in memory; responses stay no-store.
+ * A 200 with an empty body is treated as unchanged when the caller already has
+ * a validator, covering intermediaries that normalize 304 to 200.
  * @param {string} url
  * @param {Object} options
  * @returns {Promise<{notModified: boolean, etag: string, data: Object|null}>}
  */
 async function fetchJsonWithETag(url, options = {}) {
-  const response = await fetch(url, options);
-  const etag = response.headers ? (response.headers.get('ETag') || '') : '';
+  const sentEtag = headerValue(options.headers, 'If-None-Match');
+  let response = await fetch(url, options);
+  let etag = response.headers ? (response.headers.get('ETag') || '') : '';
 
   if (response.status === 304) {
-    return { notModified: true, etag, data: null };
+    // A 304 carrying a different validator did not answer the request we sent.
+    // Retry once without the conditional header rather than trusting it.
+    if (etag && sentEtag && etag !== sentEtag) {
+      response = await fetch(url, withoutHeader(options, 'If-None-Match'));
+      etag = response.headers ? (response.headers.get('ETag') || '') : '';
+    }
+    if (response.status === 304) {
+      if (etag && sentEtag && etag !== sentEtag) {
+        throw new Error('unexpected 304 response');
+      }
+      return { notModified: true, etag: etag || sentEtag, data: null };
+    }
+  }
+
+  const bodyText = await peekResponseText(response);
+  if (bodyText === '') {
+    if (!sentEtag) throw new Error('empty response');
+    return { notModified: true, etag: sentEtag, data: null };
   }
 
   return { notModified: false, etag, data: await readJsonResponse(response) };
+}
+
+function headerValue(headers, name) {
+  if (!headers) return '';
+  if (typeof headers.get === 'function') return headers.get(name) || '';
+  const key = Object.keys(headers).find(
+    (candidate) => candidate.toLowerCase() === name.toLowerCase()
+  );
+  return key ? String(headers[key]) : '';
+}
+
+function withoutHeader(options, name) {
+  const headers = options.headers;
+  if (!headers) return options;
+  if (typeof Headers !== 'undefined' && headers instanceof Headers) {
+    const copy = new Headers(headers);
+    copy.delete(name);
+    return { ...options, headers: copy };
+  }
+  const copy = {};
+  for (const [key, value] of Object.entries(headers)) {
+    if (key.toLowerCase() !== name.toLowerCase()) copy[key] = value;
+  }
+  return { ...options, headers: copy };
+}
+
+async function peekResponseText(response) {
+  if (typeof response.clone !== 'function') return null;
+  try {
+    return await response.clone().text();
+  } catch {
+    return null;
+  }
 }
 
 // Export for browser usage (via script tag)

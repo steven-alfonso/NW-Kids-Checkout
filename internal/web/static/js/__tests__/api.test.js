@@ -67,6 +67,68 @@ describe('api', () => {
 
       await expect(window.fetchJsonWithETag('/api')).rejects.toThrow('Session expired');
     });
+
+    it('returns an empty validator when a 200 has no ETag', async () => {
+      const window = loadWindow();
+      window.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        redirected: false,
+        url: 'http://localhost/api',
+        headers: { get: () => null },
+        json: async () => ({ ok: true })
+      });
+
+      const result = await window.fetchJsonWithETag('/api');
+      expect(result).toEqual({ notModified: false, etag: '', data: { ok: true } });
+    });
+
+    it('keeps the sent validator when an intermediary returns an empty 200', async () => {
+      const window = loadWindow();
+      window.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        redirected: false,
+        url: 'http://localhost/api',
+        headers: { get: (name) => (name === 'ETag' ? 'W/"new"' : 'application/json') },
+        clone: () => ({ text: async () => '' }),
+        json: async () => {
+          throw new Error('an empty 200 must not be parsed');
+        }
+      });
+
+      const result = await window.fetchJsonWithETag('/api', {
+        headers: { 'If-None-Match': 'W/"old"' }
+      });
+
+      expect(result).toEqual({ notModified: true, etag: 'W/"old"', data: null });
+    });
+
+    it('retries without the validator when a 304 carries a different ETag', async () => {
+      const window = loadWindow();
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce({
+          status: 304,
+          headers: { get: (name) => (name === 'ETag' ? 'W/"other"' : null) }
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          redirected: false,
+          url: 'http://localhost/api',
+          headers: { get: (name) => (name === 'ETag' ? 'W/"good"' : 'application/json') },
+          json: async () => ({ ok: true })
+        });
+      window.fetch = fetchMock;
+
+      const result = await window.fetchJsonWithETag('/api', {
+        headers: { 'If-None-Match': 'W/"old"' }
+      });
+
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(fetchMock.mock.calls[1][1].headers).not.toHaveProperty('If-None-Match');
+      expect(result).toEqual({ notModified: false, etag: 'W/"good"', data: { ok: true } });
+    });
   });
 
   describe('fetchJson', () => {

@@ -71,8 +71,8 @@ func (controller *Controller) GetManualCheckins(c *fiber.Ctx) error {
 	} else {
 		manualCheckins = sortManualCheckins(manualCheckins)
 	}
-	// The list carries PII, so it is private but revalidatable; an unchanged
-	// response collapses to a 304. This endpoint always serves JSON, so
+	// The list carries PII, so it is no-store; the page keeps the validator in
+	// memory and revalidates it. This endpoint always serves JSON, so
 	// Accept-Encoding is the only representation selection variable.
 	return conditional.SendRevalidatedJSON(c, repoManualCheckinSliceToOutput(manualCheckins))
 }
