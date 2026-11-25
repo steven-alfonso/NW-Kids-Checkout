@@ -138,6 +138,12 @@ func (controller *Controller) checkoutsWeb(c *fiber.Ctx) error {
 			)))
 		}
 
+		// The page embeds no child data, but it is the same authenticated route
+		// as the poll and a shared tablet must not keep it in its HTTP cache
+		// after logout. It content-negotiates with the JSON branch on the same
+		// path, so Accept is a selection variable.
+		c.Set(fiber.HeaderCacheControl, "private, no-store")
+		c.Vary(fiber.HeaderAcceptEncoding, fiber.HeaderAccept)
 		c.Type("html")
 		return c.SendStream(htmlStream)
 	}
@@ -181,10 +187,10 @@ func (controller *Controller) checkoutsWeb(c *fiber.Ctx) error {
 	})
 }
 
-// sendCheckoutsJSON writes the poll payload with a validator so the client's 3s
-// poll can revalidate instead of re-downloading an unchanged list. The checkouts
-// page polls far more often than the data changes, so most responses collapse
-// to an empty 304.
+// sendCheckoutsJSON writes the poll payload with a validator, so a client that
+// sends If-None-Match can revalidate instead of re-downloading an unchanged
+// list. Browsers do not use it, because no-store stops them retaining the body
+// to revalidate against.
 func sendCheckoutsJSON(c *fiber.Ctx, payload CheckoutsResponse) error {
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -197,9 +203,12 @@ func sendCheckoutsJSON(c *fiber.Ctx, payload CheckoutsResponse) error {
 	sum := sha256.Sum256(body)
 	etag := `W/"` + hex.EncodeToString(sum[:16]) + `"`
 
-	// no-cache (not no-store) so the browser keeps the body and revalidates it
-	// on the next poll instead of refetching every time.
-	c.Set(fiber.HeaderCacheControl, "no-cache")
+	// private, no-store: the body carries children's names, security codes, and
+	// checkout times, so a shared tablet must not retain it in its HTTP cache
+	// after logout. Browsers that honour no-store drop the body and refetch the
+	// full payload on every 3s poll instead of revalidating. The ETag and the
+	// 304 path below stay for non-browser conditional clients.
+	c.Set(fiber.HeaderCacheControl, "private, no-store")
 	// Vary on Accept-Encoding because compression re-encodes the body, and on
 	// Accept because this route content-negotiates: the same path serves HTML
 	// or this payload depending on the request's Accept header.

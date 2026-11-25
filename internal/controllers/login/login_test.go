@@ -276,3 +276,24 @@ func TestPostLogin_successStillRedirectsUnderLimit(t *testing.T) {
 	assert.Equal(t, "/", resp.Header.Get("Location"))
 	assert.NotNil(t, findSessionCookie(resp), "a successful login must still set a session cookie")
 }
+
+func TestGetLogoutClearsCachedResponses(t *testing.T) {
+	app, _ := newLoginTestApp(t)
+
+	login := postLoginFromIP(t, app, testPassword, "198.51.100.30")
+	login.Body.Close()
+	require.Equal(t, fiber.StatusFound, login.StatusCode)
+	cookie := findSessionCookie(login)
+	require.NotNil(t, cookie)
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/logout", nil)
+	req.AddCookie(cookie)
+	req.RemoteAddr = "198.51.100.30:12345"
+	resp := testAppRequest(t, app, req)
+	defer resp.Body.Close()
+
+	assert.Equal(t, fiber.StatusFound, resp.StatusCode)
+	assert.Equal(t, "/login", resp.Header.Get("Location"))
+	assert.Equal(t, `"cache"`, resp.Header.Get("Clear-Site-Data"),
+		"logout must evict a checkouts body cached before the no-store change")
+}

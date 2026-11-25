@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -154,6 +155,32 @@ func TestController_CheckoutsWeb_PreviewTag(t *testing.T) {
 		assert.NotContains(t, html, `id="login-link"`)
 		assert.NotContains(t, html, "<!-- kebab-menu-links -->")
 	})
+}
+
+func varyHas(vary, token string) bool {
+	for _, part := range strings.Split(vary, ",") {
+		if strings.EqualFold(strings.TrimSpace(part), token) {
+			return true
+		}
+	}
+	return false
+}
+
+func TestController_CheckoutsWeb_cacheHeaders(t *testing.T) {
+	app, store := setupAuthedApp()
+	NewController(nil, store).RegisterRoutes(app)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/checkins/checkouts", nil)
+	req.Header.Set("Accept", "text/html")
+	resp, err := app.Test(req)
+	require.NoError(t, err)
+	t.Cleanup(func() { resp.Body.Close() })
+	require.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	assert.Equal(t, "private, no-store", resp.Header.Get("Cache-Control"),
+		"the page is an authenticated view of child data and must not be stored on a shared device")
+	assert.True(t, varyHas(resp.Header.Get("Vary"), fiber.HeaderAccept),
+		"the same path serves HTML or JSON depending on Accept")
 }
 
 func Test_buildFilter_location_group_id(t *testing.T) {
@@ -356,16 +383,17 @@ func TestController_Checkouts_conditionalPolling(t *testing.T) {
 		return resp
 	}
 
-	t.Run("200 carries a validator and tells the client to revalidate", func(t *testing.T) {
+	t.Run("200 carries a validator but forbids storing the body", func(t *testing.T) {
 		resp := poll(t, "")
 		require.Equal(t, fiber.StatusOK, resp.StatusCode)
 		assert.NotEmpty(t, resp.Header.Get("ETag"),
-			"the 3s poll can only revalidate if the response carries an ETag")
-		assert.Equal(t, "no-cache", resp.Header.Get("Cache-Control"),
-			"no-cache stores the body but forces revalidation; no-store would defeat the ETag")
-		assert.Contains(t, resp.Header.Get("Vary"), fiber.HeaderAcceptEncoding,
+			"a conditional client still gets a validator to revalidate with")
+		assert.Equal(t, "private, no-store", resp.Header.Get("Cache-Control"),
+			"the body is PII and must not survive in a shared device's cache; "+
+				"no-cache would let the browser keep it and only force revalidation")
+		assert.True(t, varyHas(resp.Header.Get("Vary"), fiber.HeaderAcceptEncoding),
 			"the body varies once compression is applied")
-		assert.Contains(t, resp.Header.Get("Vary"), fiber.HeaderAccept,
+		assert.True(t, varyHas(resp.Header.Get("Vary"), fiber.HeaderAccept),
 			"this route content-negotiates on Accept, so that is a selection variable too")
 	})
 
@@ -383,7 +411,13 @@ func TestController_Checkouts_conditionalPolling(t *testing.T) {
 		require.NoError(t, err)
 		assert.Empty(t, body, "a 304 must not resend the payload")
 		assert.Equal(t, etag, second.Header.Get("ETag"),
-			"the validator should be echoed so the client keeps caching it")
+			"the validator should be echoed so a conditional client can keep using it")
+		assert.Equal(t, "private, no-store", second.Header.Get("Cache-Control"),
+			"a 304 still updates cache metadata, so it must repeat the no-store directive")
+		assert.True(t, varyHas(second.Header.Get("Vary"), fiber.HeaderAcceptEncoding),
+			"a 304 varies on the encoding it selected")
+		assert.True(t, varyHas(second.Header.Get("Vary"), fiber.HeaderAccept),
+			"a 304 varies on the representation it selected")
 	})
 
 	t.Run("changed data returns 200 with a new validator", func(t *testing.T) {
@@ -413,7 +447,7 @@ func TestController_Checkouts_conditionalPolling(t *testing.T) {
 			"the poll is a JSON API; anything sniffing the content type depends on this")
 	})
 
-	t.Run("HTML branch is unaffected", func(t *testing.T) {
+	t.Run("HTML branch carries no ETag", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/v1/checkins/checkouts", nil)
 		req.Header.Set("Accept", "text/html")
 		resp, err := app.Test(req)
