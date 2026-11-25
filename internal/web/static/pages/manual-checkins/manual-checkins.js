@@ -193,7 +193,7 @@ async function loadManualCheckins() {
         renderManualCheckins(Array.isArray(result.data) ? result.data : []);
     } catch (error) {
         if (error?.name === 'AbortError') return;
-        // The table is replaced with an error row below, so the old validator
+        // The rows are replaced with an error row below, so the old validator
         // no longer describes what is on screen. Fetch a full body next time.
         manualCheckinsEtag = null;
         if (error instanceof window.SessionExpiredError) {

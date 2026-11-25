@@ -91,7 +91,7 @@ describe('manual-checkins', () => {
         expect(body.innerHTML).toContain('No manual check-ins found.');
     });
 
-    it('sends the last ETag and leaves the table alone on a 304', async () => {
+    it('sends the last ETag and leaves the rendered rows alone on a 304', async () => {
         const window = loadWindow();
         const body = window.document.getElementById('manual-checkins-body');
         const calls = [];
@@ -156,7 +156,7 @@ describe('manual-checkins', () => {
         expect(body.textContent).toContain('Ada');
 
         failNext = true;
-        await window.__manualRefresh(); // fails and replaces the table with an error
+        await window.__manualRefresh(); // fails and replaces the rows with an error
         expect(body.textContent).toContain('Unable to load');
 
         failNext = false;
