@@ -2,6 +2,10 @@
 const API_URL = '';
 const DEBUG = new URLSearchParams(window.location.search).has('debug');
 
+if (typeof globalThis.fetchJsonWithETag !== 'function') {
+    throw new Error('checkouts requires api.js');
+}
+
 // Store current data
 let childrenData = [];
 let childrenFetchController = null;

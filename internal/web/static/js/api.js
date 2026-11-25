@@ -20,9 +20,11 @@ async function readJsonResponse(response) {
   const responseUrl = response.url || '';
   const contentType = response.headers ? (response.headers.get('content-type') || '') : '';
   const isHtml = contentType.includes('text/html');
+  const isServerError = response.status >= 500;
 
-  // Check for session expiry via redirect to login or HTML response
-  if (response.redirected || responseUrl.endsWith('/login') || isHtml) {
+  // A login URL or 401 means the session expired. An HTML response below 500
+  // is the login page served without a redirect; a 5xx HTML page is an outage.
+  if (/\/login(?:\/|\?|$)/.test(responseUrl) || response.status === 401 || (isHtml && !isServerError)) {
     throw new SessionExpiredError('Session expired');
   }
 
@@ -63,8 +65,8 @@ async function fetchJson(url, options = {}) {
 /**
  * Fetch JSON while preserving the ETag and treating 304 as "no changes".
  * The caller holds the validator in memory; responses stay no-store.
- * A 200 with an empty body is treated as unchanged when the caller already has
- * a validator, covering intermediaries that normalize 304 to 200.
+ * An empty 200 for a request that already carried a validator is treated as
+ * unchanged, covering intermediaries that normalize 304 to 200.
  * @param {string} url
  * @param {Object} options
  * @returns {Promise<{notModified: boolean, etag: string, data: Object|null}>}
@@ -89,10 +91,11 @@ async function fetchJsonWithETag(url, options = {}) {
     }
   }
 
-  const bodyText = await peekResponseText(response);
-  if (bodyText === '') {
-    if (!sentEtag) throw new Error('empty response');
-    return { notModified: true, etag: sentEtag, data: null };
+  if (response.ok && sentEtag && response.status !== 204) {
+    const bodyText = await peekResponseText(response);
+    if (bodyText === '') {
+      return { notModified: true, etag: sentEtag, data: null };
+    }
   }
 
   return { notModified: false, etag, data: await readJsonResponse(response) };

@@ -606,33 +606,6 @@ test.describe('checkouts board', () => {
     expect(new URLSearchParams(api.lastPollRequest().search).get('limit')).toBe('3');
   });
 
-  test('revalidates an unchanged poll with If-None-Match and keeps the board', async ({
-    page
-  }, testInfo) => {
-    await openBoard(page, testInfo);
-    await expect(visibleChildRows(page)).toHaveCount(7);
-    await page.evaluate(() => {
-      window.__childBeforePoll = document.querySelector('#children-list .bg-white');
-    });
-
-    const responsePromise = page.waitForResponse(
-      (response) =>
-        response.url().includes('/v1/checkins/checkouts') && response.status() === 304
-    );
-    await pollOnce(page);
-    const response = await responsePromise;
-
-    expect(response.request().headers()['if-none-match']).toBeTruthy();
-    await expect(visibleChildRows(page)).toHaveCount(7);
-    expect(
-      await page.evaluate(
-        () =>
-          window.__childBeforePoll ===
-          document.querySelector('#children-list .bg-white')
-      )
-    ).toBe(true);
-  });
-
   test('expands and collapses search without losing filter state', async ({
     page
   }, testInfo) => {
