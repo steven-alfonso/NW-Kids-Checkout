@@ -192,7 +192,7 @@ func (controller *Controller) checkoutsWeb(c *fiber.Ctx) error {
 // to an empty 304. Vary on Accept because this route content-negotiates: the
 // same path serves HTML or this payload depending on the request's Accept header.
 func sendCheckoutsJSON(c *fiber.Ctx, payload CheckoutsResponse) error {
-	return conditional.SendJSON(c, payload, fiber.HeaderAccept)
+	return conditional.SendRevalidatedJSON(c, payload, fiber.HeaderAccept)
 }
 
 func (controller *Controller) PatchCheckedOutConfirmed(c *fiber.Ctx) error {

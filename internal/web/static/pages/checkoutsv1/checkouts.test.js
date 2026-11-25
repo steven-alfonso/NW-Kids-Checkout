@@ -775,6 +775,118 @@ describe('checkoutsv1/checkouts', () => {
         expect(checkoutsFetchCount).toBe(2);
     });
 
+    it('re-applies filters when a filter change revalidates to 304', async () => {
+        const w = loadWindow({
+            html: '<!doctype html><html><body><div id="children-list"></div></body></html>',
+            url: 'http://localhost/?location_group_id=',
+            fetchImpl: async (url, options = {}) => {
+                if (!String(url).includes('/v1/checkins/checkouts')) {
+                    return { ok: true, status: 200, json: async () => [] };
+                }
+                if (options.headers && options.headers['If-None-Match']) {
+                    return {
+                        ok: false,
+                        status: 304,
+                        headers: { get: (name) => (name === 'ETag' ? 'W/"v1"' : null) },
+                        json: async () => {
+                            throw new Error('a 304 must not be parsed');
+                        }
+                    };
+                }
+                return {
+                    ok: true,
+                    status: 200,
+                    headers: { get: (name) => (name === 'ETag' ? 'W/"v1"' : 'application/json') },
+                    json: async () => [pcChild('a')]
+                };
+            }
+        });
+
+        await w.fetchChildrenData();
+        expect(w.__test.getVisibleChildren().length).toBe(0);
+
+        w.history.replaceState(null, '', '?location_group_id=1');
+        await w.fetchChildrenData();
+
+        expect(w.__test.getVisibleChildren().length).toBe(1);
+        expect(w.document.getElementById('children-list').textContent).toContain('a');
+    });
+
+    it('sends the last ETag and keeps the current data on a 304', async () => {
+        const calls = [];
+        let poll = 0;
+        const w = loadWindow({
+            html: '<!doctype html><html><body><div id="children-list"></div></body></html>',
+            fetchImpl: async (url, options = {}) => {
+                if (!String(url).includes('/v1/checkins/checkouts')) {
+                    return { ok: true, status: 200, json: async () => [] };
+                }
+                calls.push({ url: String(url), headers: options.headers || {} });
+                poll++;
+                if (poll === 1) {
+                    return {
+                        ok: true,
+                        status: 200,
+                        headers: { get: (name) => (name === 'ETag' ? 'W/"v1"' : 'application/json') },
+                        json: async () => [pcChild('a')]
+                    };
+                }
+                return {
+                    ok: false,
+                    status: 304,
+                    headers: { get: (name) => (name === 'ETag' ? 'W/"v1"' : null) },
+                    json: async () => {
+                        throw new Error('a 304 must not be parsed');
+                    }
+                };
+            }
+        });
+
+        await w.fetchChildrenData();
+        expect(w.__test.getChildrenData().length).toBe(1);
+        expect(w.document.getElementById('children-list').textContent).toContain('a');
+
+        await w.fetchChildrenData();
+
+        expect(calls[1].headers['If-None-Match']).toBe('W/"v1"');
+        expect(w.__test.getChildrenData().length).toBe(1);
+        expect(w.document.getElementById('children-list').textContent).toContain('a');
+    });
+
+    it('drops the ETag after a failed poll so recovery fetches a full body', async () => {
+        const calls = [];
+        let poll = 0;
+        const w = loadWindow({
+            html: '<!doctype html><html><body><div id="children-list"></div></body></html>',
+            fetchImpl: async (url, options = {}) => {
+                if (!String(url).includes('/v1/checkins/checkouts')) {
+                    return { ok: true, status: 200, json: async () => [] };
+                }
+                calls.push(options.headers || {});
+                poll++;
+                if (poll === 2) throw new Error('offline');
+                return {
+                    ok: true,
+                    status: 200,
+                    headers: { get: (name) => (name === 'ETag' ? 'W/"v1"' : 'application/json') },
+                    json: async () => [pcChild('a')]
+                };
+            }
+        });
+
+        await w.fetchChildrenData();
+        expect(w.__test.getChildrenData().length).toBe(1);
+
+        await w.fetchChildrenData(); // fails and clears the board
+        expect(w.__test.getChildrenData().length).toBe(0);
+
+        await w.fetchChildrenData();
+
+        expect(calls[2]['If-None-Match']).toBeUndefined();
+        expect(w.__test.getChildrenData().length).toBe(1);
+        expect(w.document.getElementById('children-list').textContent).toContain('a');
+    });
+
     const overdueChild = (id, minutesAgo) => ({
         source: 'planning_center',
         planning_center_id: id,

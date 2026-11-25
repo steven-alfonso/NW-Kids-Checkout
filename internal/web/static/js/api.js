@@ -12,16 +12,11 @@ class SessionExpiredError extends Error {
 }
 
 /**
- * Fetch JSON with automatic session expiry detection and error envelope parsing
- * @param {string} url - The URL to fetch
- * @param {Object} options - Fetch options (defaults to {})
+ * Validate a response for session expiry or an error envelope, then parse JSON.
+ * @param {Response} response
  * @returns {Promise<Object>} Parsed JSON response
- * @throws {SessionExpiredError} When session expires (redirect to /login or HTML response)
- * @throws {Error} For other HTTP errors with parsed error message
  */
-async function fetchJson(url, options = {}) {
-  const response = await fetch(url, options);
-
+async function readJsonResponse(response) {
   const responseUrl = response.url || '';
   const contentType = response.headers ? (response.headers.get('content-type') || '') : '';
   const isHtml = contentType.includes('text/html');
@@ -50,8 +45,37 @@ async function fetchJson(url, options = {}) {
     throw new Error(message);
   }
 
-  // Parse and return JSON response
   return response.json();
+}
+
+/**
+ * Fetch JSON with automatic session expiry detection and error envelope parsing
+ * @param {string} url - The URL to fetch
+ * @param {Object} options - Fetch options (defaults to {})
+ * @returns {Promise<Object>} Parsed JSON response
+ * @throws {SessionExpiredError} When session expires (redirect to /login or HTML response)
+ * @throws {Error} For other HTTP errors with parsed error message
+ */
+async function fetchJson(url, options = {}) {
+  return readJsonResponse(await fetch(url, options));
+}
+
+/**
+ * Fetch JSON while preserving the ETag and treating 304 as "no changes".
+ * The caller holds the validator in memory; responses stay no-store.
+ * @param {string} url
+ * @param {Object} options
+ * @returns {Promise<{notModified: boolean, etag: string, data: Object|null}>}
+ */
+async function fetchJsonWithETag(url, options = {}) {
+  const response = await fetch(url, options);
+  const etag = response.headers ? (response.headers.get('ETag') || '') : '';
+
+  if (response.status === 304) {
+    return { notModified: true, etag, data: null };
+  }
+
+  return { notModified: false, etag, data: await readJsonResponse(response) };
 }
 
 // Export for browser usage (via script tag)
@@ -61,6 +85,8 @@ if (typeof globalThis !== "undefined") {
   }
   globalThis.NWKidsApi.fetchJson = fetchJson;
   globalThis.fetchJson = fetchJson;
+  globalThis.NWKidsApi.fetchJsonWithETag = fetchJsonWithETag;
+  globalThis.fetchJsonWithETag = fetchJsonWithETag;
   globalThis.NWKidsApi.SessionExpiredError = SessionExpiredError;
   globalThis.SessionExpiredError = SessionExpiredError;
 }
@@ -68,6 +94,7 @@ if (typeof globalThis !== "undefined") {
 if (typeof window !== "undefined") {
   window.NWKidsApi = globalThis.NWKidsApi;
   window.fetchJson = globalThis.NWKidsApi.fetchJson;
+  window.fetchJsonWithETag = globalThis.NWKidsApi.fetchJsonWithETag;
   window.SessionExpiredError = globalThis.NWKidsApi.SessionExpiredError;
 }
 
@@ -75,6 +102,7 @@ if (typeof window !== "undefined") {
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     fetchJson,
+    fetchJsonWithETag,
     SessionExpiredError
   };
 }

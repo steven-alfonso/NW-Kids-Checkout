@@ -6,7 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestMatches(t *testing.T) {
+func Test_matches(t *testing.T) {
 	const etag = `W/"abc123"`
 
 	tests := []struct {
@@ -34,7 +34,7 @@ func TestMatches(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, tc.want, Matches(tc.ifNoneMatch, etag))
+			assert.Equal(t, tc.want, matches(tc.ifNoneMatch, etag))
 		})
 	}
 }

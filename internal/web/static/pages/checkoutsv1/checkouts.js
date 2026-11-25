@@ -11,6 +11,7 @@ let searchQuery = '';
 let hideConfirmed = false;
 let knownChildIds = new Set();
 let lastFetchParams = null;
+let checkoutsEtag = null;
 let locationGroups = [];
 let flashChildIds = new Set();
 let flashTimeoutId = null;
@@ -1098,9 +1099,37 @@ async function fetchChildrenData() {
         const fetchSignature = window.location.search;
         const filterChanged = fetchSignature !== lastFetchParams;
 
+        const headers = {};
+        if (checkoutsEtag) {
+            headers['If-None-Match'] = checkoutsEtag;
+        }
+
         const response = await fetch(`${API_URL}/v1/checkins/checkouts/?${outParams.toString()}`, {
-            signal: controller.signal
+            signal: controller.signal,
+            headers
         });
+
+        const nextEtag = response.headers ? (response.headers.get('ETag') || '') : '';
+        if (nextEtag) checkoutsEtag = nextEtag;
+
+        if (response.status === 304) {
+            // The HTTP cache is disabled (no-store), so the page holds the
+            // validator. Reuse the current data, but re-apply filters and
+            // refresh the relative timestamps the 304 did not resend.
+            lastPollFailed = false;
+            if (filterChanged) {
+                knownChildIds = new Set(childrenData.map(getChildId).filter(Boolean));
+                clearFlashStyles();
+                lastFetchParams = fetchSignature;
+            }
+            updateUI();
+            updateOverdueUI();
+            updateTimes();
+            if (DEBUG) {
+                console.log('Checkouts unchanged (304)');
+            }
+            return;
+        }
         if (!response.ok) {
             throw new Error(`HTTP error! status: ${response.status}`);
         }
@@ -1157,6 +1186,9 @@ async function fetchChildrenData() {
     } catch (error) {
         if (error?.name === 'AbortError') return;
         console.error('Error fetching children data:', error);
+        // The data is discarded below, so the old validator no longer matches
+        // anything we can render. Fetch a full body on the next poll.
+        checkoutsEtag = null;
         childrenData = [];
         lastPollFailed = true;
         lastListSignature = '';

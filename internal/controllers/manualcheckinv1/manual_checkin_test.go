@@ -226,15 +226,15 @@ func TestController_GetManualCheckins_conditionalPolling(t *testing.T) {
 		return resp
 	}
 
-	t.Run("200 carries a validator and tells the browser to revalidate", func(t *testing.T) {
+	t.Run("200 carries a validator but forbids storing the body", func(t *testing.T) {
 		resp := poll(t, "")
 		defer resp.Body.Close()
 		require.Equal(t, fiber.StatusOK, resp.StatusCode)
 
 		assert.NotEmpty(t, resp.Header.Get("ETag"),
 			"a conditional client gets a validator to revalidate with")
-		assert.Equal(t, "private, no-cache", resp.Header.Get("Cache-Control"),
-			"the browser may keep the body but must revalidate it, so an unchanged list collapses to a 304")
+		assert.Equal(t, "private, no-store", resp.Header.Get("Cache-Control"),
+			"the browser must not retain PII; the page keeps the validator in memory instead")
 		assert.Equal(t, fiber.MIMEApplicationJSON, resp.Header.Get("Content-Type"),
 			"the poll is a JSON API; anything sniffing the content type depends on this")
 		assert.True(t, varyHas(resp.Header.Get("Vary"), fiber.HeaderAcceptEncoding),
@@ -256,8 +256,8 @@ func TestController_GetManualCheckins_conditionalPolling(t *testing.T) {
 		assert.Empty(t, body, "a 304 must not resend the payload")
 		assert.Equal(t, etag, second.Header.Get("ETag"),
 			"the validator should be echoed so the client can keep using it")
-		assert.Equal(t, "private, no-cache", second.Header.Get("Cache-Control"),
-			"a 304 still updates cache metadata, so it must repeat the revalidation directive")
+		assert.Equal(t, "private, no-store", second.Header.Get("Cache-Control"),
+			"a 304 still updates cache metadata, so it must repeat the no-store directive")
 		assert.True(t, varyHas(second.Header.Get("Vary"), fiber.HeaderAcceptEncoding),
 			"a 304 varies on the encoding it selected")
 	})
@@ -278,6 +278,28 @@ func TestController_GetManualCheckins_conditionalPolling(t *testing.T) {
 		var payload []Checkin
 		require.NoError(t, json.NewDecoder(after.Body).Decode(&payload))
 		assert.Len(t, payload, 2)
+	})
+
+	t.Run("confirmed mutation returns 200 with a new validator", func(t *testing.T) {
+		before := poll(t, "")
+		beforeETag := before.Header.Get("ETag")
+		require.NotEmpty(t, beforeETag)
+		before.Body.Close()
+
+		req := httptest.NewRequest(http.MethodPatch,
+			"/v1/checkins/manual-checkins/manual-cache-1/checked_out_confirmed",
+			bytes.NewBufferString(`{"confirmed":true}`))
+		req.Header.Set("Content-Type", "application/json")
+		patchResp, err := app.Test(req)
+		require.NoError(t, err)
+		require.Equal(t, fiber.StatusOK, patchResp.StatusCode)
+		patchResp.Body.Close()
+
+		after := poll(t, beforeETag)
+		defer after.Body.Close()
+		assert.Equal(t, fiber.StatusOK, after.StatusCode,
+			"a confirmed manual check-in must not be hidden behind a stale validator")
+		assert.NotEqual(t, beforeETag, after.Header.Get("ETag"))
 	})
 }
 
