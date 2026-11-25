@@ -70,8 +70,8 @@ func (controller *Controller) GetManualCheckins(c *fiber.Ctx) error {
 	} else {
 		manualCheckins = sortManualCheckins(manualCheckins)
 	}
-	// private, no-store: the body carries children's names, security codes, and
-	// checkout times, so a shared tablet must not retain it in its HTTP cache
+	// private, no-store: the body carries children's names and check-in and
+	// check-out times, so a shared tablet must not retain it in its HTTP cache
 	// after logout, matching the checkouts poll.
 	c.Set(fiber.HeaderCacheControl, "private, no-store")
 	return c.JSON(repoManualCheckinSliceToOutput(manualCheckins))
@@ -247,7 +247,8 @@ func (controller *Controller) ManualCheckinsPage(c *fiber.Ctx) error {
 	html := strings.Replace(string(content), menu.Placeholder, menuHTML, 1)
 
 	// The page embeds no child data, but it is the authenticated route that loads
-	// the PII poll, so a shared tablet must not retain it after logout.
+	// the PII poll, so a shared tablet must not retain it after logout. This is
+	// defense in depth and keeps it consistent with the checkouts page.
 	c.Set(fiber.HeaderCacheControl, "private, no-store")
 	c.Type("html")
 	return c.Send([]byte(html))
