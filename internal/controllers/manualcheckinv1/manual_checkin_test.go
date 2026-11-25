@@ -187,6 +187,27 @@ func TestController_GetManualCheckins(t *testing.T) {
 	assert.Equal(t, "manual", payload[1].Source)
 }
 
+func TestController_GetManualCheckins_cacheHeaders(t *testing.T) {
+	app, store := setupAuthedApp()
+
+	testDB, cleanup, err := db.PrepareTestDB()
+	require.NoError(t, err, "Failed to prepare test DB")
+	t.Cleanup(cleanup)
+
+	controller := NewController(testDB, store)
+	controller.RegisterRoutes(app)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/checkins/manual-checkins", nil)
+	req.Header.Set("Accept", "application/json")
+	resp, err := app.Test(req)
+	require.NoError(t, err)
+	t.Cleanup(func() { resp.Body.Close() })
+	require.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	assert.Equal(t, "private, no-store", resp.Header.Get("Cache-Control"),
+		"the body is PII and must not survive in a shared device's cache")
+}
+
 func TestController_PatchManualCheckedOutConfirmed(t *testing.T) {
 	app, store := setupAuthedApp()
 
@@ -350,6 +371,22 @@ func TestController_ManualCheckinsPage_ServerRenderedMenu(t *testing.T) {
 	assert.Contains(t, html, `id="logout-link"`)
 	assert.NotContains(t, html, `id="login-link"`)
 	assert.NotContains(t, html, "<!-- kebab-menu-links -->")
+}
+
+func TestController_ManualCheckinsPage_cacheHeaders(t *testing.T) {
+	app, store := setupAuthedApp()
+	controller := NewController(nil, store)
+	controller.RegisterRoutes(app)
+
+	req := httptest.NewRequest(http.MethodGet, "/manual-checkins", nil)
+	req.Header.Set("Accept", "text/html")
+	resp, err := app.Test(req)
+	require.NoError(t, err)
+	t.Cleanup(func() { resp.Body.Close() })
+	require.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	assert.Equal(t, "private, no-store", resp.Header.Get("Cache-Control"),
+		"the page is the authenticated route that loads the PII poll and must not be stored on a shared device")
 }
 
 func setupAuthedApp() (*fiber.App, *session.Store) {
