@@ -2,9 +2,7 @@ package checkinv1
 
 import (
 	"bytes"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,6 +18,7 @@ import (
 
 	fibersession "github.com/gofiber/fiber/v2/middleware/session"
 
+	"kids-checkin/internal/controllers/conditional"
 	"kids-checkin/internal/controllers/middleware"
 	"kids-checkin/internal/controllers/session"
 	"kids-checkin/internal/repo"
@@ -190,62 +189,10 @@ func (controller *Controller) checkoutsWeb(c *fiber.Ctx) error {
 // sendCheckoutsJSON writes the poll payload with a validator so the client's 3s
 // poll can revalidate instead of re-downloading an unchanged list. The checkouts
 // page polls far more often than the data changes, so most responses collapse
-// to an empty 304.
+// to an empty 304. Vary on Accept because this route content-negotiates: the
+// same path serves HTML or this payload depending on the request's Accept header.
 func sendCheckoutsJSON(c *fiber.Ctx, payload CheckoutsResponse) error {
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "could not encode checkouts")
-	}
-
-	// Weak validator: the identity representation is hashed here, but gzip may
-	// content-code it on the way out, and a weak tag is the correct validator
-	// when a weak transformation like compression is applied (RFC 9110 8.8.1).
-	sum := sha256.Sum256(body)
-	etag := `W/"` + hex.EncodeToString(sum[:16]) + `"`
-
-	// private, no-cache: the body carries children's names, security codes, and
-	// checkout times, so only the user's browser may store it, and it must
-	// revalidate on every poll. Keeping it revalidatable is what lets the 3s
-	// poll collapse to a 304. Logout sends Clear-Site-Data: "cache" to evict the
-	// stored body. If these devices ever become shared, switch to no-store and
-	// accept a full payload on every poll.
-	c.Set(fiber.HeaderCacheControl, "private, no-cache")
-	// Vary on Accept-Encoding because compression re-encodes the body, and on
-	// Accept because this route content-negotiates: the same path serves HTML
-	// or this payload depending on the request's Accept header.
-	c.Vary(fiber.HeaderAcceptEncoding, fiber.HeaderAccept)
-	c.Set(fiber.HeaderETag, etag)
-
-	if etagMatches(c.Get(fiber.HeaderIfNoneMatch), etag) {
-		return c.SendStatus(fiber.StatusNotModified)
-	}
-
-	// Set the content type directly rather than via c.Type, which treats its
-	// argument as a file extension and would fall back to octet-stream.
-	c.Set(fiber.HeaderContentType, fiber.MIMEApplicationJSON)
-	return c.Send(body)
-}
-
-// etagMatches reports whether an If-None-Match header covers the current etag.
-// The header may carry a list and may use the weak W/ prefix on either side.
-func etagMatches(ifNoneMatch, etag string) bool {
-	if ifNoneMatch == "" {
-		return false
-	}
-	if strings.TrimSpace(ifNoneMatch) == "*" {
-		return true
-	}
-	candidate := strings.TrimPrefix(etag, "W/")
-	for _, part := range strings.Split(ifNoneMatch, ",") {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			continue
-		}
-		if strings.TrimPrefix(part, "W/") == candidate {
-			return true
-		}
-	}
-	return false
+	return conditional.SendJSON(c, payload, fiber.HeaderAccept)
 }
 
 func (controller *Controller) PatchCheckedOutConfirmed(c *fiber.Ctx) error {

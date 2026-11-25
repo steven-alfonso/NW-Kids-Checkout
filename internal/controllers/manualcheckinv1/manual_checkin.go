@@ -2,9 +2,7 @@ package manualcheckinv1
 
 import (
 	"bytes"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -14,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"kids-checkin/internal/controllers/conditional"
 	"kids-checkin/internal/controllers/middleware"
 	"kids-checkin/internal/controllers/session"
 	"kids-checkin/internal/repo"
@@ -72,64 +71,10 @@ func (controller *Controller) GetManualCheckins(c *fiber.Ctx) error {
 	} else {
 		manualCheckins = sortManualCheckins(manualCheckins)
 	}
-	return sendManualCheckinsJSON(c, repoManualCheckinSliceToOutput(manualCheckins))
-}
-
-// sendManualCheckinsJSON writes the list with a validator, so a client that
-// sends If-None-Match can revalidate instead of re-downloading an unchanged
-// list. It mirrors the checkouts poll.
-func sendManualCheckinsJSON(c *fiber.Ctx, payload []Checkin) error {
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "could not encode manual check-ins")
-	}
-
-	// Weak validator: the identity representation is hashed here, but gzip may
-	// content-code it on the way out, and a weak tag is the correct validator
-	// when a weak transformation like compression is applied (RFC 9110 8.8.1).
-	sum := sha256.Sum256(body)
-	etag := `W/"` + hex.EncodeToString(sum[:16]) + `"`
-
-	// private, no-cache: the body carries children's names and check-in and
-	// check-out times, so only the user's browser may store it, and it must
-	// revalidate on every request. Logout sends Clear-Site-Data: "cache" to
-	// evict the stored body. If these devices ever become shared, switch to
-	// no-store and accept a full payload on every request.
-	c.Set(fiber.HeaderCacheControl, "private, no-cache")
-	// The body varies once compression is applied.
-	c.Vary(fiber.HeaderAcceptEncoding)
-	c.Set(fiber.HeaderETag, etag)
-
-	if etagMatches(c.Get(fiber.HeaderIfNoneMatch), etag) {
-		return c.SendStatus(fiber.StatusNotModified)
-	}
-
-	// Set the content type directly rather than via c.Type, which treats its
-	// argument as a file extension and would fall back to octet-stream.
-	c.Set(fiber.HeaderContentType, fiber.MIMEApplicationJSON)
-	return c.Send(body)
-}
-
-// etagMatches reports whether an If-None-Match header covers the current etag.
-// The header may carry a list and may use the weak W/ prefix on either side.
-func etagMatches(ifNoneMatch, etag string) bool {
-	if ifNoneMatch == "" {
-		return false
-	}
-	if strings.TrimSpace(ifNoneMatch) == "*" {
-		return true
-	}
-	candidate := strings.TrimPrefix(etag, "W/")
-	for _, part := range strings.Split(ifNoneMatch, ",") {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			continue
-		}
-		if strings.TrimPrefix(part, "W/") == candidate {
-			return true
-		}
-	}
-	return false
+	// The list carries PII, so it is private but revalidatable; an unchanged
+	// response collapses to a 304. This endpoint always serves JSON, so
+	// Accept-Encoding is the only representation selection variable.
+	return conditional.SendJSON(c, repoManualCheckinSliceToOutput(manualCheckins))
 }
 
 func (controller *Controller) PostManualCheckin(c *fiber.Ctx) error {
