@@ -27,6 +27,7 @@ type Filter struct {
 	Limit              int
 	Recent             bool
 	IncludeUnchecked   bool
+	SortByCreated      bool
 }
 
 type ManualCheckin struct {
@@ -102,7 +103,13 @@ func (s *sqliteRepo) ListManualCheckins(ctx context.Context, filter Filter) ([]M
 		}
 	}
 
-	if filter.Recent {
+	// SortByCreated must win over Recent: the manual page asks for created
+	// order while recent is still true, and LIMIT applies after ORDER BY. A
+	// pending row has a NULL checked_out_at, which sorts last in DESC, so the
+	// unchecked rows the page exists to show would fall outside the limit.
+	if filter.SortByCreated {
+		builder = builder.OrderBy("manual_checkins.created_at DESC", "manual_checkins.id DESC")
+	} else if filter.Recent {
 		builder = builder.OrderBy("manual_checkins.checked_out_at DESC")
 	}
 
