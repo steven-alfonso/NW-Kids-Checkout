@@ -389,8 +389,7 @@ func TestController_Checkouts_conditionalPolling(t *testing.T) {
 		assert.NotEmpty(t, resp.Header.Get("ETag"),
 			"a conditional client still gets a validator to revalidate with")
 		assert.Equal(t, "private, no-store", resp.Header.Get("Cache-Control"),
-			"the body is PII and must not survive in a shared device's cache; "+
-				"no-cache would let the browser keep it and only force revalidation")
+			"the browser must not retain PII; the page keeps the validator in memory instead")
 		assert.True(t, varyHas(resp.Header.Get("Vary"), fiber.HeaderAcceptEncoding),
 			"the body varies once compression is applied")
 		assert.True(t, varyHas(resp.Header.Get("Vary"), fiber.HeaderAccept),
@@ -437,6 +436,28 @@ func TestController_Checkouts_conditionalPolling(t *testing.T) {
 		require.NoError(t, json.NewDecoder(after.Body).Decode(&payload))
 		assert.Len(t, payload.Checkins, 1)
 		assert.Equal(t, "jamie", payload.Checkins[0].FirstName)
+	})
+
+	t.Run("confirmed mutation returns 200 with a new validator", func(t *testing.T) {
+		addChild(t, "plc_confirm", "robin", "omega")
+		before := poll(t, "")
+		beforeETag := before.Header.Get("ETag")
+		require.NotEmpty(t, beforeETag)
+		before.Body.Close()
+
+		req := httptest.NewRequest(http.MethodPatch, "/v1/checkins/plc_confirm/checked_out_confirmed",
+			bytes.NewBufferString(`{"confirmed":true}`))
+		req.Header.Set("Content-Type", "application/json")
+		patchResp, err := app.Test(req)
+		require.NoError(t, err)
+		require.Equal(t, fiber.StatusOK, patchResp.StatusCode)
+		patchResp.Body.Close()
+
+		after := poll(t, beforeETag)
+		defer after.Body.Close()
+		assert.Equal(t, fiber.StatusOK, after.StatusCode,
+			"a confirmed checkout must not be hidden behind a stale validator")
+		assert.NotEqual(t, beforeETag, after.Header.Get("ETag"))
 	})
 
 	t.Run("200 declares a JSON content type", func(t *testing.T) {
@@ -551,39 +572,6 @@ func TestController_Checkouts_compressionIntegration(t *testing.T) {
 		require.NoError(t, err)
 		assert.Empty(t, body)
 	})
-}
-
-func Test_etagMatches(t *testing.T) {
-	const etag = `W/"abc123"`
-
-	tests := []struct {
-		name        string
-		ifNoneMatch string
-		want        bool
-	}{
-		{"absent", "", false},
-		{"exact weak match", `W/"abc123"`, true},
-		{"strong form of the same opaque tag", `"abc123"`, true},
-		{"one of several", `"other", W/"abc123"`, true},
-		{"several, match last", `"a", "b", W/"abc123"`, true},
-		{"wildcard", "*", true},
-		{"wildcard with padding", " * ", true},
-		{"padding around the tag", `  W/"abc123"  `, true},
-		{"trailing comma", `W/"abc123",`, true},
-		{"different tag", `W/"other"`, false},
-		{"prefix of the tag", `W/"abc12"`, false},
-		{"tag with trailing junk", `"abc123"junk`, false},
-		{"unquoted", `abc123`, false},
-		{"quoted wildcard", `"*"`, false},
-		{"lowercase weak prefix is a different token", `w/"abc123"`, false},
-		{"uppercase hex does not match", `W/"ABC123"`, false},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, tc.want, etagMatches(tc.ifNoneMatch, etag))
-		})
-	}
 }
 
 func TestController_Checkouts_filter_validation(t *testing.T) {

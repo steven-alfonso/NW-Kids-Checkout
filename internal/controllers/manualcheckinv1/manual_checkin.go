@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"kids-checkin/internal/controllers/conditional"
 	"kids-checkin/internal/controllers/middleware"
 	"kids-checkin/internal/controllers/session"
 	"kids-checkin/internal/repo"
@@ -70,11 +71,10 @@ func (controller *Controller) GetManualCheckins(c *fiber.Ctx) error {
 	} else {
 		manualCheckins = sortManualCheckins(manualCheckins)
 	}
-	// private, no-store: the body carries children's names and check-in and
-	// check-out times, so a shared tablet must not retain it in its HTTP cache
-	// after logout, matching the checkouts poll.
-	c.Set(fiber.HeaderCacheControl, "private, no-store")
-	return c.JSON(repoManualCheckinSliceToOutput(manualCheckins))
+	// The list carries PII, so it is no-store; the page keeps the validator in
+	// memory and revalidates it. This endpoint always serves JSON, so
+	// Accept-Encoding is the only representation selection variable.
+	return conditional.SendRevalidatedJSON(c, repoManualCheckinSliceToOutput(manualCheckins))
 }
 
 func (controller *Controller) PostManualCheckin(c *fiber.Ctx) error {
@@ -246,9 +246,9 @@ func (controller *Controller) ManualCheckinsPage(c *fiber.Ctx) error {
 	}
 	html := strings.Replace(string(content), menu.Placeholder, menuHTML, 1)
 
-	// The page embeds no child data, but it is the authenticated route that loads
-	// the PII poll, so a shared tablet must not retain it after logout. This is
-	// defense in depth and keeps it consistent with the checkouts page.
+	// The page embeds no child data, but it is the authenticated shell that
+	// loads the PII poll, so keep it no-store as defense in depth and consistent
+	// with the checkouts page.
 	c.Set(fiber.HeaderCacheControl, "private, no-store")
 	c.Type("html")
 	return c.Send([]byte(html))

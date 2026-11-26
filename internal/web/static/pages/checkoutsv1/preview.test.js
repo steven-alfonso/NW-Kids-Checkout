@@ -4,8 +4,10 @@ import path from 'node:path';
 import { JSDOM } from 'jsdom';
 
 const checkoutsPath = path.resolve(process.cwd(), 'internal/web/static/pages/checkoutsv1/checkouts.js');
+const apiPath = path.resolve(process.cwd(), 'internal/web/static/js/api.js');
 const previewPath = path.resolve(process.cwd(), 'internal/web/dev-assets/preview.js');
 const checkoutsScript = fs.readFileSync(checkoutsPath, 'utf8');
+const apiScript = fs.readFileSync(apiPath, 'utf8');
 const previewScript = fs.readFileSync(previewPath, 'utf8');
 const expose = `
 window.__test = {
@@ -25,7 +27,7 @@ function loadWindow() {
     });
     dom.window.setInterval = () => 0;
     dom.window.morphdom = () => {};
-    dom.window.eval(`${checkoutsScript}\n${expose}\n${previewScript}`);
+    dom.window.eval(`${apiScript}\n${checkoutsScript}\n${expose}\n${previewScript}`);
     return dom.window;
 }
 

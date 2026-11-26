@@ -33,7 +33,10 @@ function loadWindow({ url = 'http://localhost/' } = {}) {
     dom.window.fetch = async (url, opts) => {
         return {ok: true, status: 200, json: async () => [], text: async () => ''};
     };
-    dom.window.setInterval = () => 0;
+    dom.window.setInterval = (callback) => {
+        dom.window.__manualRefresh = callback;
+        return 0;
+    };
     if (!dom.window.AbortController) {
         dom.window.AbortController = class {
             constructor() {
@@ -86,6 +89,82 @@ describe('manual-checkins', () => {
         window.renderManualCheckins([]);
         const body = window.document.getElementById('manual-checkins-body');
         expect(body.innerHTML).toContain('No manual check-ins found.');
+    });
+
+    it('sends the last ETag and leaves the rendered rows alone on a 304', async () => {
+        const window = loadWindow();
+        const body = window.document.getElementById('manual-checkins-body');
+        const calls = [];
+
+        window.fetch = async (url, opts = {}) => {
+            if (!String(url).includes('/v1/checkins/manual-checkins')) {
+                return {ok: true, status: 200, json: async () => []};
+            }
+            calls.push({url: String(url), headers: opts.headers || {}});
+            if (opts.headers && opts.headers['If-None-Match']) {
+                return {
+                    ok: false,
+                    status: 304,
+                    headers: {get: (name) => (name === 'ETag' ? 'W/"m1"' : null)},
+                    json: async () => {
+                        throw new Error('a 304 must not be parsed');
+                    }
+                };
+            }
+            return {
+                ok: true,
+                status: 200,
+                headers: {get: (name) => (name === 'ETag' ? 'W/"m1"' : 'application/json')},
+                json: async () => [{public_id: 'm1', first_name: 'Ada', last_name: 'Lovelace'}]
+            };
+        };
+
+        window.document.dispatchEvent(new window.Event('DOMContentLoaded'));
+        await new Promise(resolve => setTimeout(resolve, 0));
+        expect(body.textContent).toContain('Ada');
+
+        await window.__manualRefresh();
+
+        const lastCall = calls[calls.length - 1];
+        expect(lastCall.headers['If-None-Match']).toBe('W/"m1"');
+        expect(body.textContent).toContain('Ada');
+        expect(body.textContent).toContain('Lovelace');
+    });
+
+    it('drops the ETag after a failed load so recovery fetches a full body', async () => {
+        const window = loadWindow();
+        const body = window.document.getElementById('manual-checkins-body');
+        const calls = [];
+        let failNext = false;
+
+        window.fetch = async (url, opts = {}) => {
+            if (!String(url).includes('/v1/checkins/manual-checkins')) {
+                return {ok: true, status: 200, json: async () => []};
+            }
+            calls.push({url: String(url), headers: opts.headers || {}});
+            if (failNext) throw new Error('offline');
+            return {
+                ok: true,
+                status: 200,
+                headers: {get: (name) => (name === 'ETag' ? 'W/"m1"' : 'application/json')},
+                json: async () => [{public_id: 'm1', first_name: 'Ada', last_name: 'Lovelace'}]
+            };
+        };
+
+        window.document.dispatchEvent(new window.Event('DOMContentLoaded'));
+        await new Promise(resolve => setTimeout(resolve, 0));
+        expect(body.textContent).toContain('Ada');
+
+        failNext = true;
+        await window.__manualRefresh(); // fails and replaces the rows with an error
+        expect(body.textContent).toContain('Unable to load');
+
+        failNext = false;
+        await window.__manualRefresh();
+
+        const lastCall = calls[calls.length - 1];
+        expect(lastCall.headers['If-None-Match']).toBeUndefined();
+        expect(body.textContent).toContain('Ada');
     });
 
     it('renders manual check-in rows with status and actions', () => {

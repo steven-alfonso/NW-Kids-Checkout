@@ -12,6 +12,7 @@ const manualSubmitButton = document.getElementById('manual-checkin-submit');
 const DEFAULT_CHECKED_OUT_AFTER = '-12h';
 const MANUAL_CHECKINS_REFRESH_INTERVAL_MS = 5000;
 let manualCheckinsController = null;
+let manualCheckinsEtag = null;
 
 function setPageStatus(message, tone = 'info') {
     pageStatus.classList.remove('hidden');
@@ -175,12 +176,26 @@ async function loadManualCheckins() {
     manualCheckinsController = controller;
     try {
         const query = buildManualCheckinsQuery();
-        const checkins = await globalThis.fetchJson(`${API_URL}/v1/checkins/manual-checkins?${query}`, {
-            signal: controller.signal
+        const headers = {};
+        if (manualCheckinsEtag) {
+            headers['If-None-Match'] = manualCheckinsEtag;
+        }
+        const result = await globalThis.fetchJsonWithETag(`${API_URL}/v1/checkins/manual-checkins?${query}`, {
+            signal: controller.signal,
+            headers
         });
-        renderManualCheckins(Array.isArray(checkins) ? checkins : []);
+        if (result.etag) {
+            manualCheckinsEtag = result.etag;
+        }
+        if (result.notModified) {
+            return;
+        }
+        renderManualCheckins(Array.isArray(result.data) ? result.data : []);
     } catch (error) {
         if (error?.name === 'AbortError') return;
+        // The rows are replaced with an error row below, so the old validator
+        // no longer describes what is on screen. Fetch a full body next time.
+        manualCheckinsEtag = null;
         if (error instanceof window.SessionExpiredError) {
             window.location.href = '/login?next=' + encodeURIComponent(
                 window.location.pathname + window.location.search
