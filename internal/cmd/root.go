@@ -7,6 +7,7 @@ import (
 	"kids-checkin/internal/cmd/checkins"
 	"kids-checkin/internal/cmd/checkoutsfetcher"
 	"kids-checkin/internal/cmd/location"
+	"kids-checkin/internal/cmd/sessions"
 	"kids-checkin/internal/db"
 
 	"github.com/urfave/cli/v3"
@@ -74,6 +75,11 @@ func NewCommand() *cli.Command {
 				Name:     "checkins",
 				Usage:    "Commands to manage checkins",
 				Commands: checkins.Commands,
+			},
+			{
+				Name:     "sessions",
+				Usage:    "Commands to manage sessions",
+				Commands: sessions.Commands,
 			},
 		}...),
 	}
