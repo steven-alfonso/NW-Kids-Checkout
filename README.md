@@ -8,6 +8,7 @@ The project is structured as a command-line application with commands:
 - `checkins delete-old`: Deletes old checkins/manual checkins older than a duration.
 - `checkins seed-preview`: Deletes all current checkins/manual checkins and seeds preview data (DB equivalent of `preview.js`).
 - `locations upsert-location`: Upserts a location from Planning Center.
+- `sessions purge`: Deletes every session, logging all users out; requires `--force`.
 
 ## Requirements
 - [Golang](https://go.dev/) 1.27.3+

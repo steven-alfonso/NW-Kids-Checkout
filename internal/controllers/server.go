@@ -29,6 +29,7 @@ import (
 	"kids-checkin/internal/controllers/session"
 	"kids-checkin/internal/db"
 	"kids-checkin/internal/repo/metrics"
+	sessionrepo "kids-checkin/internal/repo/session"
 	"kids-checkin/internal/web/menu"
 	"kids-checkin/internal/web/static"
 
@@ -193,6 +194,7 @@ func StartServer(ctx context.Context, port int, dbFilepath string) error {
 	// spelling so both connections name one file.
 	storage := sqlite3.New(sqlite3.Config{
 		Database: dbFilepath,
+		Table:    sessionrepo.Table,
 		Reset:    false, // Don't clear sessions on start
 	})
 
