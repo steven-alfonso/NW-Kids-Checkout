@@ -187,6 +187,101 @@ func TestNewServerApp_NoIndexEverywhere(t *testing.T) {
 	}
 }
 
+func TestCacheClearingIntegration(t *testing.T) {
+	testDB, cleanup, err := db.PrepareTestDB()
+	require.NoError(t, err)
+	t.Cleanup(cleanup)
+
+	store := session.New()
+	app := newServerApp(testDB, store, nil)
+
+	// Authenticate once through the real session store, then reuse the cookie.
+	app.Get("/__test/session", func(c *fiber.Ctx) error {
+		sess, err := store.Get(c)
+		if err != nil {
+			return err
+		}
+		sess.Set("authenticated", true)
+		sess.Set("role", "admin")
+		return sess.Save()
+	})
+
+	sessionResp, err := app.Test(httptest.NewRequestWithContext(
+		t.Context(), http.MethodGet, "/__test/session", nil,
+	))
+	require.NoError(t, err)
+	sessionResp.Body.Close()
+	require.Equal(t, fiber.StatusOK, sessionResp.StatusCode)
+	cookies := sessionResp.Cookies()
+	require.NotEmpty(t, cookies)
+
+	request := func(method, path string) *http.Request {
+		req := httptest.NewRequestWithContext(t.Context(), method, path, nil)
+		for _, cookie := range cookies {
+			req.AddCookie(cookie)
+		}
+		return req
+	}
+
+	t.Run("checkouts JSON is no-store and revalidates to a no-store 304", func(t *testing.T) {
+		firstReq := request(http.MethodGet, "/v1/checkins/checkouts")
+		firstReq.Header.Set("Accept", "application/json")
+		first, err := app.Test(firstReq)
+		require.NoError(t, err)
+		defer first.Body.Close()
+		require.Equal(t, fiber.StatusOK, first.StatusCode)
+		assert.Equal(t, "private, no-store", first.Header.Get("Cache-Control"))
+		etag := first.Header.Get("ETag")
+		require.NotEmpty(t, etag)
+
+		secondReq := request(http.MethodGet, "/v1/checkins/checkouts")
+		secondReq.Header.Set("Accept", "application/json")
+		secondReq.Header.Set("If-None-Match", etag)
+		second, err := app.Test(secondReq)
+		require.NoError(t, err)
+		defer second.Body.Close()
+		assert.Equal(t, fiber.StatusNotModified, second.StatusCode)
+		assert.Equal(t, etag, second.Header.Get("ETag"))
+		assert.Equal(t, "private, no-store", second.Header.Get("Cache-Control"),
+			"a 304 must repeat no-store so it cannot become cacheable")
+	})
+
+	t.Run("manual check-ins JSON is no-store", func(t *testing.T) {
+		req := request(http.MethodGet, "/v1/checkins/manual-checkins")
+		req.Header.Set("Accept", "application/json")
+		resp, err := app.Test(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		require.Equal(t, fiber.StatusOK, resp.StatusCode)
+		assert.Equal(t, "private, no-store", resp.Header.Get("Cache-Control"))
+		assert.NotEmpty(t, resp.Header.Get("ETag"))
+	})
+
+	t.Run("authenticated HTML pages are no-store", func(t *testing.T) {
+		for _, path := range []string{"/v1/checkins/checkouts", "/manual-checkins"} {
+			t.Run(path, func(t *testing.T) {
+				req := request(http.MethodGet, path)
+				req.Header.Set("Accept", "text/html")
+				resp, err := app.Test(req)
+				require.NoError(t, err)
+				defer resp.Body.Close()
+				require.Equal(t, fiber.StatusOK, resp.StatusCode)
+				assert.Equal(t, "private, no-store", resp.Header.Get("Cache-Control"))
+			})
+		}
+	})
+
+	t.Run("logout asks the browser to clear the cache", func(t *testing.T) {
+		resp, err := app.Test(request(http.MethodGet, "/logout"))
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		require.Equal(t, fiber.StatusFound, resp.StatusCode)
+		assert.Equal(t, "/login", resp.Header.Get("Location"))
+		assert.Equal(t, `"cache"`, resp.Header.Get("Clear-Site-Data"))
+		assert.Equal(t, []string{"noindex"}, resp.Header.Values("X-Robots-Tag"))
+	})
+}
+
 func TestParseCookieSecure(t *testing.T) {
 	t.Run("empty defaults to false", func(t *testing.T) {
 		assert.False(t, parseCookieSecure(""))
