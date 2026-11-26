@@ -1,7 +1,9 @@
 package sessions
 
 import (
+	"bytes"
 	"database/sql"
+	"log/slog"
 	"path/filepath"
 	"strconv"
 	"testing"
@@ -69,7 +71,15 @@ func Test_purgeCmd_deletesEverySession(t *testing.T) {
 	require.NoError(t, store.Set("session-1", []byte("signed-session"), 24*time.Hour))
 	require.NoError(t, store.Close())
 
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
 	require.NoError(t, purgeCmd(t.Context(), newPurgeCommand(t, dbFile, true)))
+
+	assert.Contains(t, logs.String(), "sessions_deleted=1")
+	assert.Contains(t, logs.String(), "db_file="+dbFile)
 
 	// The table still exists; only its rows are gone.
 	assert.Equal(t, 0, countSessions(t, dbFile))
@@ -107,5 +117,17 @@ func Test_purgeCmd_refusesMissingDatabase(t *testing.T) {
 		assert.Contains(t, err.Error(), "does not exist")
 		require.NoDirExists(t, dir, "a failed purge must not create the database directory")
 		require.NoFileExists(t, dbFile)
+	})
+
+	t.Run("SQLite URI or in-memory database", func(t *testing.T) {
+		for _, dbFile := range []string{
+			":memory:",
+			"file::memory:?cache=shared",
+			"file:/tmp/kids-checkin.db",
+		} {
+			err := purgeCmd(t.Context(), newPurgeCommand(t, dbFile, true))
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "pass a filesystem path, not a SQLite URI or in-memory database")
+		}
 	})
 }

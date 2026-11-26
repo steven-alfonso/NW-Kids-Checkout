@@ -16,14 +16,13 @@ import (
 func TestRepo_Purge(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "kids-checkin.db")
 
-	store := sqlite3.New(sqlite3.Config{Database: dbPath})
+	store := sqlite3.New(sqlite3.Config{Database: dbPath, Table: Table})
 	defer store.Close()
 	require.NoError(t, store.Set("session-1", []byte("signed-session"), 24*time.Hour))
 
-	result, err := NewRepo(store.Conn()).Purge(t.Context())
+	deleted, err := NewRepo(store.Conn()).Purge(t.Context())
 	require.NoError(t, err)
-	assert.Equal(t, int64(1), result.Before)
-	assert.Equal(t, int64(0), result.After)
+	assert.Equal(t, int64(1), deleted)
 
 	// The table still exists; only its rows are gone.
 	var count int
@@ -47,6 +46,6 @@ func TestRepo_Purge_missingTable(t *testing.T) {
 
 	_, err = NewRepo(database).Purge(t.Context())
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "count sessions before delete")
+	assert.Contains(t, err.Error(), "deleting sessions")
 	assert.Contains(t, err.Error(), "no such table")
 }
