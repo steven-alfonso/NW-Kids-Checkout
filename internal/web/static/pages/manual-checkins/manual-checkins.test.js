@@ -84,6 +84,52 @@ describe('manual-checkins', () => {
         expect(window.formatCheckedOutAt(value)).toBe(expected);
     });
 
+    it('clears the rendered rows and refetches on a bfcache restore', async () => {
+        const window = loadWindow();
+        const body = window.document.getElementById('manual-checkins-body');
+        window.renderManualCheckins([
+            {public_id: 'a1', first_name: 'Ada', last_name: 'Lovelace', checked_out_at: '2024-01-01T00:00:00Z'}
+        ]);
+        expect(body.textContent).toContain('Ada');
+
+        let fetchCount = 0;
+        window.fetch = async (url) => {
+            if (String(url).includes('/v1/checkins/manual-checkins')) fetchCount++;
+            return {ok: true, status: 200, json: async () => []};
+        };
+
+        const event = new window.Event('pageshow');
+        Object.defineProperty(event, 'persisted', {value: true});
+        window.dispatchEvent(event);
+
+        // Rows are gone before the refetch resolves, so the stale name cannot
+        // stay on screen while the API is asked about the session.
+        expect(body.childNodes.length).toBe(0);
+        await new Promise(resolve => setTimeout(resolve, 0));
+        expect(fetchCount).toBeGreaterThan(0);
+    });
+
+    it('leaves the rendered rows alone on a pageshow that is not a bfcache restore', () => {
+        const window = loadWindow();
+        const body = window.document.getElementById('manual-checkins-body');
+        window.renderManualCheckins([
+            {public_id: 'a1', first_name: 'Ada', last_name: 'Lovelace', checked_out_at: '2024-01-01T00:00:00Z'}
+        ]);
+
+        let fetchCount = 0;
+        window.fetch = async (url) => {
+            if (String(url).includes('/v1/checkins/manual-checkins')) fetchCount++;
+            return {ok: true, status: 200, json: async () => []};
+        };
+
+        const event = new window.Event('pageshow');
+        Object.defineProperty(event, 'persisted', {value: false});
+        window.dispatchEvent(event);
+
+        expect(body.textContent).toContain('Ada');
+        expect(fetchCount).toBe(0);
+    });
+
     it('renders a zero-state message', () => {
         const window = loadWindow();
         window.renderManualCheckins([]);

@@ -30,7 +30,8 @@ window.__test = {
     getFlashChildIds: () => flashChildIds,
     setFlashChildIds: (ids) => { flashChildIds = ids; },
     clearFlashStyles: () => clearFlashStyles(),
-    isVisibleFocusTarget: (element) => isVisibleFocusTarget(element)
+    isVisibleFocusTarget: (element) => isVisibleFocusTarget(element),
+    handlePageshow: (event) => handlePageshow(event)
 };
 `;
 
@@ -2380,6 +2381,54 @@ describe('checkoutsv1/checkouts', () => {
         expect(first).toEqual(['a', 'b']);
         await w.fetchChildrenData();
         expect(w.__test.getVisibleChildren().map((c) => c.planning_center_id)).toEqual(first);
+    });
+
+    describe('back/forward cache restore', () => {
+        function persistedEvent(w, persisted) {
+            const event = new w.Event('pageshow');
+            Object.defineProperty(event, 'persisted', { value: persisted });
+            return event;
+        }
+
+        function seededWindow() {
+            let fetchCount = 0;
+            const w = loadWindow({
+                html: '<!doctype html><html><body><div id="children-list"></div></body></html>',
+                fetchImpl: async () => {
+                    fetchCount++;
+                    return { ok: true, json: async () => [] };
+                }
+            });
+            w.__test.setDom();
+            w.__test.setChildrenData([pcChild('a')]);
+            w.__test.updateUI();
+            expect(w.document.getElementById('children-list').textContent).toContain('a');
+            return { w, fetchCount: () => fetchCount };
+        }
+
+        it('clears the rendered children and refetches when persisted', async () => {
+            const { w, fetchCount } = seededWindow();
+
+            w.dispatchEvent(persistedEvent(w, true));
+
+            // Data and DOM are gone before the refetch resolves, so the stale
+            // names cannot stay on screen while the API is asked about the
+            // session.
+            expect(w.__test.getChildrenData()).toEqual([]);
+            expect(w.document.getElementById('children-list').childNodes.length).toBe(0);
+            await new Promise((resolve) => setTimeout(resolve, 0));
+            expect(fetchCount()).toBeGreaterThan(0);
+        });
+
+        it('leaves the rendered children alone when not persisted', () => {
+            const { w, fetchCount } = seededWindow();
+
+            w.dispatchEvent(persistedEvent(w, false));
+
+            expect(w.__test.getChildrenData()).toHaveLength(1);
+            expect(w.document.getElementById('children-list').textContent).toContain('a');
+            expect(fetchCount()).toBe(0);
+        });
     });
 
     describe('shipped checkouts page', () => {

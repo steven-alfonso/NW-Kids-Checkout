@@ -1332,6 +1332,22 @@ function updateAllTimes() {
     updateOverdueUI();
 }
 
+// A back/forward cache restore brings back the DOM from before the navigation,
+// including children's names and checkout data. The response headers cannot
+// reach the bfcache, so drop the rendered rows and let the API decide whether
+// the session is still valid.
+function handlePageshow(event) {
+    if (!event || !event.persisted) return;
+    childrenData = [];
+    knownChildIds = new Set();
+    lastListSignature = null;
+    flashChildIds = new Set();
+    if (dom.childrenList) dom.childrenList.replaceChildren();
+    fetchChildrenData();
+}
+
+window.addEventListener('pageshow', handlePageshow);
+
 // Initialize and start periodic updates
 document.addEventListener('DOMContentLoaded', function () {
     if (window.__checkoutsInitialized) return;
