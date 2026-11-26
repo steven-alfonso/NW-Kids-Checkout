@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -290,6 +291,76 @@ func TestController_GetManualCheckins_queryCap(t *testing.T) {
 		assert.Equal(t, fiber.StatusBadRequest, status)
 		assert.Contains(t, body, "checked_out_after must be within the last 24 hours")
 	})
+}
+
+func TestController_GetManualCheckins_createdSortKeepsNewestPendingRows(t *testing.T) {
+	app, store := setupAuthedApp()
+
+	testDB, cleanup, err := db.PrepareTestDB()
+	require.NoError(t, err, "Failed to prepare test DB")
+	t.Cleanup(cleanup)
+
+	controller := NewController(testDB, store)
+	controller.RegisterRoutes(app)
+
+	_, err = squirrel.Delete("manual_checkins").RunWith(testDB).ExecContext(t.Context())
+	require.NoError(t, err)
+
+	// Seed more pending rows than the cap. They have a NULL checked_out_at, so
+	// ordering by checked_out_at sorts them last. Fill the 100 slots with
+	// recent checked-out rows so that ordering loses every pending row, which
+	// is the failure the created-order branch prevents.
+	const pendingCount = 101
+	base := time.Now().UTC().Add(-3 * time.Hour)
+	for i := 1; i <= pendingCount; i++ {
+		_, err := squirrel.Insert("manual_checkins").
+			Columns("created_at", "public_id", "first_name", "last_name").
+			Values(base.Add(time.Duration(i)*time.Second),
+				fmt.Sprintf("pending-%03d", i),
+				"Pending",
+				fmt.Sprintf("Row%03d", i)).
+			RunWith(testDB).
+			ExecContext(t.Context())
+		require.NoError(t, err)
+	}
+
+	// Older than every pending row by created_at, and recent enough by
+	// checked_out_at to match the -12h filter.
+	const checkedOutCount = 100
+	for i := 1; i <= checkedOutCount; i++ {
+		_, err := squirrel.Insert("manual_checkins").
+			Columns("created_at", "public_id", "first_name", "last_name", "checked_out_at").
+			Values(base.Add(-time.Hour).Add(time.Duration(i)*time.Second),
+				fmt.Sprintf("checked-out-%03d", i),
+				"Recent",
+				fmt.Sprintf("Checkout%03d", i),
+				time.Now().UTC().Add(-time.Duration(i)*time.Second)).
+			RunWith(testDB).
+			ExecContext(t.Context())
+		require.NoError(t, err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet,
+		"/v1/checkins/manual-checkins?include_unchecked=true&sort=created&checked_out_after=-12h", nil)
+	req.Header.Set("Accept", "application/json")
+	resp, err := app.Test(req)
+	require.NoError(t, err)
+	require.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	var payload []Checkin
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&payload))
+	require.NotEmpty(t, payload)
+	assert.LessOrEqual(t, len(payload), 100, "the response must stay within the default cap")
+
+	foundNewestPending := false
+	for _, row := range payload {
+		if row.PublicID == "pending-101" {
+			foundNewestPending = true
+			break
+		}
+	}
+	assert.True(t, foundNewestPending,
+		"the newest pending check-in must survive the limit when created order is requested")
 }
 
 func TestController_GetManualCheckins_conditionalPolling(t *testing.T) {

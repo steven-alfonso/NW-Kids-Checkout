@@ -331,9 +331,10 @@ func buildManualFilter(c *fiber.Ctx) (manualcheckin.Filter, error) {
 	now := time.Now()
 
 	filter := manualcheckin.Filter{
-		FirstName: c.Query("first_name"),
-		LastName:  c.Query("last_name"),
-		Limit:     defaultManualCheckinsLimit,
+		FirstName:     c.Query("first_name"),
+		LastName:      c.Query("last_name"),
+		Limit:         defaultManualCheckinsLimit,
+		SortByCreated: c.Query("sort") == "created",
 	}
 
 	if includeUnchecked := c.Query("include_unchecked"); includeUnchecked != "" {
