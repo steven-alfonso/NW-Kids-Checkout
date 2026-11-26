@@ -2429,6 +2429,78 @@ describe('checkoutsv1/checkouts', () => {
             expect(w.document.getElementById('children-list').textContent).toContain('a');
             expect(fetchCount()).toBe(0);
         });
+
+        it('drops the validator so the refetch gets a full body', async () => {
+            const calls = [];
+            const w = loadWindow({
+                html: '<!doctype html><html><body><div id="children-list"></div></body></html>',
+                fetchImpl: async (url, options = {}) => {
+                    calls.push(options.headers || {});
+                    return {
+                        ok: true,
+                        status: 200,
+                        headers: { get: (name) => (name === 'ETag' ? 'W/"v1"' : 'application/json') },
+                        json: async () => [pcChild('a')]
+                    };
+                }
+            });
+
+            w.document.dispatchEvent(new w.Event('DOMContentLoaded'));
+            await new Promise((resolve) => setTimeout(resolve, 10));
+            const before = calls.length;
+            expect(before).toBeGreaterThan(0);
+            expect(w.document.getElementById('children-list').textContent).toContain('a');
+
+            w.dispatchEvent(persistedEvent(w, true));
+            await new Promise((resolve) => setTimeout(resolve, 10));
+
+            // The pre-navigation validator no longer describes what is on
+            // screen, so sending it would earn a 304 against the cleared board.
+            expect(calls).toHaveLength(before + 1);
+            expect(calls[calls.length - 1]['If-None-Match']).toBeUndefined();
+            expect(w.document.getElementById('children-list').textContent).toContain('a');
+        });
+
+        it('clears the overdue drawer and badge state', async () => {
+            const w = loadWindow({
+                html: `<!doctype html><html><body>
+                    <div id="children-list"></div>
+                    <button id="overdue-badge" class="hidden"></button>
+                    <div id="overdue-sheet" class="translate-y-full" role="dialog" tabindex="-1" inert></div>
+                    <div id="overdue-sheet-backdrop" class="hidden"></div>
+                    <div id="overdue-sheet-list"></div>
+                    <span id="overdue-sheet-count"></span>
+                </body></html>`,
+                fetchImpl: async () => ({
+                    ok: true,
+                    status: 200,
+                    headers: { get: () => null },
+                    json: async () => []
+                })
+            });
+            w.document.dispatchEvent(new w.Event('DOMContentLoaded'));
+            await new Promise((resolve) => setTimeout(resolve, 10));
+
+            w.__test.setChildrenData([overdueChild('a', 6)]);
+            w.updateUI();
+            w.updateOverdueUI();
+            w.openOverdueSheet();
+            expect(w.document.getElementById('overdue-sheet-list').childNodes.length).toBeGreaterThan(0);
+            expect(w.document.getElementById('overdue-badge').classList.contains('hidden')).toBe(false);
+
+            w.dispatchEvent(persistedEvent(w, true));
+
+            // Synchronously, before the refetch resolves: the drawer and badge
+            // must not keep showing the restored rows and count.
+            expect(w.document.getElementById('overdue-sheet-list').childNodes.length).toBe(0);
+            expect(w.document.getElementById('overdue-badge').classList.contains('hidden')).toBe(true);
+            expect(w.document.getElementById('overdue-sheet-count').textContent).toBe('No overdue');
+
+            // And the refetch's empty payload must re-render the drawer rather
+            // than leaving the old markup behind under a stale signature.
+            await new Promise((resolve) => setTimeout(resolve, 10));
+            expect(w.document.getElementById('overdue-sheet-list').textContent).toContain('No overdue checkouts');
+        });
     });
 
     describe('shipped checkouts page', () => {

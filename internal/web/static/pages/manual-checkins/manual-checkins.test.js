@@ -87,16 +87,26 @@ describe('manual-checkins', () => {
     it('clears the rendered rows and refetches on a bfcache restore', async () => {
         const window = loadWindow();
         const body = window.document.getElementById('manual-checkins-body');
-        window.renderManualCheckins([
-            {public_id: 'a1', first_name: 'Ada', last_name: 'Lovelace', checked_out_at: '2024-01-01T00:00:00Z'}
-        ]);
-        expect(body.textContent).toContain('Ada');
-
-        let fetchCount = 0;
-        window.fetch = async (url) => {
-            if (String(url).includes('/v1/checkins/manual-checkins')) fetchCount++;
-            return {ok: true, status: 200, json: async () => []};
+        const calls = [];
+        window.fetch = async (url, opts = {}) => {
+            if (!String(url).includes('/v1/checkins/manual-checkins')) {
+                return {ok: true, status: 200, json: async () => []};
+            }
+            calls.push(opts.headers || {});
+            return {
+                ok: true,
+                status: 200,
+                headers: {get: (name) => (name === 'ETag' ? 'W/"m1"' : 'application/json')},
+                json: async () => [
+                    {public_id: 'a1', first_name: 'Ada', last_name: 'Lovelace', checked_out_at: '2024-01-01T00:00:00Z'}
+                ]
+            };
         };
+
+        await new Promise(resolve => setTimeout(resolve, 10));
+        const before = calls.length;
+        expect(before).toBeGreaterThan(0);
+        expect(body.textContent).toContain('Ada');
 
         const event = new window.Event('pageshow');
         Object.defineProperty(event, 'persisted', {value: true});
@@ -105,8 +115,13 @@ describe('manual-checkins', () => {
         // Rows are gone before the refetch resolves, so the stale name cannot
         // stay on screen while the API is asked about the session.
         expect(body.childNodes.length).toBe(0);
-        await new Promise(resolve => setTimeout(resolve, 0));
-        expect(fetchCount).toBeGreaterThan(0);
+        await new Promise(resolve => setTimeout(resolve, 10));
+
+        // The validator described the pre-navigation payload, so sending it
+        // would earn a 304 against the cleared rows.
+        expect(calls.length).toBeGreaterThan(before);
+        expect(calls.slice(before).every(headers => headers['If-None-Match'] === undefined)).toBe(true);
+        expect(body.textContent).toContain('Ada');
     });
 
     it('leaves the rendered rows alone on a pageshow that is not a bfcache restore', () => {

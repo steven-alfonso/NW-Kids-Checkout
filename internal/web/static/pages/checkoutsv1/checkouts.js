@@ -1341,8 +1341,29 @@ function handlePageshow(event) {
     childrenData = [];
     knownChildIds = new Set();
     lastListSignature = null;
-    flashChildIds = new Set();
+    clearFlashStyles();
+    // The validator describes the pre-navigation payload, which is no longer
+    // what is on screen. Sending it would earn a 304 and leave the cleared
+    // board showing "No children called yet".
+    checkoutsEtag = null;
+    if (childrenFetchController) childrenFetchController.abort();
+    API_CALL_BLOCKS.fetchChildrenData = false;
     if (dom.childrenList) dom.childrenList.replaceChildren();
+
+    // The overdue drawer keeps its own DOM and render state; clearing only the
+    // main list would leave the restored rows visible in the drawer.
+    if (dom.overdueSheetList) dom.overdueSheetList.replaceChildren();
+    lastSheetSignature = null;
+    drawerRenderedIds = new Set();
+    overdueRetainedIds.clear();
+    lastOverdueCount = 0;
+    const countEl = document.getElementById('overdue-sheet-count');
+    if (countEl) countEl.textContent = 'No overdue';
+    if (dom.overdueBadge) {
+        dom.overdueBadge.classList.add('hidden');
+        dom.overdueBadge.textContent = 'overdue';
+    }
+
     fetchChildrenData();
 }
 
