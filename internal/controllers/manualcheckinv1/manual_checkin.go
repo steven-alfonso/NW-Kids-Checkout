@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"mime"
 	"sort"
@@ -24,6 +25,16 @@ import (
 )
 
 const defaultCheckedOutAfterDelta = -12 * time.Hour
+
+// The repo skips its LIMIT clause when filter.Limit is 0, so an unbounded
+// caller gets the whole table -- every child's name and checkout time. Bound
+// both an omitted ?limit= and an explicit one, and keep checked_out_after
+// within the last 24 hours.
+const (
+	defaultManualCheckinsLimit = 100
+	maxManualCheckinsLimit     = 1000
+	maxManualCheckinsWindow    = 24 * time.Hour
+)
 
 type Controller struct {
 	manualRepo   manualcheckin.Repo
@@ -315,9 +326,14 @@ func sortManualCheckinsByCreated(checkins []manualcheckin.ManualCheckin) []manua
 }
 
 func buildManualFilter(c *fiber.Ctx) (manualcheckin.Filter, error) {
+	// One anchor for both duration params and the window cutoff, so exactly
+	// -24h sits on the boundary instead of just outside it.
+	now := time.Now()
+
 	filter := manualcheckin.Filter{
 		FirstName: c.Query("first_name"),
 		LastName:  c.Query("last_name"),
+		Limit:     defaultManualCheckinsLimit,
 	}
 
 	if includeUnchecked := c.Query("include_unchecked"); includeUnchecked != "" {
@@ -344,8 +360,13 @@ func buildManualFilter(c *fiber.Ctx) (manualcheckin.Filter, error) {
 		if err != nil {
 			return manualcheckin.Filter{}, errors.New("cannot parse limit")
 		}
-		if limitInt < 0 {
+		// <= 0, not < 0: the repo treats Limit 0 as no limit at all, so
+		// accepting it returned the whole manual_checkins table.
+		if limitInt <= 0 {
 			return manualcheckin.Filter{}, errors.New("limit must be positive")
+		}
+		if limitInt > maxManualCheckinsLimit {
+			return manualcheckin.Filter{}, fmt.Errorf("limit must not exceed %d", maxManualCheckinsLimit)
 		}
 		filter.Limit = limitInt
 	}
@@ -353,7 +374,7 @@ func buildManualFilter(c *fiber.Ctx) (manualcheckin.Filter, error) {
 	if cobStr := c.Query("checked_out_before"); cobStr != "" {
 		ago, err := time.ParseDuration(cobStr)
 		if err == nil {
-			filter.CheckedOutAtBefore = time.Now().Add(ago)
+			filter.CheckedOutAtBefore = now.Add(ago)
 		} else {
 			filter.CheckedOutAtBefore, err = time.ParseInLocation(time.RFC3339, cobStr, time.UTC)
 			if err != nil {
@@ -365,12 +386,18 @@ func buildManualFilter(c *fiber.Ctx) (manualcheckin.Filter, error) {
 	if coaStr := c.Query("checked_out_after"); coaStr != "" {
 		ago, err := time.ParseDuration(coaStr)
 		if err == nil {
-			filter.CheckedOutAtAfter = time.Now().Add(ago)
+			filter.CheckedOutAtAfter = now.Add(ago)
 		} else {
 			filter.CheckedOutAtAfter, err = time.ParseInLocation(time.RFC3339, coaStr, time.UTC)
 			if err != nil {
 				return manualcheckin.Filter{}, errors.New("cannot parse checked_out_after")
 			}
+		}
+
+		// Future times are fine; only a non-zero value older than the window
+		// (the exact boundary included as accepted) is rejected.
+		if !filter.CheckedOutAtAfter.IsZero() && filter.CheckedOutAtAfter.Before(now.Add(-maxManualCheckinsWindow)) {
+			return manualcheckin.Filter{}, errors.New("checked_out_after must be within the last 24 hours")
 		}
 	}
 

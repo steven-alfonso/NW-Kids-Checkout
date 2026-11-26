@@ -188,6 +188,110 @@ func TestController_GetManualCheckins(t *testing.T) {
 	assert.Equal(t, "manual", payload[1].Source)
 }
 
+func TestController_GetManualCheckins_queryCap(t *testing.T) {
+	app, store := setupAuthedApp()
+
+	testDB, cleanup, err := db.PrepareTestDB()
+	require.NoError(t, err, "Failed to prepare test DB")
+	t.Cleanup(cleanup)
+
+	controller := NewController(testDB, store)
+	controller.RegisterRoutes(app)
+
+	_, err = squirrel.Delete("manual_checkins").RunWith(testDB).ExecContext(t.Context())
+	require.NoError(t, err)
+
+	// buildManualFilter is unexported but this package can exercise it directly.
+	filterApp := fiber.New()
+	filterApp.Get("/filter", func(c *fiber.Ctx) error {
+		f, err := buildManualFilter(c)
+		if err != nil {
+			return err
+		}
+		return c.JSON(fiber.Map{"limit": f.Limit})
+	})
+	decodeLimit := func(t *testing.T, target string) int {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, target, nil)
+		resp, err := filterApp.Test(req)
+		require.NoError(t, err)
+		require.Equal(t, fiber.StatusOK, resp.StatusCode)
+		defer resp.Body.Close()
+
+		var payload struct {
+			Limit int `json:"limit"`
+		}
+		require.NoError(t, json.NewDecoder(resp.Body).Decode(&payload))
+		return payload.Limit
+	}
+
+	// manual-checkins.js sends no limit on every poll; an omitted limit must
+	// get a bound rather than the whole table.
+	t.Run("omitted limit defaults to 100", func(t *testing.T) {
+		assert.Equal(t, 100, decodeLimit(t, "/filter"))
+	})
+
+	t.Run("explicit limit overrides the default", func(t *testing.T) {
+		assert.Equal(t, 5, decodeLimit(t, "/filter?limit=5"))
+	})
+
+	t.Run("limit at the maximum is accepted", func(t *testing.T) {
+		assert.Equal(t, 1000, decodeLimit(t, "/filter?limit=1000"))
+	})
+
+	pollManual := func(t *testing.T, target string) (int, string) {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, target, nil)
+		req.Header.Set("Accept", "application/json")
+		resp, err := app.Test(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		body, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		return resp.StatusCode, string(body)
+	}
+
+	for _, target := range []string{
+		"/v1/checkins/manual-checkins?limit=0",
+		"/v1/checkins/manual-checkins?limit=-1",
+		"/v1/checkins/manual-checkins?limit=abc",
+		"/v1/checkins/manual-checkins?limit=1001",
+	} {
+		t.Run("rejects "+target, func(t *testing.T) {
+			status, _ := pollManual(t, target)
+			assert.Equal(t, fiber.StatusBadRequest, status)
+		})
+	}
+
+	t.Run("checked_out_after within 24 hours returns 200", func(t *testing.T) {
+		status, _ := pollManual(t, "/v1/checkins/manual-checkins?checked_out_after=-31m")
+		assert.Equal(t, fiber.StatusOK, status)
+	})
+
+	t.Run("checked_out_after at the 24 hour boundary returns 200", func(t *testing.T) {
+		status, _ := pollManual(t, "/v1/checkins/manual-checkins?checked_out_after=-24h")
+		assert.Equal(t, fiber.StatusOK, status)
+	})
+
+	t.Run("future checked_out_after returns 200", func(t *testing.T) {
+		status, _ := pollManual(t, "/v1/checkins/manual-checkins?checked_out_after=1h")
+		assert.Equal(t, fiber.StatusOK, status)
+	})
+
+	t.Run("checked_out_after older than 24 hours returns 400", func(t *testing.T) {
+		status, body := pollManual(t, "/v1/checkins/manual-checkins?checked_out_after=-100000h")
+		assert.Equal(t, fiber.StatusBadRequest, status)
+		assert.Contains(t, body, "checked_out_after must be within the last 24 hours")
+	})
+
+	t.Run("far-past RFC3339 checked_out_after returns 400", func(t *testing.T) {
+		farPast := time.Now().UTC().Add(-48 * time.Hour).Format(time.RFC3339)
+		status, body := pollManual(t, "/v1/checkins/manual-checkins?checked_out_after="+farPast)
+		assert.Equal(t, fiber.StatusBadRequest, status)
+		assert.Contains(t, body, "checked_out_after must be within the last 24 hours")
+	})
+}
+
 func TestController_GetManualCheckins_conditionalPolling(t *testing.T) {
 	app, store := setupAuthedApp()
 
