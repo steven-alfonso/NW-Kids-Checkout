@@ -134,6 +134,31 @@ func TestController_PostManualCheckin(t *testing.T) {
 	})
 }
 
+func Test_checkedOutAfterAllowed(t *testing.T) {
+	now := time.Date(2026, 11, 24, 12, 0, 0, 0, time.UTC)
+
+	tests := []struct {
+		name            string
+		checkedOutAfter time.Time
+		bypassed        bool
+		want            bool
+	}{
+		{"zero time means omitted", time.Time{}, false, true},
+		{"future time", now.Add(time.Hour), false, true},
+		{"within the window", now.Add(-31 * time.Minute), false, true},
+		{"exactly 24 hours ago", now.Add(-maxManualCheckinsWindow), false, true},
+		{"just older than 24 hours", now.Add(-maxManualCheckinsWindow - time.Nanosecond), false, false},
+		{"far past", now.Add(-100000 * time.Hour), false, false},
+		{"far past with bypass", now.Add(-100000 * time.Hour), true, true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, checkedOutAfterAllowed(tc.checkedOutAfter, now, tc.bypassed))
+		})
+	}
+}
+
 func TestController_GetManualCheckins(t *testing.T) {
 	app, store := setupAuthedApp()
 

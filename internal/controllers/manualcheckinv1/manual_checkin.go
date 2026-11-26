@@ -8,9 +8,11 @@ import (
 	"fmt"
 	"io"
 	"mime"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"kids-checkin/internal/controllers/conditional"
@@ -35,6 +37,18 @@ const (
 	maxManualCheckinsLimit     = 1000
 	maxManualCheckinsWindow    = 24 * time.Hour
 )
+
+// checkedOutAfterAllowed reports whether t is within the allowed window.
+// A zero time means omitted, future times are fine, and the dev bypass
+// accepts anything.
+func checkedOutAfterAllowed(t, now time.Time, bypassed bool) bool {
+	return bypassed || t.IsZero() || !t.Before(now.Add(-maxManualCheckinsWindow))
+}
+
+// The dev bypass is read once, on first use. Leave it unset in production.
+var checkedOutAfterBypassed = sync.OnceValue(func() bool {
+	return strings.EqualFold(strings.TrimSpace(os.Getenv("BYPASS_CHECKED_OUT_AFTER_LIMIT")), "true")
+})
 
 type Controller struct {
 	manualRepo   manualcheckin.Repo
@@ -395,9 +409,7 @@ func buildManualFilter(c *fiber.Ctx) (manualcheckin.Filter, error) {
 			}
 		}
 
-		// Future times are fine; only a non-zero value older than the window
-		// (the exact boundary included as accepted) is rejected.
-		if !filter.CheckedOutAtAfter.IsZero() && filter.CheckedOutAtAfter.Before(now.Add(-maxManualCheckinsWindow)) {
+		if !checkedOutAfterAllowed(filter.CheckedOutAtAfter, now, checkedOutAfterBypassed()) {
 			return manualcheckin.Filter{}, errors.New("checked_out_after must be within the last 24 hours")
 		}
 	}
