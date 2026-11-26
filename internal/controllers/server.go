@@ -87,35 +87,7 @@ func errorHandler(ctx *fiber.Ctx, err error) error {
 	return nil
 }
 
-func StartServer(ctx context.Context, port int, dbFilepath string) error {
-	// One spelling for both connections: InitDB only logs the absolute path
-	// and opens the given spelling, so trim once here. Otherwise a padded
-	// path would open the trimmed file for the app database and a spaced
-	// filename for the session store.
-	dbFilepath = strings.TrimSpace(dbFilepath)
-
-	database, err := db.InitDB(dbFilepath)
-	if err != nil {
-		return fmt.Errorf("init db: %w", err)
-	}
-
-	// The session store points at the same database file, using the same
-	// spelling so both connections name one file.
-	storage := sqlite3.New(sqlite3.Config{
-		Database: dbFilepath,
-		Reset:    false, // Don't clear sessions on start
-	})
-
-	// 2. Setup Session Middleware with 2-week TTL
-	store := fibersession.New(fibersession.Config{
-		Storage:        storage,
-		Expiration:     180 * 24 * time.Hour, // 180-day TTL
-		CookieHTTPOnly: true,                 // Security: prevents JS from reading cookie
-		CookieSameSite: "Lax",
-		CookieSecure:   cookieSecure(),
-	})
-	slog.Info("session cookie", slog.Bool("secure", cookieSecure()))
-
+func newServerApp(database *sql.DB, store *fibersession.Store, paginationStore planningcenterv1.PaginationStore) *fiber.App {
 	app := fiber.New(fiber.Config{
 		ErrorHandler: errorHandler,
 	})
@@ -127,7 +99,7 @@ func StartServer(ctx context.Context, port int, dbFilepath string) error {
 	app.Use(middleware.Compress())
 	app.Use(middleware.NoIndex())
 
-	registerRoutes(app, database, store, storage)
+	registerRoutes(app, database, store, paginationStore)
 
 	app.Get("manifest.webmanifest", func(c *fiber.Ctx) error {
 		f, err := static.EmbeddedFS.Open("manifest.webmanifest")
@@ -201,6 +173,40 @@ func StartServer(ctx context.Context, port int, dbFilepath string) error {
 		PathPrefix: "",
 		Browse:     true,
 	}))
+
+	return app
+}
+
+func StartServer(ctx context.Context, port int, dbFilepath string) error {
+	// One spelling for both connections: InitDB only logs the absolute path
+	// and opens the given spelling, so trim once here. Otherwise a padded
+	// path would open the trimmed file for the app database and a spaced
+	// filename for the session store.
+	dbFilepath = strings.TrimSpace(dbFilepath)
+
+	database, err := db.InitDB(dbFilepath)
+	if err != nil {
+		return fmt.Errorf("init db: %w", err)
+	}
+
+	// The session store points at the same database file, using the same
+	// spelling so both connections name one file.
+	storage := sqlite3.New(sqlite3.Config{
+		Database: dbFilepath,
+		Reset:    false, // Don't clear sessions on start
+	})
+
+	// 2. Setup Session Middleware with 2-week TTL
+	store := fibersession.New(fibersession.Config{
+		Storage:        storage,
+		Expiration:     180 * 24 * time.Hour, // 180-day TTL
+		CookieHTTPOnly: true,                 // Security: prevents JS from reading cookie
+		CookieSameSite: "Lax",
+		CookieSecure:   cookieSecure(),
+	})
+	slog.Info("session cookie", slog.Bool("secure", cookieSecure()))
+
+	app := newServerApp(database, store, storage)
 
 	slog.Info("server listening", slog.Int("port", port))
 

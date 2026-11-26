@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"kids-checkin/internal/controllers/middleware"
+	"kids-checkin/internal/db"
 	"kids-checkin/internal/web/menu"
 
 	"github.com/gofiber/fiber/v2"
@@ -114,6 +115,76 @@ func TestStaticCacheControl(t *testing.T) {
 		assert.Equal(t, "public, max-age=31536000, immutable", staticCacheControl(),
 			"an unset ENVIRONMENT must not silently downgrade to dev caching")
 	})
+}
+
+func TestNewServerApp_NoIndexEverywhere(t *testing.T) {
+	testDB, cleanup, err := db.PrepareTestDB()
+	require.NoError(t, err)
+	t.Cleanup(cleanup)
+
+	app := newServerApp(testDB, session.New(), nil)
+	app.Get("/__test/500", func(c *fiber.Ctx) error {
+		return fiber.ErrInternalServerError
+	})
+	app.Get("/__test/panic", func(c *fiber.Ctx) error {
+		panic("boom")
+	})
+	app.Get("/__test/redirect", func(c *fiber.Ctx) error {
+		return c.Redirect("/")
+	})
+	app.Get("/__test/gzip", func(c *fiber.Ctx) error {
+		return c.SendString(strings.Repeat("compressible", 512))
+	})
+	app.Get("/__test/304", func(c *fiber.Ctx) error {
+		c.Set(fiber.HeaderETag, `"test"`)
+		return c.SendStatus(fiber.StatusNotModified)
+	})
+
+	cases := []struct {
+		name            string
+		path            string
+		accept          string
+		acceptEncoding  string
+		wantStatus      int
+		wantContentType string
+		wantEncoding    string
+	}{
+		{"home page", "/", "", "", fiber.StatusOK, "text/html", ""},
+		{"json 404", "/missing", "application/json", "", fiber.StatusNotFound, "application/json", ""},
+		{"html 404", "/missing", "text/html", "", fiber.StatusNotFound, "text/html", ""},
+		{"internal error", "/__test/500", "application/json", "", fiber.StatusInternalServerError, "application/json", ""},
+		{"panic recovery", "/__test/panic", "application/json", "", fiber.StatusInternalServerError, "application/json", ""},
+		{"redirect", "/__test/redirect", "", "", fiber.StatusFound, "", ""},
+		{"gzip", "/__test/gzip", "", "gzip", fiber.StatusOK, "text/plain", "gzip"},
+		{"not modified", "/__test/304", "", "", fiber.StatusNotModified, "", ""},
+		{"unauthorized", "/v1/checkins/checkouts", "application/json", "", fiber.StatusUnauthorized, "application/json", ""},
+		{"static asset", "/static/css/tailwind.css", "", "", fiber.StatusOK, "", ""},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+			if tc.accept != "" {
+				req.Header.Set("Accept", tc.accept)
+			}
+			if tc.acceptEncoding != "" {
+				req.Header.Set("Accept-Encoding", tc.acceptEncoding)
+			}
+
+			resp, err := app.Test(req)
+			require.NoError(t, err)
+			defer resp.Body.Close()
+
+			assert.Equal(t, tc.wantStatus, resp.StatusCode)
+			assert.Equal(t, []string{"noindex"}, resp.Header.Values("X-Robots-Tag"))
+			if tc.wantContentType != "" {
+				assert.Contains(t, resp.Header.Get("Content-Type"), tc.wantContentType)
+			}
+			if tc.wantEncoding != "" {
+				assert.Equal(t, tc.wantEncoding, resp.Header.Get("Content-Encoding"))
+			}
+		})
+	}
 }
 
 func TestParseCookieSecure(t *testing.T) {
