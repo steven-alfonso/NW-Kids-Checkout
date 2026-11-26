@@ -1209,8 +1209,11 @@ async function fetchChildrenData() {
             dom.childrenList.scrollTop = 0;
         }
     } finally {
-        API_CALL_BLOCKS.fetchChildrenData = false;
+        // Only the request that still owns the slot may release the guard: an
+        // aborted predecessor settling late must not let the 3s interval abort
+        // the replacement fetch the restore just started.
         if (childrenFetchController === controller) {
+            API_CALL_BLOCKS.fetchChildrenData = false;
             childrenFetchController = null;
         }
     }
@@ -1351,7 +1354,10 @@ function handlePageshow(event) {
     if (dom.childrenList) dom.childrenList.replaceChildren();
 
     // The overdue drawer keeps its own DOM and render state; clearing only the
-    // main list would leave the restored rows visible in the drawer.
+    // main list would leave the restored rows visible in the drawer. Close it
+    // first: a drawer left flagged open would later filter a fresh poll against
+    // the emptied render set and claim "No overdue" while the badge counts one.
+    if (isOverdueSheetOpen) closeOverdueSheet();
     if (dom.overdueSheetList) dom.overdueSheetList.replaceChildren();
     lastSheetSignature = null;
     drawerRenderedIds = new Set();
@@ -1362,6 +1368,7 @@ function handlePageshow(event) {
     if (dom.overdueBadge) {
         dom.overdueBadge.classList.add('hidden');
         dom.overdueBadge.textContent = 'overdue';
+        dom.overdueBadge.setAttribute('aria-label', 'No overdue checkouts');
     }
 
     fetchChildrenData();

@@ -2436,6 +2436,19 @@ describe('checkoutsv1/checkouts', () => {
                 html: '<!doctype html><html><body><div id="children-list"></div></body></html>',
                 fetchImpl: async (url, options = {}) => {
                     calls.push(options.headers || {});
+                    // Make the failure mode explicit: replaying the stale
+                    // validator earns a 304 and would leave the cleared board
+                    // showing "No children called yet".
+                    if (options.headers && options.headers['If-None-Match'] === 'W/"v1"') {
+                        return {
+                            ok: false,
+                            status: 304,
+                            headers: { get: (name) => (name === 'ETag' ? 'W/"v1"' : null) },
+                            json: async () => {
+                                throw new Error('a 304 must not be parsed');
+                            }
+                        };
+                    }
                     return {
                         ok: true,
                         status: 200,
@@ -2490,16 +2503,120 @@ describe('checkoutsv1/checkouts', () => {
 
             w.dispatchEvent(persistedEvent(w, true));
 
-            // Synchronously, before the refetch resolves: the drawer and badge
-            // must not keep showing the restored rows and count.
+            // Synchronously, before the refetch resolves: the drawer must be
+            // closed and purged, and the badge/count reset, so the restored
+            // rows cannot linger behind a stale "open" flag.
+            const sheet = w.document.getElementById('overdue-sheet');
+            expect(sheet.classList.contains('translate-y-full')).toBe(true);
+            expect(sheet.getAttribute('aria-hidden')).toBe('true');
             expect(w.document.getElementById('overdue-sheet-list').childNodes.length).toBe(0);
-            expect(w.document.getElementById('overdue-badge').classList.contains('hidden')).toBe(true);
+            const badge = w.document.getElementById('overdue-badge');
+            expect(badge.classList.contains('hidden')).toBe(true);
+            expect(badge.getAttribute('aria-label')).toBe('No overdue checkouts');
             expect(w.document.getElementById('overdue-sheet-count').textContent).toBe('No overdue');
 
-            // And the refetch's empty payload must re-render the drawer rather
-            // than leaving the old markup behind under a stale signature.
+            // The empty refetch must not repopulate the closed drawer.
             await new Promise((resolve) => setTimeout(resolve, 10));
-            expect(w.document.getElementById('overdue-sheet-list').textContent).toContain('No overdue checkouts');
+            expect(w.document.getElementById('overdue-sheet-list').childNodes.length).toBe(0);
+        });
+
+        it('holds the fetch guard until the restore refetch settles', async () => {
+            const requests = [];
+            const isCheckouts = (url) => String(url).includes('/v1/checkins/checkouts');
+            const w = loadWindow({
+                html: '<!doctype html><html><body><div id="children-list"></div></body></html>',
+                fetchImpl: (url, options = {}) => {
+                    if (!isCheckouts(url)) {
+                        return Promise.resolve({
+                            ok: true,
+                            status: 200,
+                            headers: { get: () => null },
+                            json: async () => []
+                        });
+                    }
+                    return new Promise((resolve, reject) => {
+                        const request = { url: String(url), options, aborted: false, resolve, reject };
+                        requests.push(request);
+                        if (options.signal) {
+                            options.signal.addEventListener('abort', () => {
+                                request.aborted = true;
+                                const error = new Error('aborted');
+                                error.name = 'AbortError';
+                                reject(error);
+                            });
+                        }
+                    });
+                }
+            });
+            w.__test.setDom();
+            w.__test.setChildrenData([pcChild('a')]);
+            w.__test.updateUI();
+
+            const firstPoll = w.fetchChildrenData();
+            expect(requests).toHaveLength(1);
+
+            w.dispatchEvent(persistedEvent(w, true));
+            expect(requests).toHaveLength(2);
+            expect(requests[0].aborted).toBe(true);
+
+            // Let the aborted request's finally run. It no longer owns the
+            // controller, so the replacement fetch must keep the guard held.
+            await firstPoll;
+            w.fetchChildrenData();
+            expect(requests).toHaveLength(2);
+
+            requests[1].resolve({
+                ok: true,
+                status: 200,
+                headers: { get: () => null },
+                json: async () => []
+            });
+            await new Promise((resolve) => setTimeout(resolve, 10));
+            expect(w.__test.getChildrenData()).toEqual([]);
+        });
+
+        it('renders the drawer again on reopen after a restore cleared its signature', async () => {
+            const checkedOutAt = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+            const row = () => ({
+                source: 'planning_center',
+                planning_center_id: 'a',
+                first_name: 'Alpha',
+                last_name: 'Test',
+                security_code: 'A1',
+                location_group_id: 1,
+                checked_out_at: checkedOutAt
+            });
+            const w = loadWindow({
+                html: `<!doctype html><html><body>
+                    <div id="children-list"></div>
+                    <button id="overdue-badge" class="hidden"></button>
+                    <div id="overdue-sheet" class="translate-y-full" role="dialog" tabindex="-1" inert></div>
+                    <div id="overdue-sheet-backdrop" class="hidden"></div>
+                    <div id="overdue-sheet-list"></div>
+                    <span id="overdue-sheet-count"></span>
+                </body></html>`,
+                fetchImpl: async () => ({
+                    ok: true,
+                    status: 200,
+                    headers: { get: () => null },
+                    json: async () => [row()]
+                })
+            });
+            w.document.dispatchEvent(new w.Event('DOMContentLoaded'));
+            await new Promise((resolve) => setTimeout(resolve, 10));
+
+            w.openOverdueSheet();
+            expect(w.document.getElementById('overdue-sheet-list').textContent).toContain('Alpha');
+            w.closeOverdueSheet();
+
+            w.dispatchEvent(persistedEvent(w, true));
+            await new Promise((resolve) => setTimeout(resolve, 10));
+
+            // Same rows come back. Without clearing lastSheetSignature the
+            // cleared drawer's signature still matches and the reopen renders
+            // nothing.
+            w.openOverdueSheet();
+            expect(w.document.getElementById('overdue-sheet-list').textContent).toContain('Alpha');
         });
     });
 
