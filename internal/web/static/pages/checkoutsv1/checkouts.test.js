@@ -30,7 +30,8 @@ window.__test = {
     getFlashChildIds: () => flashChildIds,
     setFlashChildIds: (ids) => { flashChildIds = ids; },
     clearFlashStyles: () => clearFlashStyles(),
-    isVisibleFocusTarget: (element) => isVisibleFocusTarget(element)
+    isVisibleFocusTarget: (element) => isVisibleFocusTarget(element),
+    handlePageshow: (event) => handlePageshow(event)
 };
 `;
 
@@ -2380,6 +2381,243 @@ describe('checkoutsv1/checkouts', () => {
         expect(first).toEqual(['a', 'b']);
         await w.fetchChildrenData();
         expect(w.__test.getVisibleChildren().map((c) => c.planning_center_id)).toEqual(first);
+    });
+
+    describe('back/forward cache restore', () => {
+        function persistedEvent(w, persisted) {
+            const event = new w.Event('pageshow');
+            Object.defineProperty(event, 'persisted', { value: persisted });
+            return event;
+        }
+
+        function seededWindow() {
+            let fetchCount = 0;
+            const w = loadWindow({
+                html: '<!doctype html><html><body><div id="children-list"></div></body></html>',
+                fetchImpl: async () => {
+                    fetchCount++;
+                    return { ok: true, json: async () => [] };
+                }
+            });
+            w.__test.setDom();
+            w.__test.setChildrenData([pcChild('a')]);
+            w.__test.updateUI();
+            expect(w.document.getElementById('children-list').textContent).toContain('a');
+            return { w, fetchCount: () => fetchCount };
+        }
+
+        it('clears the rendered children and refetches when persisted', async () => {
+            const { w, fetchCount } = seededWindow();
+
+            w.dispatchEvent(persistedEvent(w, true));
+
+            // Data and DOM are gone before the refetch resolves, so the stale
+            // names cannot stay on screen while the API is asked about the
+            // session.
+            expect(w.__test.getChildrenData()).toEqual([]);
+            expect(w.document.getElementById('children-list').childNodes.length).toBe(0);
+            await new Promise((resolve) => setTimeout(resolve, 0));
+            expect(fetchCount()).toBeGreaterThan(0);
+        });
+
+        it('leaves the rendered children alone when not persisted', () => {
+            const { w, fetchCount } = seededWindow();
+
+            w.dispatchEvent(persistedEvent(w, false));
+
+            expect(w.__test.getChildrenData()).toHaveLength(1);
+            expect(w.document.getElementById('children-list').textContent).toContain('a');
+            expect(fetchCount()).toBe(0);
+        });
+
+        it('drops the validator so the refetch gets a full body', async () => {
+            const calls = [];
+            const w = loadWindow({
+                html: '<!doctype html><html><body><div id="children-list"></div></body></html>',
+                fetchImpl: async (url, options = {}) => {
+                    calls.push(options.headers || {});
+                    // Make the failure mode explicit: replaying the stale
+                    // validator earns a 304 and would leave the cleared board
+                    // showing "No children called yet".
+                    if (options.headers && options.headers['If-None-Match'] === 'W/"v1"') {
+                        return {
+                            ok: false,
+                            status: 304,
+                            headers: { get: (name) => (name === 'ETag' ? 'W/"v1"' : null) },
+                            json: async () => {
+                                throw new Error('a 304 must not be parsed');
+                            }
+                        };
+                    }
+                    return {
+                        ok: true,
+                        status: 200,
+                        headers: { get: (name) => (name === 'ETag' ? 'W/"v1"' : 'application/json') },
+                        json: async () => [pcChild('a')]
+                    };
+                }
+            });
+
+            w.document.dispatchEvent(new w.Event('DOMContentLoaded'));
+            await new Promise((resolve) => setTimeout(resolve, 10));
+            const before = calls.length;
+            expect(before).toBeGreaterThan(0);
+            expect(w.document.getElementById('children-list').textContent).toContain('a');
+
+            w.dispatchEvent(persistedEvent(w, true));
+            await new Promise((resolve) => setTimeout(resolve, 10));
+
+            // The pre-navigation validator no longer describes what is on
+            // screen, so sending it would earn a 304 against the cleared board.
+            expect(calls).toHaveLength(before + 1);
+            expect(calls[calls.length - 1]['If-None-Match']).toBeUndefined();
+            expect(w.document.getElementById('children-list').textContent).toContain('a');
+        });
+
+        it('clears the overdue drawer and badge state', async () => {
+            const w = loadWindow({
+                html: `<!doctype html><html><body>
+                    <div id="children-list"></div>
+                    <button id="overdue-badge" class="hidden"></button>
+                    <div id="overdue-sheet" class="translate-y-full" role="dialog" tabindex="-1" inert></div>
+                    <div id="overdue-sheet-backdrop" class="hidden"></div>
+                    <div id="overdue-sheet-list"></div>
+                    <span id="overdue-sheet-count"></span>
+                </body></html>`,
+                fetchImpl: async () => ({
+                    ok: true,
+                    status: 200,
+                    headers: { get: () => null },
+                    json: async () => []
+                })
+            });
+            w.document.dispatchEvent(new w.Event('DOMContentLoaded'));
+            await new Promise((resolve) => setTimeout(resolve, 10));
+
+            w.__test.setChildrenData([overdueChild('a', 6)]);
+            w.updateUI();
+            w.updateOverdueUI();
+            w.openOverdueSheet();
+            expect(w.document.getElementById('overdue-sheet-list').childNodes.length).toBeGreaterThan(0);
+            expect(w.document.getElementById('overdue-badge').classList.contains('hidden')).toBe(false);
+
+            w.dispatchEvent(persistedEvent(w, true));
+
+            // Synchronously, before the refetch resolves: the drawer must be
+            // closed and purged, and the badge/count reset, so the restored
+            // rows cannot linger behind a stale "open" flag.
+            const sheet = w.document.getElementById('overdue-sheet');
+            expect(sheet.classList.contains('translate-y-full')).toBe(true);
+            expect(sheet.getAttribute('aria-hidden')).toBe('true');
+            expect(w.document.getElementById('overdue-sheet-list').childNodes.length).toBe(0);
+            const badge = w.document.getElementById('overdue-badge');
+            expect(badge.classList.contains('hidden')).toBe(true);
+            expect(badge.getAttribute('aria-label')).toBe('No overdue checkouts');
+            expect(w.document.getElementById('overdue-sheet-count').textContent).toBe('No overdue');
+
+            // The empty refetch must not repopulate the closed drawer.
+            await new Promise((resolve) => setTimeout(resolve, 10));
+            expect(w.document.getElementById('overdue-sheet-list').childNodes.length).toBe(0);
+        });
+
+        it('holds the fetch guard until the restore refetch settles', async () => {
+            const requests = [];
+            const isCheckouts = (url) => String(url).includes('/v1/checkins/checkouts');
+            const w = loadWindow({
+                html: '<!doctype html><html><body><div id="children-list"></div></body></html>',
+                fetchImpl: (url, options = {}) => {
+                    if (!isCheckouts(url)) {
+                        return Promise.resolve({
+                            ok: true,
+                            status: 200,
+                            headers: { get: () => null },
+                            json: async () => []
+                        });
+                    }
+                    return new Promise((resolve, reject) => {
+                        const request = { url: String(url), options, aborted: false, resolve, reject };
+                        requests.push(request);
+                        if (options.signal) {
+                            options.signal.addEventListener('abort', () => {
+                                request.aborted = true;
+                                const error = new Error('aborted');
+                                error.name = 'AbortError';
+                                reject(error);
+                            });
+                        }
+                    });
+                }
+            });
+            w.__test.setDom();
+            w.__test.setChildrenData([pcChild('a')]);
+            w.__test.updateUI();
+
+            const firstPoll = w.fetchChildrenData();
+            expect(requests).toHaveLength(1);
+
+            w.dispatchEvent(persistedEvent(w, true));
+            expect(requests).toHaveLength(2);
+            expect(requests[0].aborted).toBe(true);
+
+            // Let the aborted request's finally run. It no longer owns the
+            // controller, so the replacement fetch must keep the guard held.
+            await firstPoll;
+            w.fetchChildrenData();
+            expect(requests).toHaveLength(2);
+
+            requests[1].resolve({
+                ok: true,
+                status: 200,
+                headers: { get: () => null },
+                json: async () => []
+            });
+            await new Promise((resolve) => setTimeout(resolve, 10));
+            expect(w.__test.getChildrenData()).toEqual([]);
+        });
+
+        it('renders the drawer again on reopen after a restore cleared its signature', async () => {
+            const checkedOutAt = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+            const row = () => ({
+                source: 'planning_center',
+                planning_center_id: 'a',
+                first_name: 'Alpha',
+                last_name: 'Test',
+                security_code: 'A1',
+                location_group_id: 1,
+                checked_out_at: checkedOutAt
+            });
+            const w = loadWindow({
+                html: `<!doctype html><html><body>
+                    <div id="children-list"></div>
+                    <button id="overdue-badge" class="hidden"></button>
+                    <div id="overdue-sheet" class="translate-y-full" role="dialog" tabindex="-1" inert></div>
+                    <div id="overdue-sheet-backdrop" class="hidden"></div>
+                    <div id="overdue-sheet-list"></div>
+                    <span id="overdue-sheet-count"></span>
+                </body></html>`,
+                fetchImpl: async () => ({
+                    ok: true,
+                    status: 200,
+                    headers: { get: () => null },
+                    json: async () => [row()]
+                })
+            });
+            w.document.dispatchEvent(new w.Event('DOMContentLoaded'));
+            await new Promise((resolve) => setTimeout(resolve, 10));
+
+            w.openOverdueSheet();
+            expect(w.document.getElementById('overdue-sheet-list').textContent).toContain('Alpha');
+            w.closeOverdueSheet();
+
+            w.dispatchEvent(persistedEvent(w, true));
+            await new Promise((resolve) => setTimeout(resolve, 10));
+
+            // Same rows come back. Without clearing lastSheetSignature the
+            // cleared drawer's signature still matches and the reopen renders
+            // nothing.
+            w.openOverdueSheet();
+            expect(w.document.getElementById('overdue-sheet-list').textContent).toContain('Alpha');
+        });
     });
 
     describe('shipped checkouts page', () => {

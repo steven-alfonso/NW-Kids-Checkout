@@ -1209,8 +1209,11 @@ async function fetchChildrenData() {
             dom.childrenList.scrollTop = 0;
         }
     } finally {
-        API_CALL_BLOCKS.fetchChildrenData = false;
+        // Only the request that still owns the slot may release the guard: an
+        // aborted predecessor settling late must not let the 3s interval abort
+        // the replacement fetch the restore just started.
         if (childrenFetchController === controller) {
+            API_CALL_BLOCKS.fetchChildrenData = false;
             childrenFetchController = null;
         }
     }
@@ -1331,6 +1334,47 @@ function updateAllTimes() {
     updateTimes();
     updateOverdueUI();
 }
+
+// A back/forward cache restore brings back the DOM from before the navigation,
+// including children's names and checkout data. The response headers cannot
+// reach the bfcache, so drop the rendered rows and let the API decide whether
+// the session is still valid.
+function handlePageshow(event) {
+    if (!event || !event.persisted) return;
+    childrenData = [];
+    knownChildIds = new Set();
+    lastListSignature = null;
+    clearFlashStyles();
+    // The validator describes the pre-navigation payload, which is no longer
+    // what is on screen. Sending it would earn a 304 and leave the cleared
+    // board showing "No children called yet".
+    checkoutsEtag = null;
+    if (childrenFetchController) childrenFetchController.abort();
+    API_CALL_BLOCKS.fetchChildrenData = false;
+    if (dom.childrenList) dom.childrenList.replaceChildren();
+
+    // The overdue drawer keeps its own DOM and render state; clearing only the
+    // main list would leave the restored rows visible in the drawer. Close it
+    // first: a drawer left flagged open would later filter a fresh poll against
+    // the emptied render set and claim "No overdue" while the badge counts one.
+    if (isOverdueSheetOpen) closeOverdueSheet();
+    if (dom.overdueSheetList) dom.overdueSheetList.replaceChildren();
+    lastSheetSignature = null;
+    drawerRenderedIds = new Set();
+    overdueRetainedIds.clear();
+    lastOverdueCount = 0;
+    const countEl = document.getElementById('overdue-sheet-count');
+    if (countEl) countEl.textContent = 'No overdue';
+    if (dom.overdueBadge) {
+        dom.overdueBadge.classList.add('hidden');
+        dom.overdueBadge.textContent = 'overdue';
+        dom.overdueBadge.setAttribute('aria-label', 'No overdue checkouts');
+    }
+
+    fetchChildrenData();
+}
+
+window.addEventListener('pageshow', handlePageshow);
 
 // Initialize and start periodic updates
 document.addEventListener('DOMContentLoaded', function () {

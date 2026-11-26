@@ -217,6 +217,18 @@ async function loadManualCheckins() {
     }
 }
 
+// A back/forward cache restore brings back the DOM from before the navigation,
+// including children's names. The response headers cannot reach the bfcache, so
+// drop the rendered rows and let the API decide whether the session is valid.
+function handlePageshow(event) {
+    if (!event || !event.persisted) return;
+    manualCheckinsEtag = null;
+    if (manualCheckinsBody) manualCheckinsBody.replaceChildren();
+    loadManualCheckins();
+}
+
+window.addEventListener('pageshow', handlePageshow);
+
 window.createManualCheckin = createManualCheckin;
 window.toggleManualCheckinModal = toggleManualCheckinModal;
 window.setManualCheckinError = setManualCheckinError;
